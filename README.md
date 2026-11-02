@@ -47,6 +47,12 @@ In the game list, the D-pad or left stick chooses a game, **A** plays, **Y** ope
 
 ### Controls
 
+**Saves:** each game keeps its save under its own name (`black2.sav`,
+`white2.sav`, `black.sav`, `white.sav`, `soulsilver.sav`, `heartgold.sav`,
+`platinum.sav`): in the `saves` folder of `/switch/nosplitnx/`. Saves an
+earlier version left beside the program are moved into `saves` the first time.
+To carry on from an emulator or a flash cart, copy your save in under that name.
+
 | Button | In Game | In Menu / Game List |
 |---|---|---|
 | **D-pad / Left Stick** | Move character | Navigate games / settings |
