@@ -316,7 +316,7 @@ const char* AssetName()
 #elif defined(_WIN32)
     return "pokemon-ds-wide-pc-windows-x86_64.zip";
 #elif defined(__SWITCH__)
-    return "pokemon-ds-wide-all-switch.zip";
+    return "nosplitnx-switch.zip";
 #elif defined(__linux__) && !defined(__ANDROID__)
 #if defined(__aarch64__)
     return KindOf() == Kind::AppImage ? "pokemon-ds-wide-pc-linux-aarch64.AppImage" : "pokemon-ds-wide-pc-linux-aarch64.tar.gz";
@@ -678,7 +678,8 @@ void RunInstall()
         fs::remove_all(fs::u8path(unpacked), ec);
         fs::create_directories(fs::u8path(unpacked), ec);
         const std::string nroName = g_program.substr(g_program.find_last_of('/') + 1);
-        if (!UnzipFolder(data, "switch/pokemon-ds-wide/", nroName, unpacked, error))
+        if (!UnzipFolder(data, "switch/nosplitnx/", nroName, unpacked, error) &&
+            !UnzipFolder(data, "switch/pokemon-ds-wide/", nroName, unpacked, error))
         {
             fprintf(stderr, "[update] %s\n", error.c_str());
             fs::remove_all(fs::u8path(unpacked), ec);

@@ -126,23 +126,7 @@ if(ANDROID OR SSR_SWITCH)
     endif()
 endif()
 
-if(ANDROID)
-    # On Android the game is the library libmain.so that SDL's Java activity loads
-    # (tools/android/apk.py packs it into an APK). SDL2 is one built for Android
-    # (CMAKE_PREFIX_PATH); no libpng: screenshots are a desktop test aid.
-    add_library(ssrecomp SHARED ${SSRECOMP_SOURCES})
-    set_target_properties(ssrecomp PROPERTIES OUTPUT_NAME main)
-    target_include_directories(ssrecomp PRIVATE melonDS/src frontend runtime "${SSR_GENERATED_DIR}")
-    target_compile_definitions(ssrecomp PRIVATE SSR_NO_PNG SSR_VERSION="${SSR_VERSION}")
-    target_link_libraries(ssrecomp PRIVATE core SDL2::SDL2 android log)
-    # The all-games app (tools/android/build_all.sh): no game inside, the game list from the
-    # PC program (frontend/pc_launcher.cpp) with the ROMs in a folder the player chooses.
-    option(SSR_PC_ALL_GAMES "The all-games program with its game list" OFF)
-    if(SSR_PC_ALL_GAMES)
-        target_sources(ssrecomp PRIVATE frontend/pc_launcher.cpp)
-        target_compile_definitions(ssrecomp PRIVATE SSR_PC_LAUNCHER)
-    endif()
-elseif(SSR_SWITCH)
+if(SSR_SWITCH)
     # On the Switch the game is an .nro, a program for the Homebrew Menu, made from the
     # executable below. Like the Android app it holds the player's own game, so it is built
     # on the player's PC and never shared. No libpng: screenshots are a desktop test aid.
@@ -414,12 +398,6 @@ elseif(APPLE)
     target_sources(ssrecomp PRIVATE frontend/achievements_http_apple.mm)
     set_source_files_properties(frontend/achievements_http_apple.mm PROPERTIES LANGUAGE CXX COMPILE_FLAGS "-x objective-c++")
     target_link_libraries(ssrecomp PRIVATE "-framework Foundation")
-    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-        # The list upright, a game sideways (frontend/ios_orient.mm). UIKit is iOS only.
-        target_sources(ssrecomp PRIVATE frontend/ios_orient.mm)
-        set_source_files_properties(frontend/ios_orient.mm PROPERTIES LANGUAGE CXX COMPILE_FLAGS "-x objective-c++")
-        target_link_libraries(ssrecomp PRIVATE "-framework UIKit")
-    endif()
 elseif(SSR_SWITCH)
     # (devkitPro's libcurl, with its TLS library, from the portlibs.)
     find_package(PkgConfig REQUIRED)

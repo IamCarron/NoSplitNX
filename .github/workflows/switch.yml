@@ -6,6 +6,8 @@
 name: Nintendo Switch builds
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       target:
@@ -39,8 +41,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build git python3
 
-      - name: Build all-in-one Pokémon Fulldex (pokemon-ds-wide.nro)
-        if: inputs.target == 'all' || inputs.target == 'everything'
+      - name: Build all-in-one NoSplitNX (nosplitnx.nro)
+        if: github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'everything'
         run: |
           bash tools/switch/build_game.sh all
 
@@ -54,12 +56,12 @@ jobs:
         run: |
           bash tools/switch/build_game.sh platinum
 
-      - name: Upload all-in-one Pokémon Fulldex artifact
-        if: inputs.target == 'all' || inputs.target == 'everything'
+      - name: Upload NoSplitNX package
+        if: github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'everything'
         uses: actions/upload-artifact@v4
         with:
-          name: pokemon-ds-wide-switch
-          path: build-sd/pokemon-ds-wide-all-switch.zip
+          name: nosplitnx-switch
+          path: build-sd/nosplitnx-switch.zip
 
       - name: Upload standalone Black & White 1 & 2 NROs
         if: inputs.target == 'bw' || inputs.target == 'everything'

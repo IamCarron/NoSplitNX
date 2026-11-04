@@ -66,7 +66,7 @@ void ShowMessage(const std::string& text)
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     PadState pad;
     padInitializeDefault(&pad);
-    printf("\n  Pokemon DS widescreen\n\n%s\n\n  Press + to return to the Homebrew Menu.\n", text.c_str());
+    printf("\n  NoSplitNX\n\n%s\n\n  Press + to return to the Homebrew Menu.\n", text.c_str());
     while (appletMainLoop())
     {
         padUpdate(&pad);
@@ -686,7 +686,7 @@ static std::string g_jitMarker, g_fastMemMarker;
 bool Start(int& argc, char**& argv)
 {
     // The folder the .nro was started from (the Homebrew Menu passes its path), or the usual one.
-    std::string dir = "sdmc:/switch/ssrecomp";
+    std::string dir = "sdmc:/switch/nosplitnx";
     if (argc > 0 && argv[0] && strncmp(argv[0], "sdmc:/", 6) == 0)
     {
         std::string self = argv[0];

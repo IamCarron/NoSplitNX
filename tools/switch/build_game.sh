@@ -201,30 +201,30 @@ all)
     fi
     say "Compiling for the Switch"
     build SSR_SWITCH_JIT=1 SSR_SWITCH_GEN="$GEN" SSR_SWITCH_BUILD="$BUILD" \
-        SSR_SWITCH_ROMFS="$ROMFS" SSR_ALL_GAMES=ON SSR_PC_ART="$ART" SSR_NRO_TITLE="Pokémon Fulldex" bash tools/switch/build.sh
-    mkdir -p build-sd/switch/pokemon-ds-wide/roms
-    cp "$BUILD/ssrecomp.nro" build-sd/switch/pokemon-ds-wide/pokemon-ds-wide.nro
+        SSR_SWITCH_ROMFS="$ROMFS" SSR_ALL_GAMES=ON SSR_PC_ART="$ART" SSR_NRO_TITLE="NoSplitNX" bash tools/switch/build.sh
+    mkdir -p build-sd/switch/nosplitnx/roms
+    cp "$BUILD/ssrecomp.nro" build-sd/switch/nosplitnx/nosplitnx.nro
     # The licences: this program's (GPL-3) and, with the GBA games built in, mGBA's (MPL-2.0).
-    cp LICENSE build-sd/switch/pokemon-ds-wide/LICENSE.txt
-    cp LICENSE-Noto.txt build-sd/switch/pokemon-ds-wide/LICENSE-Noto.txt
-    LICENCES="switch/pokemon-ds-wide/LICENSE.txt switch/pokemon-ds-wide/LICENSE-Noto.txt"
+    cp LICENSE build-sd/switch/nosplitnx/LICENSE.txt
+    cp LICENSE-Noto.txt build-sd/switch/nosplitnx/LICENSE-Noto.txt
+    LICENCES="switch/nosplitnx/LICENSE.txt switch/nosplitnx/LICENSE-Noto.txt"
     GBA_WORK="${GBAW_WORK:-$HOME/pokemon-gba-wide}"
     if [ -n "${SSR_GBA_DIR:-}" ]; then
         [ -f "$GBA_WORK/mgba/LICENSE" ] || fail "no mGBA in $GBA_WORK (Pokemon GBA Widescreen's setup.sh makes it; GBAW_WORK if elsewhere)"
-        cp "$GBA_WORK/mgba/LICENSE" build-sd/switch/pokemon-ds-wide/LICENSE-mGBA.txt
-        LICENCES="$LICENCES switch/pokemon-ds-wide/LICENSE-mGBA.txt"
+        cp "$GBA_WORK/mgba/LICENSE" build-sd/switch/nosplitnx/LICENSE-mGBA.txt
+        LICENCES="$LICENCES switch/nosplitnx/LICENSE-mGBA.txt"
     else
-        rm -f build-sd/switch/pokemon-ds-wide/LICENSE-mGBA.txt
+        rm -f build-sd/switch/nosplitnx/LICENSE-mGBA.txt
     fi
-    ZIP=pokemon-ds-wide-all-switch.zip
+    ZIP=nosplitnx-switch.zip
     rm -f "build-sd/$ZIP"
     # The program, its licences and an empty roms folder, so that it is plain where the ROMs go.
     (cd build-sd && python3 -c "
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
-    z.write('switch/pokemon-ds-wide/pokemon-ds-wide.nro')
+    z.write('switch/nosplitnx/nosplitnx.nro')
     for f in sys.argv[2:]: z.write(f)
-    d = zipfile.ZipInfo('switch/pokemon-ds-wide/roms/')
+    d = zipfile.ZipInfo('switch/nosplitnx/roms/')
     d.external_attr = (0o40755 << 16) | 0x10  # a folder, for Unix and Windows unzippers
     z.writestr(d, '')
 " "$ZIP" $LICENCES)
@@ -232,19 +232,19 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
     python3 -c "
 import sys, zipfile
 names = zipfile.ZipFile(sys.argv[1]).namelist()
-want = ['switch/pokemon-ds-wide/pokemon-ds-wide.nro'] + sys.argv[2:] + ['switch/pokemon-ds-wide/roms/']
+want = ['switch/nosplitnx/nosplitnx.nro'] + sys.argv[2:] + ['switch/nosplitnx/roms/']
 if names != want: sys.exit('unexpected files in the zip: %s' % names)
 print('zip holds:', ', '.join(names))
 " "build-sd/$ZIP" $LICENCES
     python3 tools/updater/write_checksums.py build-sd --build "$ZIP=$BUILD/fulldex-build-id.txt"
     say "Done: $HERE/build-sd/$ZIP"
-    ls -l build-sd/switch/pokemon-ds-wide "build-sd/$ZIP"
+    ls -l build-sd/switch/nosplitnx "build-sd/$ZIP"
     cat <<EOF
 
-Copy build-sd/switch to the root of the SD card, then your ROMs into /switch/pokemon-ds-wide/roms/ (any
+Copy build-sd/switch to the root of the SD card, then your ROMs into /switch/nosplitnx/roms/ (any
 names; English Black, White, Black 2, White 2; SoulSilver and HeartGold US$([ -n "${SSR_GBA_DIR:-}" ] && printf '; the GBA games, Emerald,\nFireRed, LeafGreen and Ultra Violet, there or in a GBA folder in it')). Its list also shows
 the games in the other folders of /switch (the one-game downloads), each with the save in its folder.
-On the Switch, hold R while starting any game and choose Pokémon Fulldex.
+On the Switch, hold R while starting any game and choose NoSplitNX.
 The zip holds only the program, ready to share: nothing of the games.
 EOF
     exit 0

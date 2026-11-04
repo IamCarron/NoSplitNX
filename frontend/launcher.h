@@ -852,7 +852,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     // A band along the top with the title.
     c.Fill(0, 0, c.w, (c.h > c.w ? 43 : 22) * s, th.band);
     c.Fill(0, (c.h > c.w ? 43 : 22) * s, c.w, th.bandLineH * s, th.bandLine);
-    const std::string title = "POK\x05MON FULLDEX"; // (Pokémon Fulldex: \x05 is the font's É, ui.h)
+    const std::string title = "NOSPLIT NX";
     c.Text((c.w - Canvas::TextWidth(title, s + 1)) / 2, 6 * s, title, s + 1, th.title);
     // The tabs: the chosen one bright and underlined.
     for (int t = 0; t < TABS; t++)
