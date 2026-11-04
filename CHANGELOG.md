@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+- **Switch performance and dual-screen optimisation**: skip phantom 3D world rendering and multi-megabyte CPU frame copies while in 2D menus or dual-screen scenes (Bag, Party, Summary, Pokédex, spread layouts), clamp wide rendering to 720p maximum in handheld mode, and enable adaptive detail scaling by default on Switch.
+
 - **ROM hack compatibility and save isolation**: ROM hacks with custom internal IDs or modified region codes (such as Blaze Black, Volt White, Renegade Platinum, or custom difficulty hacks) are supported with 3-letter prefix fallbacks and companion `.code` override files. Hack titles are preserved in the launcher and saves are automatically isolated to `<rom_stem>.sav`, preventing hack ROMs from clashing with or overwriting vanilla game saves.
 
 - **Launcher save detection**: auto-detect existing saves matching the ROM's filename, base game title or fallback name when opening a game.

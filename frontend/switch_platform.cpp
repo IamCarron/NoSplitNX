@@ -1080,6 +1080,11 @@ bool LocalTime(int& year, int& month, int& day, int& hour, int& minute, int& sec
     return true;
 }
 
+bool IsHandheld()
+{
+    return appletGetOperationMode() == AppletOperationMode_Handheld;
+}
+
 static Thread g_emuThread;
 
 bool StartThread(void (*entry)(void*), void* arg)

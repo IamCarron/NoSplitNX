@@ -1984,6 +1984,7 @@ int main(int argc, char** argv)
     // changed in the pause menu, and are remembered.
     cfg.wideLines = 288;
     cfg.fps60 = false;
+    cfg.autoDetail = true; // lower lines dynamically when busy, keeping frames on time
 #ifdef SSR_DEKO3D
     // Black, Black 2 and White 2 (a function table) with the world drawn by the graphics chip
     // (WORLD ON GPU, on by default): measured at about 16 ms a frame at 720 lines with the
@@ -5143,6 +5144,7 @@ int main(int argc, char** argv)
     // world are not drawn (rc_frame_hidden, rc_wide_render_skip), so it goes faster and shows
     // more frames. SSR_FF_FULL=1 draws them all, for comparing.
     static const bool ffFull = getenv("SSR_FF_FULL") != nullptr;
+    bool skipWide = false;
     auto runFrames = [&]() {
         const double t0 = perfNow();
         int filled = 0;
@@ -5150,7 +5152,7 @@ int main(int argc, char** argv)
         {
             // (The widescreen world drawn during a frame is shown after the next one.)
             rc_frame_hidden = !ffFull && emuSpeed > 1 && i < emuSpeed - 1;
-            rc_wide_render_skip = !ffFull && emuSpeed > 1 && i < emuSpeed - 2;
+            rc_wide_render_skip = (!ffFull && emuSpeed > 1 && i < emuSpeed - 2) || skipWide;
             rc_frame++;
             if (funcWatchOn) funcWatch.NextFrame();
             nds->RunFrame();
@@ -6658,6 +6660,11 @@ int main(int argc, char** argv)
             // FAST FORWARD LOW RES on: it shows one frame in several, and the detail comes
             // straight back when it stops.
             if (speed > 1 && !opt.headless && cfg.ffLowRes) WideLinesNow = std::min(WideLinesNow, 360);
+#ifdef __SWITCH__
+            // In handheld mode the console's screen is 1280x720: drawing more than 720 lines is
+            // never seen on it and wastes fragment shading and memory bandwidth.
+            if (SwitchPlatform::IsHandheld()) WideLinesNow = std::min(WideLinesNow, 720);
+#endif
             if (wh > WideLinesNow)
             {
                 ww = ww * WideLinesNow / wh;
@@ -6686,6 +6693,10 @@ int main(int argc, char** argv)
             melonDS::Wide.Width = ww;
             melonDS::Wide.Height = wh;
             wideFrames = wantWide ? wideFrames + 1 : 0;
+            // When the current scene is a 2D menu or dual-screen spread, the 3D wide picture is
+            // not shown on screen: skip rendering it (rc_wide_render_skip) so the GPU is not
+            // wasting time on a discarded picture, while keeping Wide.Owner valid.
+            skipWide = !wantWide || (!scene.wide && !scene.edgeFill);
         }
         // Filled in after the frame has run: the renderer hands over its picture then.
         WideImage wideImage;
@@ -6737,7 +6748,7 @@ int main(int argc, char** argv)
             // while a cave's map loads behind the white of its warp, which showed black bars.)
             const int wideBright = (wideUnit.MasterBrightness >> 14) & 3;
             const bool fullFade = (wideBright == 1 || wideBright == 2) && (wideUnit.MasterBrightness & 0x1F) >= 16;
-            if (wideFrames > 3 && melonDS::Wide.Front && (show3D || fullFade))
+            if (wideFrames > 3 && melonDS::Wide.Front && (show3D || fullFade) && (scene.wide || scene.edgeFill))
             {
                 wideImage.pixels = melonDS::Wide.Front;
                 wideImage.w = melonDS::Wide.FrontW;
