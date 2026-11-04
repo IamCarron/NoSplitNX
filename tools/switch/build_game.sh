@@ -37,8 +37,8 @@
 # switch-dev and switch-sdl2. When devkitPro is not installed but Docker is, its official image
 # (devkitpro/devkita64) is used instead: their servers refuse some IP addresses (403).
 # SSR_SWITCH_ICON=path/to/icon.jpg (256x256 JPEG) gives the game your own Homebrew Menu icon
-# (for bw: SSR_SWITCH_ICON_BLACK2, SSR_SWITCH_ICON_WHITE2, SSR_SWITCH_ICON_BLACK and
-# SSR_SWITCH_ICON_WHITE, one each; for hgss:
+# (defaults to tools/switch/icon.jpg; for bw: SSR_SWITCH_ICON_BLACK2, SSR_SWITCH_ICON_WHITE2,
+# SSR_SWITCH_ICON_BLACK and SSR_SWITCH_ICON_WHITE, one each; for hgss:
 # SSR_SWITCH_ICON_SOULSILVER and SSR_SWITCH_ICON_HEARTGOLD).
 #
 # Keep funcs.txt (black2, white2, black, white) to yourself: it is made from your ROM. Never share a
@@ -187,9 +187,9 @@ all)
         ART="$HERE/$BUILD/box-art"
         say "Pictures for the game list: $SSR_PC_ART"
     fi
-    icon="${SSR_SWITCH_ICON_ALL:-${SSR_SWITCH_ICON:-}}"
+    icon="${SSR_SWITCH_ICON_ALL:-${SSR_SWITCH_ICON:-$HERE/tools/switch/icon.jpg}}"
     rm -f "$BUILD/icon.jpg"
-    [ -n "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
+    [ -f "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
     # GBA games too (SSR_GBA_DIR: Pokemon GBA Widescreen's folder, after its setup.sh): with
     # devkitPro installed or unpacked (DEVKITPRO), not its Docker image, which sees only this folder.
     if [ -n "${SSR_GBA_DIR:-}" ]; then
@@ -259,7 +259,8 @@ soulsilver)
     # Without the recompiled code: the game runs on melonDS's JIT, about 1.7 times as fast on the
     # Switch, and the build takes minutes instead of most of an hour.
     python3 tools/soulsilver/tables_only.py gen build-gen-tables
-    [ -n "${SSR_SWITCH_ICON:-}" ] && install -D -m 644 "$SSR_SWITCH_ICON" "$BUILD/icon.jpg"
+    icon="${SSR_SWITCH_ICON:-$HERE/tools/switch/icon.jpg}"
+    [ -f "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
     say "Compiling for the Switch"
     build SSR_SWITCH_JIT=1 SSR_SWITCH_GEN="$HERE/build-gen-tables" SSR_SWITCH_BUILD="$BUILD" bash tools/switch/build.sh
     ;;
@@ -277,7 +278,8 @@ black2|white2)
         "/config/$CFG/arm9/symbols.txt" "/config/$CFG/arm9/*/symbols.txt" "/config/$CFG/arm9/overlays/*/symbols.txt"
     mkdir -p "$BUILD"
     python3 tools/bw2/funcmap.py "$DECOMP_DIR/config/$CFG/arm9" "$ROM" "$BUILD/funcs.txt"
-    [ -n "${SSR_SWITCH_ICON:-}" ] && install -D -m 644 "$SSR_SWITCH_ICON" "$BUILD/icon.jpg"
+    icon="${SSR_SWITCH_ICON:-$HERE/tools/switch/icon.jpg}"
+    [ -f "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
     say "Compiling for the Switch"
     build SSR_SWITCH_BUILD="$BUILD" SSR_NRO_TITLE="Pokemon $NAME" SSR_SWITCH_ROMFS= bash tools/bw2/build_switch.sh
     ;;
@@ -294,9 +296,9 @@ bw)
     # SSR_SWITCH_ICON_WHITE (256x256 JPEG), else SSR_SWITCH_ICON for all, else libnx's.
     for g in black2:"Black 2" white2:"White 2" black:"Black" white:"White"; do
         var="SSR_SWITCH_ICON_$(echo "${g%%:*}" | tr a-z A-Z)"
-        icon="${!var:-${SSR_SWITCH_ICON:-}}"
+        icon="${!var:-${SSR_SWITCH_ICON:-$HERE/tools/switch/icon.jpg}}"
         rm -f "$BUILD/icon.jpg"
-        [ -n "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
+        [ -f "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
         build SSR_SWITCH_BUILD="$BUILD" SSR_NRO_TITLE="Pokemon ${g#*:}" SSR_SWITCH_ROMFS="$ROMFS" bash tools/bw2/build_switch.sh
         mkdir -p "build-sd/switch/pokemon-${g%%:*}-wide"
         cp "$BUILD/ssrecomp.nro" "build-sd/switch/pokemon-${g%%:*}-wide/pokemon-${g%%:*}-wide.nro"
@@ -349,8 +351,8 @@ platinum)
     python3 tools/shift_table.py --all "$ROMFS/funcs" # (the other languages: tools/versions)
     cp tools/regions/CPUF.txt "$ROMFS/funcs/"
     rm -f "$BUILD/icon.jpg"
-    icon="${SSR_SWITCH_ICON_PLATINUM:-${SSR_SWITCH_ICON:-}}"
-    [ -n "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
+    icon="${SSR_SWITCH_ICON_PLATINUM:-${SSR_SWITCH_ICON:-$HERE/tools/switch/icon.jpg}}"
+    [ -f "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
     say "Compiling for the Switch"
     build SSR_SWITCH_BUILD="$BUILD" SSR_NRO_TITLE="Pokemon Platinum" SSR_SWITCH_ROMFS="$ROMFS" bash tools/bw2/build_switch.sh
     mkdir -p build-sd/switch/pokemon-platinum-wide
@@ -396,9 +398,9 @@ hgss)
     # Packed once per game, with its own title and icon in the Homebrew Menu (the same program).
     for g in soulsilver:SoulSilver heartgold:HeartGold; do
         var="SSR_SWITCH_ICON_$(echo "${g%%:*}" | tr a-z A-Z)"
-        icon="${!var:-${SSR_SWITCH_ICON:-}}"
+        icon="${!var:-${SSR_SWITCH_ICON:-$HERE/tools/switch/icon.jpg}}"
         rm -f "$BUILD/icon.jpg"
-        [ -n "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
+        [ -f "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
         build SSR_SWITCH_JIT=1 SSR_SWITCH_GEN="$HERE/build-gen-tables" SSR_SWITCH_BUILD="$BUILD" \
             SSR_NRO_TITLE="Pokemon ${g#*:}" bash tools/switch/build.sh
         mkdir -p "build-sd/switch/pokemon-${g%%:*}-wide"
@@ -436,7 +438,8 @@ black)
     fetch_symbols build-decomp-aletheia "$BW1_DECOMP" "$BW1_COMMIT" '/layout/function_addrs.tsv'
     mkdir -p "$BUILD"
     python3 tools/bw1/funcmap.py build-decomp-aletheia/layout/function_addrs.tsv "$ROM" "$BUILD/funcs.txt"
-    [ -n "${SSR_SWITCH_ICON:-}" ] && install -D -m 644 "$SSR_SWITCH_ICON" "$BUILD/icon.jpg"
+    icon="${SSR_SWITCH_ICON:-$HERE/tools/switch/icon.jpg}"
+    [ -f "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
     say "Compiling for the Switch"
     build bash tools/bw1/build_switch.sh
     ;;
@@ -447,7 +450,8 @@ white)
     fetch_symbols build-decomp-aletheia "$BW1_DECOMP" "$BW1_COMMIT" '/layout/function_addrs.tsv'
     mkdir -p "$BUILD"
     python3 tools/bw1/funcmap.py build-decomp-aletheia/layout/function_addrs.tsv "$ROM" "$BUILD/funcs.txt" --white
-    [ -n "${SSR_SWITCH_ICON:-}" ] && install -D -m 644 "$SSR_SWITCH_ICON" "$BUILD/icon.jpg"
+    icon="${SSR_SWITCH_ICON:-$HERE/tools/switch/icon.jpg}"
+    [ -f "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
     say "Compiling for the Switch"
     build SSR_NRO_TITLE="Pokemon White" bash tools/bw1/build_switch.sh
     ;;
