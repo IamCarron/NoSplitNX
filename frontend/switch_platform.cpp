@@ -90,10 +90,16 @@ bool Playable(const Launcher::Game& g)
 {
     if (g.platform == Launcher::GBA) return true; // (any GBA game plays, with widescreen or without)
     if (!g.known) return false;
-    if (IsGame(g.code, "IPGE") || IsGame(g.code, "IPKE")) return rc_num_chunks > 0 && rc_portable_knows(g.code.c_str());
+    const char* hackBase = Launcher::HackBaseCode(g.code);
+    if (IsGame(g.code, "IPGE") || IsGame(g.code, "IPKE") || (hackBase && (!strcmp(hackBase, "IPGE") || !strcmp(hackBase, "IPKE"))))
+        return rc_num_chunks > 0 && rc_portable_knows(g.code.c_str());
     struct stat st;
     if (stat((g.folder + "/funcs.txt").c_str(), &st) == 0) return true;
-    return RomfsReady() && stat(("romfs:/funcs/" + g.code + ".txt").c_str(), &st) == 0;
+    if (!RomfsReady()) return false;
+    if (stat(("romfs:/funcs/" + g.code + ".txt").c_str(), &st) == 0) return true;
+    if (stat(("romfs:/funcs/" + BaseGameCode(g.code) + ".txt").c_str(), &st) == 0) return true;
+    if (hackBase && stat(("romfs:/funcs/" + std::string(hackBase) + ".txt").c_str(), &st) == 0) return true;
+    return false;
 }
 
 // The settings: settings.cfg in the program's folder (ssrecomp.cfg before; an old one is renamed).
@@ -935,10 +941,15 @@ bool Start(int& argc, char**& argv)
     if (!heartSilver)
     {
         const std::string own = gameDir + "/funcs.txt", builtIn = std::string("romfs:/funcs/") + code + ".txt";
+        const std::string builtInBase = std::string("romfs:/funcs/") + BaseGameCode(code) + ".txt";
+        const char* hackBase = Launcher::HackBaseCode(code);
+        const std::string builtInHack = hackBase ? std::string("romfs:/funcs/") + hackBase + ".txt" : "";
         if (stat(own.c_str(), &st) == 0) funcsPath = own;
         else if (RomfsReady() && stat("romfs:/funcs", &st) == 0)
         {
             if (stat(builtIn.c_str(), &st) == 0) funcsPath = builtIn;
+            else if (stat(builtInBase.c_str(), &st) == 0) funcsPath = builtInBase;
+            else if (!builtInHack.empty() && stat(builtInHack.c_str(), &st) == 0) funcsPath = builtInHack;
             else
             {
                 ShowMessage(std::string("  ") + rom.substr(rom.find_last_of('/') + 1) + " is a game this program does not know\n"

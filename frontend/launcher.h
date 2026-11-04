@@ -137,6 +137,35 @@ inline int Order(const std::string& code)
     return n;
 }
 
+// Returns the English base code if a code's first 3 letters match a known DS Pokémon game.
+inline const char* HackBaseCode(const std::string& code)
+{
+    if (code.size() != 4) return nullptr;
+    if (code.rfind("IRB", 0) == 0) return "IRBO";
+    if (code.rfind("IRA", 0) == 0) return "IRAO";
+    if (code.rfind("IRE", 0) == 0) return "IREO";
+    if (code.rfind("IRD", 0) == 0) return "IRDO";
+    if (code.rfind("IPG", 0) == 0) return "IPGE";
+    if (code.rfind("IPK", 0) == 0) return "IPKE";
+    if (code.rfind("CPU", 0) == 0) return "CPUE";
+    if (code.rfind("ADA", 0) == 0) return "ADAE";
+    if (code.rfind("APA", 0) == 0) return "APAE";
+    return nullptr;
+}
+
+inline bool IsCustomHackTitle(const std::string& name)
+{
+    std::string upper;
+    for (char c : name) upper += (char)toupper((unsigned char)c);
+    static const char* const tags[] = {
+        "BLAZE", "VOLT", "RENEGADE", "SACRED", "STORM", "REDUX", "RANDOM", "HACK",
+        "KAIZO", "VINTAGE", "MOON", "SUN", "SHINING", "LUMINESCENT", "PLUS", "DARK"
+    };
+    for (const char* tag : tags)
+        if (upper.find(tag) != std::string::npos) return true;
+    return false;
+}
+
 // A name as the list has it (POKEMON EMERALD) as a title: Pokemon Emerald (FireRed and LeafGreen
 // as they are spelt).
 inline std::string TitleCase(const std::string& name)
@@ -214,37 +243,86 @@ inline bool ReadGame(const std::string& rom, const std::string& folder, Game& g)
     }
     fclose(f);
     if (!ok) return false;
-    if (const KnownGame* k = Known(g.code))
+
+    // Check for companion code override file (.code beside the ROM or in the saves folder)
+    // allowing hacks with custom IDs (like BB2E, VW2E, etc.) to specify their base game profile:
+    const std::string romBase = rom.substr(rom.find_last_of('/') + 1);
+    const size_t dot = romBase.find_last_of('.');
+    const std::string stem = (dot != std::string::npos) ? romBase.substr(0, dot) : romBase;
+    const std::string romDir = (rom.find_last_of('/') != std::string::npos) ? rom.substr(0, rom.find_last_of('/')) : folder;
+    for (const std::string& path : { romDir + "/" + stem + ".code", folder + "/" + stem + ".code" })
+    {
+        FILE* cf = fopen(path.c_str(), "r");
+        if (cf)
+        {
+            char codeBuf[16] = {};
+            if (fscanf(cf, "%4s", codeBuf) == 1 && strlen(codeBuf) == 4)
+                g.code = codeBuf;
+            fclose(cf);
+            break;
+        }
+    }
+
+    const std::string banTitle = g.name;
+    const KnownGame* k = Known(g.code);
+    if (!k)
+    {
+        if (const char* base = HackBaseCode(g.code))
+            k = Known(base);
+    }
+
+    const bool isHack = (!Known(g.code) && HackBaseCode(g.code) != nullptr) ||
+                        IsCustomHackTitle(banTitle) || IsCustomHackTitle(stem);
+
+    if (k)
     {
         g.known = true;
-        g.name = k->name;
+        if (isHack && !banTitle.empty() && IsCustomHackTitle(banTitle))
+            g.name = banTitle;
+        else if (isHack && IsCustomHackTitle(stem))
+            g.name = stem;
+        else
+            g.name = k->name;
         g.saveName = k->save;
     }
     else
     {
-        if (g.name.empty()) g.name = rom.substr(rom.find_last_of('/') + 1);
-        g.saveName = "game.sav";
+        if (g.name.empty()) g.name = stem;
+        g.saveName = stem + ".sav";
     }
     for (char& c : g.name) c = (char)toupper((unsigned char)c);
+
     struct stat st;
-    g.hasSave = stat((folder + "/" + g.saveName).c_str(), &st) == 0;
-    if (!g.hasSave)
+    // For ROM hacks or games with existing custom saves, isolate save files so vanilla playthroughs
+    // are never overwritten:
+    if (stat((folder + "/" + stem + ".sav").c_str(), &st) == 0)
     {
-        // If the regional save name does not exist yet, look for common existing alternatives
-        // (such as <rom_stem>.sav, the unregionalised name e.g. black2.sav, or game.sav):
-        const std::string romBase = rom.substr(rom.find_last_of('/') + 1);
-        const size_t dot = romBase.find_last_of('.');
-        const std::string stem = (dot != std::string::npos) ? romBase.substr(0, dot) : romBase;
-        const size_t dash = g.saveName.find('-');
-        const std::string baseSave = (dash != std::string::npos) ? g.saveName.substr(0, dash) + ".sav" : "";
-        for (const std::string& candidate : { stem + ".sav", baseSave, std::string("game.sav") })
+        g.saveName = stem + ".sav";
+        g.hasSave = true;
+    }
+    else if (isHack)
+    {
+        g.saveName = stem + ".sav";
+        g.hasSave = stat((folder + "/" + g.saveName).c_str(), &st) == 0;
+    }
+    else
+    {
+        g.hasSave = stat((folder + "/" + g.saveName).c_str(), &st) == 0;
+        if (!g.hasSave)
         {
-            if (!candidate.empty() && candidate != g.saveName &&
-                stat((folder + "/" + candidate).c_str(), &st) == 0)
+            // If the regional save name does not exist yet, look for common existing alternatives
+            // (such as <rom_stem>.sav, the unregionalised name e.g. black2.sav, or game.sav):
+            const size_t dash = g.saveName.find('-');
+            const std::string baseSave = (dash != std::string::npos) ? g.saveName.substr(0, dash) + ".sav" : "";
+            for (const std::string& candidate : { stem + ".sav", baseSave, std::string("game.sav") })
             {
-                g.saveName = candidate;
-                g.hasSave = true;
-                break;
+                if (!candidate.empty() && candidate != g.saveName &&
+                    stat((folder + "/" + candidate).c_str(), &st) == 0)
+                {
+                    g.saveName = candidate;
+                    g.hasSave = true;
+                    break;
+                }
             }
         }
     }

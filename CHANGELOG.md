@@ -3,6 +3,10 @@
 
 ## Unreleased
 
+- **ROM hack compatibility and save isolation**: ROM hacks with custom internal IDs or modified region codes (such as Blaze Black, Volt White, Renegade Platinum, or custom difficulty hacks) are supported with 3-letter prefix fallbacks and companion `.code` override files. Hack titles are preserved in the launcher and saves are automatically isolated to `<rom_stem>.sav`, preventing hack ROMs from clashing with or overwriting vanilla game saves.
+
+- **Launcher save detection**: auto-detect existing saves matching the ROM's filename, base game title or fallback name when opening a game.
+
 - **Black 2 and White 2: battle questions keep their buttons** while waiting for an answer,
   including switching Pokémon between opponents and choosing whether to continue after
   fainting. The question stays full size, with its choices above it.
