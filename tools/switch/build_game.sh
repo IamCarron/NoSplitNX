@@ -94,12 +94,6 @@ elif command -v docker >/dev/null 2>&1; then
     if docker info >/dev/null 2>&1; then DOCKER=docker; else DOCKER="sudo docker"; fi
     say "devkitPro is not installed here: using its Docker image ($IMAGE, about 2 GB the first time)"
     $DOCKER pull "$IMAGE"
-    if ! $DOCKER run --rm "$IMAGE" test -f /opt/devkitpro/portlibs/switch/lib/libSDL2.a; then
-        say "Installing switch-sdl2 in Docker image..."
-        $DOCKER run --name nosplitnx-setup "$IMAGE" dkp-pacman -Syu --noconfirm --needed switch-dev switch-sdl2
-        $DOCKER commit nosplitnx-setup "$IMAGE"
-        $DOCKER rm nosplitnx-setup
-    fi
 else
     fail "devkitPro's Switch toolchain is not in $DEVKITPRO. Install devkitPro, then: sudo dkp-pacman -S switch-dev switch-sdl2 (or install Docker)"
 fi

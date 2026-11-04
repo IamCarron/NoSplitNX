@@ -42,13 +42,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build git python3
 
-      - name: Prepare devkitPro Docker image with switch-sdl2
-        run: |
-          docker pull devkitpro/devkita64
-          docker run --name dkp-builder devkitpro/devkita64 dkp-pacman -Syu --noconfirm --needed switch-dev switch-sdl2
-          docker commit dkp-builder devkitpro/devkita64
-          docker rm dkp-builder
-
       - name: Build all-in-one NoSplitNX (nosplitnx.nro)
         if: github.event_name == 'push' || github.event.inputs.target == 'all' || github.event.inputs.target == 'everything'
         run: |
