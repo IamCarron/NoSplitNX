@@ -76,7 +76,7 @@ struct Element
     // (They apply only over a widescreen world, which shows through them; without one the
     // piece is drawn whole, and pieces marked wideOnly, the parts drawn elsewhere, are not.)
     int holeCount = 0;
-    int holes[2][4] = {};
+    int holes[4][4] = {};
     bool wideOnly = false;
 
     // Whether source pixel (x, y) is left out by the cut corner or a hole.

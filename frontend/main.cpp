@@ -2718,28 +2718,24 @@ int main(int argc, char** argv)
             // the touch screen's arrangement: FIGHT above BAG, RUN and POKeMON; the four
             // moves two by two.
             const float bandY = 144, bandH = 48, viewL = 128 - viewWidth / 2, viewR = 128 + viewWidth / 2;
-            // (Another language's message is longer: "¿Qué debería hacer CHIMCHAR?" ends near x 232, so
-            // its box takes up to 60% of the view and the buttons the rest.)
-            const bool translated = BaseGameCode(gameCode) != gameCode;
             // A narrow view (4:3, 3:2: under 300 wide) has no room for the message beside the
             // buttons: the buttons take the whole band, the message (the question they answer)
-            // left out. Both Pokemon and both HP boxes stay in sight, which the touch screen's
-            // panel over the lower left covered there (GitHub #54, #67).
+            // left out. Both Pokemon and both HP boxes stay in sight.
             const bool narrow = viewWidth < 300;
-            const int edgeW = narrow ? 0 : 10, half = (int)(viewWidth / 2) - edgeW;
-            const int boxW = narrow ? 0 : std::min(246, translated ? std::max(half, std::min(240, (int)(viewWidth * 0.6f) - edgeW)) : half);
+            // The combat buttons need at least ~108 pixels for their labels (FIGHT, BAG, RUN, POKEMON / moves).
+            // On a 16:9 widescreen view (viewWidth ~341), the message box gets all remaining width (~229px).
+            // We scale the full 256-wide message box to fit that space so that no text is cut off or covered.
+            const float minPanelW = narrow ? viewWidth : 108.0f;
+            const float availBoxW = narrow ? 0.0f : std::max(0.0f, viewWidth - minPanelW - 4.0f);
+            const float boxScale = narrow ? 1.0f : std::min(1.0f, availBoxW / 256.0f);
+            const float actualBoxW = narrow ? 0.0f : 256.0f * boxScale;
             if (!narrow)
             {
-                sc.items.push_back({ 0, 0, 144, boxW, 48, viewL, bandY, 1.0f, 0, 255, false });
-                Element boxEdge = { 0, 0, 144, edgeW, 48, viewL + boxW, bandY, 1.0f, 0, 255, false };
-                boxEdge.flipX = true;
-                sc.items.push_back(boxEdge);
+                Element msgBox = { 0, 0, 144, 256, 48, viewL, bandY + (bandH - 48.0f * boxScale) / 2.0f, boxScale, 0, 255, false };
+                sc.items.push_back(msgBox);
             }
-            const float panelX = viewL + boxW + edgeW, panelY = bandY, panelR = viewR, panelB = bandY + bandH;
-            // (The margins leave room for the outlines, which are drawn outside each button: the
-            // chosen one's red outline stays inside the half, clear of the scene above.)
+            const float panelX = narrow ? viewL : viewL + actualBoxW + 2.0f, panelY = bandY, panelR = viewR, panelB = bandY + bandH;
             const float panelW = panelR - panelX, panelH = panelB - panelY, pad = 3, gap = 4;
-            // (The band's own colour around the message box.)
             sc.items.push_back(FillRect(panelX, panelY, (int)std::ceil(panelW) + 1, (int)panelH, 0x202020));
             // Each button's outline is drawn around the item listed here for it (in the order
             // of battleSel).
@@ -3255,6 +3251,7 @@ int main(int argc, char** argv)
             // panel would cover: it always has the panel, in the message box's band below them.
             int style = bw1.on || !wideView || !screens ? 0 : cfg.battleButtons;
             if (wideView && screens && !bw1.on && kind == 2) style = 2;
+            float panelLeft = 0;
             if ((moves || command || target) && style == 2)
             {
                 // PANEL: the corner panel's piece as tall as the message box (rows 147-189),
@@ -3264,14 +3261,43 @@ int main(int argc, char** argv)
                 c.dx = viewRight - 2 - c.sw * c.scale;
                 c.dy = 147;
                 c.border = true;
+                panelLeft = c.dx - 2;
                 sc.items.push_back(c);
             }
             else if (moves)
+            {
+                const float w = 256 * 0.5f;
+                panelLeft = (wideView ? 128 + viewWidth / 2 : 256.0f) - w - 4;
                 cornerPanel(Crop(1, 0, 30, 256, 98), 0.5f);   // the four moves, two by two (49 high)
+            }
             else if (command)
+            {
+                const float w = 256 * 0.44f;
+                panelLeft = (wideView ? 128 + viewWidth / 2 : 256.0f) - w - 4;
                 cornerPanel(Crop(1, 0, 78, 256, 114), 0.44f); // FIGHT above BAG, RUN and POKEMON (50 high)
+            }
             else if (target)
+            {
+                const float w = 256 * 0.45f;
+                panelLeft = (wideView ? 128 + viewWidth / 2 : 256.0f) - w - 4;
                 cornerPanel(Crop(1, 0, 22, 256, 110), 0.45f); // the targets (50 high)
+            }
+            if (wideView && (moves || command || target) && panelLeft > viewLeft && !sc.items.empty() && sc.items[0].holeCount < 4)
+            {
+                // Prevent the message box from being overlapped by the combat buttons:
+                // punch a hole in the top screen for the original message box area...
+                const int boxHole[4] = { 0, 144, 256, 192 };
+                std::copy(boxHole, boxHole + 4, sc.items[0].holes[sc.items[0].holeCount++]);
+                // ...and scale the message box to fit the available space beside the combat panel.
+                const float availBoxW = panelLeft - 2 - viewLeft;
+                const float boxScale = std::min(1.0f, availBoxW / 256.0f);
+                Element msgBox = Crop(0, 0, 144, 256, 48);
+                msgBox.dx = viewLeft;
+                msgBox.dy = 192 - 48.0f * boxScale;
+                msgBox.scale = boxScale;
+                msgBox.wideOnly = true;
+                sc.items.push_back(msgBox);
+            }
         }
         else if (funcWatch.Ran(bw2.save, 8) || (funcWatch.Ran(bw2.saveWrite, 8) && !strcmp(lastKnownBw2.name, "save")))
         {
