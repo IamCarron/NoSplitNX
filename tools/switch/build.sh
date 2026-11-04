@@ -45,7 +45,7 @@ for tool in cmake ninja; do
 done
 
 # The game's code, generated from the ROM (once).
-if [ ! -f gen/sources.cmake ]; then
+if [ ! -f "$GEN/sources.cmake" ]; then
     ROM="${1:-}"
     [ -n "$ROM" ] || fail "gen/ is missing: give your SoulSilver (US) ROM, e.g. tools/switch/build.sh ~/soulsilver.nds"
     [ -f "$ROM" ] || fail "no such file: $ROM"
