@@ -962,7 +962,8 @@ bool Start(int& argc, char**& argv)
                             "    Pokemon Platinum (CPUE), with the Platinum download;\n"
                             "    Pokemon Diamond (ADAE) and Pearl (APAE);\n"
                             "    and in Spanish: Black (IRBS), White (IRAS), Black 2 (IRES), White 2 (IRDS),\n"
-                            "    Platinum (CPUS), SoulSilver (IPGS), HeartGold (IPKS) and Diamond (ADAS).\n"
+                            "    Platinum (CPUS), SoulSilver (IPGS), HeartGold (IPKS) and Diamond (ADAS);\n"
+                            "    Diamond also in German and Italian, Pearl in French, Spanish, German and Korean.\n"
                             "  Other languages put the game's code in other places.");
                 return false;
             }

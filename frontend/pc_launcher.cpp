@@ -265,7 +265,7 @@ void SetRomFolder(Folders& fo)
 // the emulator, which reads them by file name.
 void ExtractFuncs(const Folders& fo)
 {
-    std::vector<const char*> codes = { "IREO", "IRDO", "IRBO", "IRAO", "CPUE", "ADAE", "IRAS", "CPUS", "ADAS", "APAE", "IREF", "IRDF", "CPUF", "IRBF", "IRAF", "IRBS", "IRES", "IRDS" };
+    std::vector<const char*> codes = { "IREO", "IRDO", "IRBO", "IRAO", "CPUE", "ADAE", "IRAS", "CPUS", "ADAS", "APAE", "APAF", "APAS", "APAD", "ADAD", "ADAI", "IREF", "IRDF", "CPUF", "IRBF", "IRAF", "IRBS", "IRES", "IRDS" };
     for (const auto& p : RegionalProfiles::profiles) if (p.functions) codes.push_back(p.code);
     for (const char* code : codes)
     {
@@ -548,6 +548,9 @@ int PickGame(Folders& fo, std::vector<Launcher::Game>& games, int selected, bool
         SDL_Quit();
         return -1;
     }
+    // Back from a game, the list is a new window: take the focus (as the game's window does),
+    // so that the keyboard and controllers work without a click first.
+    SDL_RaiseWindow(window);
 #ifdef SSR_IOS
     // The window exists now: ask iOS to turn, in case the device was already sideways.
     IosOrientLauncher();
@@ -1755,7 +1758,10 @@ bool Start(int& argc, char**& argv)
     // "--game IREO" (the desktop shortcuts, shortcuts.h): that game at once, without the list.
     // Other arguments (a ROM given by hand, the test harness): the program runs as it always has.
     std::string direct;
-    if (argc == 3 && !strcmp(argv[1], "--game"))
+    // "--rom <file>": that ROM at once, without the list (a GBA one is imported into roms first).
+    std::string directRom;
+    if (argc == 3 && !strcmp(argv[1], "--rom")) directRom = argv[2];
+    else if (argc == 3 && !strcmp(argv[1], "--game"))
     {
         direct = argv[2];
         for (char& c : direct) c = (char)toupper((unsigned char)c);
@@ -1858,6 +1864,7 @@ bool Start(int& argc, char**& argv)
 #ifdef SSR_GBA
     for (int i = 1; i < argc; i++)
         if (argv[i] && IsGbaRomName(argv[i])) ImportFile(fo, argv[i]);
+    if (!directRom.empty() && IsGbaRomName(directRom)) ImportFile(fo, directRom);
 #endif
 
     std::map<std::string, std::vector<uint32_t>> artCache;
@@ -1887,6 +1894,18 @@ bool Start(int& argc, char**& argv)
             break;
         }
     if (!direct.empty() && directGame < 0) fprintf(stderr, "[launcher] --game %s: not in the list\n", direct.c_str());
+    if (!directRom.empty())
+    {
+        auto same = [](const std::string& x, const std::string& y) {
+            std::error_code e1, e2;
+            const auto cx = std::filesystem::weakly_canonical(x, e1), cy = std::filesystem::weakly_canonical(y, e2);
+            return !e1 && !e2 && cx == cy;
+        };
+        const std::string copy = fo.roms + "/" + directRom.substr(directRom.find_last_of("/\\") + 1);
+        for (size_t i = 0; i < games.size() && directGame < 0; i++)
+            if ((same(games[i].rom, directRom) || same(games[i].rom, copy)) && Playable(fo, games[i])) directGame = (int)i;
+        if (directGame < 0) fprintf(stderr, "[launcher] --rom %s: not in the list\n", directRom.c_str());
+    }
 #ifdef SSR_UPDATER
     // (At launch, as the list opens: a popup if a new version is out, never installed unasked.)
     Updater::Init(ProgramDir(), fo.dir);
@@ -2012,6 +2031,11 @@ void Finish()
     STARTUPINFOW si = {};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi = {};
+    // The game list comes back as a new process, and Windows gives a new process's window
+    // the focus only if the one that had it allows it: without this the list opened behind
+    // or without the focus, and a controller did nothing until it was clicked. (This process
+    // had the last input, the menu's QUIT, so it may allow it.)
+    AllowSetForegroundWindow(ASFW_ANY);
     if (CreateProcessW(self, &cmd[0], nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi))
     {
         CloseHandle(pi.hThread);

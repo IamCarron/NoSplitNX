@@ -112,6 +112,11 @@ inline const KnownGame* Known(const std::string& code)
         { "IPGS", "Pokemon SoulSilver (ES)", "soulsilver-es.sav" },
         { "IPKS", "Pokemon HeartGold (ES)", "heartgold-es.sav" },
         { "ADAS", "Pokemon Diamond (ES, Experimental)", "diamond-es.sav" },
+        { "APAF", "Pokemon Pearl (FR, Experimental)", "pearl-fr.sav" },
+        { "APAS", "Pokemon Pearl (ES, Experimental)", "pearl-es.sav" },
+        { "APAD", "Pokemon Pearl (DE, Experimental)", "pearl-de.sav" },
+        { "ADAD", "Pokemon Diamond (DE, Experimental)", "diamond-de.sav" },
+        { "ADAI", "Pokemon Diamond (IT, Experimental)", "diamond-it.sav" },
         { "IPKI", "Pokemon HeartGold (IT)", "heartgold-it.sav" },
         { "CPUF", "Pokemon Platinum (FR)", "platinum-fr.sav" },
     };
@@ -1303,6 +1308,15 @@ struct SettingsPage
                 found = true;
             }
         if (!found) lines.push_back(line);
+        if (!strcmp(s.key, "wide_lines"))
+        {
+            // Match the in-game menu: choosing a manual resolution disables automatic
+            // lowering, so starting the game honours that choice.
+            bool haveBusy = false;
+            for (std::string& l : lines)
+                if (l.rfind("busy_detail=", 0) == 0) { l = "busy_detail=0"; haveBusy = true; }
+            if (!haveBusy) lines.push_back("busy_detail=0");
+        }
         const std::string tmp = path + ".tmp";
         if (FILE* f = fopen(tmp.c_str(), "w"))
         {

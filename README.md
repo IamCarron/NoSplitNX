@@ -55,7 +55,7 @@ language, revision or game, and complete playthroughs have not been verified.
 | Language | Games with added profiles |
 |---|---|
 | French, German, Italian, Spanish, Japanese and Korean | Black, White, Black 2, White 2, SoulSilver, HeartGold, Platinum |
-| Experimental | English Diamond/Pearl and Spanish Diamond |
+| Experimental | Diamond: English, Spanish, German and Italian. Pearl: English, French, Spanish, German and Korean |
 
 The supplied collection contains 42 exact ROM versions. New profiles validate their fingerprint before loading a save. The earlier 41-ROM menu/settings checks passed; newly supplied Korean Platinum has startup/menu checks so far. Broader battle, adapted-screen and full-playthrough testing continues.
 
@@ -169,6 +169,19 @@ in a `cheats` folder (make it if it isn't there):
 | iPhone and iPad | Files app: On My iPhone (or iPad) > Pokémon Fulldex > `cheats` |
 | Nintendo Switch | `/switch/pokemon-ds-wide/cheats/` on the SD card |
 
+- **Built in:** every DS game comes with 15 popular codes in the **POPULAR CHEATS** folder,
+  nothing to download: walk through walls, max money, all medicines (Rare Candy) and all
+  Poké Balls (Master Ball), wild shiny encounters, always catch, infinite HP and PP in
+  battle, double EXP, no wild encounters, fast egg hatching, all badges, all TMs, a complete
+  Pokédex and fly anywhere (or faster walking, in the versions with no fly code). Every
+  one is off until you turn it on, for your version of the game (US,
+  Europe, Spain, Germany, France or Italy); the note under a code says which buttons it uses.
+- **GBA games:** CHEATS in the GBA game's pause menu has 15 built in for Emerald, FireRed,
+  LeafGreen (1.0 and 1.1) and Ultra Violet: walk through walls (hold B), max money, 99 Rare
+  Candies, 99 Master Balls, wild shiny encounters, always catch, infinite HP and PP in battle,
+  double EXP, no wild encounters, fast egg hatch, all badges, all TMs and HMs, a complete
+  Pokédex and fly anywhere. Every one is off until you turn it on. They work on the game's
+  own memory (by pret's decompilations), not as codes, so nothing needs downloading.
 - **A cheat database:** `usrcheat.dat` holds codes for every game. CHEATS opens this
   game's folders (a folder with any on shows how many, or the one that is on). Open a
   folder for its codes. The database's note on the chosen code shows under the menu.
@@ -536,6 +549,23 @@ Please tell us how it runs on yours, with your model (see [Reporting a bug](#rep
   menu at the right edge of the view, and the Bag, party, Pokédex, map and
   other menus laid out for one screen.
 
+### Pokémon Diamond and Pearl
+
+| | |
+|---|---|
+| ![Diamond: Giratina against Elite Four Aaron's Dustox, with its moves beside the battle](docs/screenshots/diamond-giratina-battle.jpg) | ![Diamond: the Pokémon League, in widescreen](docs/screenshots/diamond-pokemon-league.jpg) |
+
+- **ROM:** Diamond (`ADAE`) or Pearl (`APAE`), US or Europe; Diamond also in
+  Spanish (`ADAS`), German (`ADAD`) and Italian (`ADAI`); Pearl also in French
+  (`APAF`), Spanish (`APAS`), German (`APAD`) and Korean (`APAK`). Japanese
+  Diamond and Pearl are not supported yet.
+- **Save:** `diamond.sav` or `pearl.sav` (other languages have their own, such as
+  `pearl-fr.sav`).
+- **What you get:** Platinum's widescreen layouts on Sinnoh's first adventure:
+  battles with their buttons and moves beside the action, and the Bag, party,
+  Pokédex, Trainer Card and other menus laid out for one screen. Still
+  experimental.
+
 ---
 
 ### The GBA games
@@ -575,7 +605,8 @@ OLED in handheld mode; a PC has room to spare, and draws the same picture up to
 
 - English versions (US or Europe) for the seven established DS games; French
   revision 0 for all seven; Spanish White, Platinum, SoulSilver and HeartGold;
-  Italian HeartGold. Diamond/Pearl support is experimental. See
+  Italian HeartGold. Diamond (English, Spanish, German, Italian) and Pearl (English,
+  French, Spanish, German, Korean) are experimental. See
   [regional profiles and touch controls](docs/REGIONAL-AND-TOUCH-CONTROLS.md).
 - Platinum: the Pokétch (the watch on the touch screen) isn't shown during
   normal play; its apps are one press of the screen-swap button away.
@@ -636,6 +667,8 @@ covers that project. Function names come from the
 symbol files), Platinum's from a build of
 [pret/pokeplatinum](https://github.com/pret/pokeplatinum); SoulSilver's and HeartGold's
 addresses come from ssrecomp's own SoulSilver layout. The DS is emulated by [melonDS](https://melonds.kuribo64.net).
+The built-in DS cheats come from DeadSkullzJr's cheat database, as carried in
+[libretro-database](https://github.com/libretro/libretro-database).
 The Switch's HOME MENU ICONS are made the way [sphaira](https://github.com/ITotalJustice/sphaira)
 makes its forwarders, with its homebrew loader (`tools/switch/forwarder`, GPL-3.0, based on
 nx-hbloader). The GBA games are played by Pokémon GBA Widescreen, built on
