@@ -475,6 +475,8 @@ inline Scene BattleChoiceScene(float viewWidth)
     choices.dx = 128 + viewWidth / 2 - choices.sw * choices.scale - 4;
     choices.dy = 4;
     choices.border = true;
+    choices.borderRadius = 3.0f;
+    choices.borderColor = 0x2A2E38;
     sc.items = { FullScreen(0), choices };
     return sc;
 }
@@ -513,6 +515,8 @@ inline Scene BagScene(float viewWidth, const ScreenImage* screens)
         card.scale = std::min({ 0.85f, (left - 6) / card.sw, (164 - card.dy) / card.sh });
         card.dx = viewLeft + 3;
         card.border = true;
+        card.borderRadius = 3.0f;
+        card.borderColor = 0x2A2E38;
         sc.items = { list, card };
     }
     sc.bgScreen = 1;
@@ -546,6 +550,8 @@ inline void SaveScreenPieces(Scene& sc, bool wideView, float viewRight, const Sc
         panel.dx = (wideView ? viewRight : 256.0f) - 256 * scale - pad - 2;
         panel.dy = pad + 2;
         panel.border = true;
+        panel.borderRadius = 3.0f;
+        panel.borderColor = 0x2A2E38;
         panel.crisp = true;
         sc.items.push_back(panel);
     }

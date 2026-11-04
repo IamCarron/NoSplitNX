@@ -2928,6 +2928,8 @@ int main(int argc, char** argv)
             const float y = 192 - h - pad - 1;
             sc.items.push_back(FillRect(x - pad, y - pad, (int)(w + 2 * pad), (int)(h + 2 * pad), 0x14141C));
             sc.items.back().border = true;
+            sc.items.back().borderRadius = 3.0f;
+            sc.items.back().borderColor = 0x2A2E38;
             crop.dx = x;
             crop.dy = y;
             crop.scale = scale;
@@ -3021,6 +3023,8 @@ int main(int argc, char** argv)
                     const float x = (wideView ? viewRight : 256.0f) - w - pad - 2, y = 72 - h / 2;
                     sc.items.push_back(FillRect(x - pad, y - pad, (int)(w + 2 * pad), (int)(h + 2 * pad), 0x14141C));
                     sc.items.back().border = true;
+                    sc.items.back().borderRadius = 3.0f;
+                    sc.items.back().borderColor = 0x2A2E38;
                     crop.dx = x;
                     crop.dy = y;
                     crop.scale = scale;
@@ -3355,6 +3359,8 @@ int main(int argc, char** argv)
                 const float y = (192 - h) / 2;
                 sc.items.push_back(FillRect(x - pad, y - pad, (int)(w + 2 * pad), (int)(h + 2 * pad), 0x14141C));
                 sc.items.back().border = true;
+                sc.items.back().borderRadius = 3.0f;
+                sc.items.back().borderColor = 0x2A2E38;
                 for (Slot b : buttons)
                 {
                     b.crop.dx = x + b.col * (bw + gap);
@@ -3619,6 +3625,8 @@ int main(int argc, char** argv)
             const float menuX = viewWidth >= 300 ? 128 + viewWidth / 2 - 161 * menuScale - 2 : 131;
             sc.items.push_back({ 1, 4, 0, 161, 192, menuX, (192 - 192 * menuScale) / 2, menuScale, 0, 255, false });
             sc.items.back().border = !AutoFocus::Blank(screens[1].pixels);
+            sc.items.back().borderRadius = 3.0f;
+            sc.items.back().borderColor = 0x2A2E38;
         };
 
         // The safety net below must not flash up for the few frames in which the field map is
@@ -4221,6 +4229,8 @@ int main(int argc, char** argv)
                 balls.scale = 0.42f;
             }
             balls.border = viewWidth >= 300 && !AutoFocus::Blank(screens[1].pixels);
+            balls.borderRadius = 3.0f;
+            balls.borderColor = 0x2A2E38;
             sc.items.push_back(balls);
         }
         else if (appActive("NamingScreen"))
@@ -7861,14 +7871,38 @@ int main(int argc, char** argv)
             : rects[1];
         if (frame < cursorShownUntil && cursorRect.w > 0 && !paused)
         {
-            int cx = cursorRect.x + (int)(cursorX * cursorRect.w / 256);
-            int cy = cursorRect.y + (int)(cursorY * cursorRect.h / 192);
-            int arm = cursorRect.w / 40 + 3;
-            int t = outH / 360 + 1;
-            canvas.Fill(cx - arm - 1, cy - t - 1, arm * 2 + 3, t * 2 + 3, 0xFF000000);
-            canvas.Fill(cx - t - 1, cy - arm - 1, t * 2 + 3, arm * 2 + 3, 0xFF000000);
-            canvas.Fill(cx - arm, cy - t, arm * 2 + 1, t * 2 + 1, curPress ? 0xFFFFD75E : 0xFFFFFFFF);
-            canvas.Fill(cx - t, cy - arm, t * 2 + 1, arm * 2 + 1, curPress ? 0xFFFFD75E : 0xFFFFFFFF);
+            const int cx = cursorRect.x + (int)(cursorX * cursorRect.w / 256);
+            const int cy = cursorRect.y + (int)(cursorY * cursorRect.h / 192);
+            const int rad = std::max(6, cursorRect.w / 48);
+            const uint32_t ringCol = curPress ? 0xFFFFD75E : 0xFFFFFFFF;
+            const uint32_t shadowCol = 0xD010141C;
+            const int bound = rad + 3;
+            for (int dy = -bound; dy <= bound; dy++)
+            {
+                for (int dx = -bound; dx <= bound; dx++)
+                {
+                    const float d = std::sqrt((float)(dx * dx + dy * dy));
+                    if (d >= rad - 1.8f && d <= rad + 1.8f)
+                    {
+                        if (d >= rad - 0.9f && d <= rad + 0.9f)
+                            canvas.Fill(cx + dx, cy + dy, 1, 1, ringCol);
+                        else
+                            canvas.Fill(cx + dx, cy + dy, 1, 1, shadowCol);
+                    }
+                    else if (d <= 1.5f)
+                    {
+                        canvas.Fill(cx + dx, cy + dy, 1, 1, ringCol);
+                    }
+                }
+            }
+            const int tickLen = std::max(2, rad / 3);
+            for (int i = 1; i <= tickLen; i++)
+            {
+                canvas.Fill(cx, cy - rad - i, 1, 1, shadowCol);
+                canvas.Fill(cx, cy + rad + i, 1, 1, shadowCol);
+                canvas.Fill(cx - rad - i, cy, 1, 1, shadowCol);
+                canvas.Fill(cx + rad + i, cy, 1, 1, shadowCol);
+            }
             overlayUsed = true;
         }
         // The top right corner.
@@ -7918,6 +7952,15 @@ int main(int argc, char** argv)
             shoesRect[0] = x; shoesRect[1] = y; shoesRect[2] = w; shoesRect[3] = h;
             const int ox = (int)(view.originX + x * view.unit), oy = (int)(view.originY + y * view.unit);
             const int ow = (int)(w * view.unit), oh = (int)(h * view.unit);
+            const int tsc = std::max(1, outH / 360);
+            const int padPx = 3 * tsc;
+            // Backing container card for running shoes
+            canvas.Fill(ox - padPx, oy - padPx, ow + 2 * padPx, oh + 2 * padPx, 0xE0181A20);
+            canvas.Fill(ox - padPx - 1, oy - padPx - 1, ow + 2 * padPx + 2, 1, 0xFF2A2E38);
+            canvas.Fill(ox - padPx - 1, oy + oh + padPx, ow + 2 * padPx + 2, 1, 0xFF2A2E38);
+            canvas.Fill(ox - padPx - 1, oy - padPx - 1, 1, oh + 2 * padPx + 2, 0xFF2A2E38);
+            canvas.Fill(ox + ow + padPx, oy - padPx - 1, 1, oh + 2 * padPx + 2, 0xFF2A2E38);
+
             for (int py = 0; py < oh; py++)
             {
                 const int sy = std::min(SHOES_H - 1, py * SHOES_H / std::max(1, oh));
@@ -7927,13 +7970,13 @@ int main(int argc, char** argv)
                     canvas.Fill(ox + px, oy + py, 1, 1, shoesPix[sy * SHOES_W + sx]);
                 }
             }
-            const int tsc = std::max(1, outH / 360);
             const std::string label = std::string(pads.Empty() ? Controls::KeyName(cfg.controls.Key(Controls::Y))
                 : Controls::InputName(cfg.controls.Pad(Controls::Y, cfg.byLabel), Controls::StyleOf(pads.controllers.empty() ? nullptr : pads.controllers[0])))
                 + ": RUN " + (shoesOn ? "ON" : "OFF");
             const int tw = Canvas::TextWidth(label, tsc);
-            canvas.Fill(ox + (ow - tw) / 2 - 3 * tsc, oy + oh + 2 * tsc, tw + 6 * tsc, 11 * tsc, 0xC0000000);
-            canvas.Text(ox + (ow - tw) / 2, oy + oh + 4 * tsc, label, tsc, 0xFFFFFFFF);
+            const uint32_t statusCol = shoesOn ? 0xFF2EB85C : 0xFFE0A82C;
+            canvas.Fill(ox + (ow - tw) / 2 - 4 * tsc, oy + oh + 4 * tsc, tw + 8 * tsc, 12 * tsc, 0xE014161C);
+            canvas.Text(ox + (ow - tw) / 2, oy + oh + 6 * tsc, label, tsc, statusCol);
             overlayUsed = true;
         }
         // Platinum's Pokedex list: name the face buttons on SEARCH, SWITCH and CHECK, as the
