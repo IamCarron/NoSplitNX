@@ -317,7 +317,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
         if (updateWork)
         {
             const std::string url = Updater::Choose();
-            if (!url.empty()) note = "NEW VERSION: GITHUB.COM/MAMESJ/POKEMON-FULLDEX/RELEASES";
+            if (!url.empty()) note = "NEW VERSION: GITHUB.COM/IAMCARRON/NOSPLITNX/RELEASES";
             const Updater::Status u = Updater::Get();
             if (page.selected >= 0 && page.selected < (int)page.items.size() && !page.items[page.selected].values.empty())
                 page.items[page.selected].values[0].second = u.text;
@@ -401,7 +401,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             if (hit == 0)
             {
                 updateMenu.open = false;
-                if (!Updater::Choose().empty()) note = "NEW VERSION: GITHUB.COM/MAMESJ/POKEMON-FULLDEX/RELEASES";
+                if (!Updater::Choose().empty()) note = "NEW VERSION: GITHUB.COM/IAMCARRON/NOSPLITNX/RELEASES";
             }
             else if (hit == 1) updateMenu.open = false;
             if (down & HidNpadButton_Plus) break;
@@ -524,6 +524,19 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                     note.clear();
                 }
             }
+            const u64 btnX = ctl.PadCustom() ? action(Controls::X) : (u64)HidNpadButton_X;
+            if (!wasNav && !onSettings && !onTabs && (down & btnX))
+            {
+                std::vector<int> playable;
+                for (size_t i = 0; i < games.size(); ++i)
+                    if (Playable(games[i]) && !games[i].comingSoon && Launcher::InTab(games[i].platform, tab))
+                        playable.push_back((int)i);
+                if (!playable.empty())
+                {
+                    selected = playable[rand() % playable.size()];
+                    note.clear();
+                }
+            }
             if (!wasNav && !onSettings && !onTabs && selected >= 0 && (down & (ctl.PadCustom() ? action(Controls::A) : (u64)HidNpadButton_A)))
             {
                 if (Playable(games[selected]))
@@ -564,8 +577,8 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                 if (on) canvas.Fill(x - 3 * s, 4 * s, Canvas::TextWidth(text, s) + 5 * s, 13 * s, th.frame);
                 canvas.Text(x, 7 * s, text, s, on ? th.title : th.hint);
             };
-            if (guide && !keysOpen) button(8 * s, "< BACK", false);
-            else if (!guide) button(canvas.w - 8 * s - Canvas::TextWidth("SETTINGS", s), "SETTINGS", onSettings);
+            if (guide && !keysOpen) button(8 * s, "< BACK (B)", false);
+            else if (!guide) button(canvas.w - 8 * s - Canvas::TextWidth("SETTINGS (Y)", s), "SETTINGS (Y)", onSettings);
         }
         u32 stride;
         u32* out = (u32*)framebufferBegin(&fb, &stride);

@@ -855,6 +855,8 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     const std::string title = "NOSPLIT NX";
     c.Text((c.w - Canvas::TextWidth(title, s + 1)) / 2, 6 * s, title, s + 1, th.title);
     // The tabs: the chosen one bright and underlined.
+    const int firstTabX = TabX(c, grid, 0) - Canvas::TextWidth(TabName(0), s) / 2;
+    c.Text(firstTabX - Canvas::TextWidth("[L] ", s), grid.tabsY + 3 * s, "[L] ", s, th.hint);
     for (int t = 0; t < TABS; t++)
     {
         const std::string name = TabName(t);
@@ -863,6 +865,8 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
         c.Text(x, y, name, s, t == tab ? th.title : th.hint);
         if (t == tab) c.Fill(x - 2 * s, grid.tabsY + grid.tabsH - s, Canvas::TextWidth(name, s) + 3 * s, s, th.frame);
     }
+    const int lastTabX = TabX(c, grid, TABS - 1) + Canvas::TextWidth(TabName(TABS - 1), s) / 2;
+    c.Text(lastTabX + 4 * s, grid.tabsY + 3 * s, " [R]", s, th.hint);
 
     FollowSelection(v, selected, scroll, follow);
     const int top = grid.top, bottom = grid.bottom, tile = grid.tile, labelH = grid.labelH;
@@ -944,7 +948,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     // More games below the ones shown. (None drawn for above: under the tabs it looked like one
     // of their underlines, and the cut tiles at the top say it already.)
     if (scroll + (bottom - top) < v.height - grid.gap) c.Fill(c.w / 2 - 8 * s, bottom - 2 * s, 16 * s, s, th.hint);
-    const std::string hint = !note.empty() ? note : !hintText.empty() ? hintText : "A: PLAY    Y: SETTINGS    L / R: TABS    +: QUIT";
+    const std::string hint = !note.empty() ? note : !hintText.empty() ? hintText : "A: PLAY   Y: SETTINGS   X: RANDOM   L / R: TABS   +: QUIT";
     int hintScale=s;
         while(hintScale>1 && Canvas::TextWidth(hint,hintScale)>c.w-8)--hintScale;
     c.Text((c.w - Canvas::TextWidth(hint, hintScale)) / 2, c.h - 12 * s, hint, hintScale, th.hint);
@@ -1045,22 +1049,8 @@ inline std::vector<Setting> SettingsList()
     l.push_back({ "start_button", "START BUTTON", { { "menu", "PAUSE MENU" }, { "ds", "DS START" } }, "ds",
                   "DS START: START ON A CONTROLLER IS THE DS START; THE XBOX / PS BUTTON, OR START AND BACK TOGETHER, OPEN THE PAUSE MENU. PAUSE MENU: START (MENU ON XBOX / OPTIONS ON PS) OPENS IT. ENTER IS ALWAYS THE DS START." });
 #endif
-#ifndef __SWITCH__
-    l.push_back({ "buttons", "BUTTONS", { { "labels", "BY LABEL" }, { "positions", "BY POSITION" } }, "labels",
-                  "BY LABEL: THE BUTTON MARKED A IS THE DS A ON ANY CONTROLLER. BY POSITION: THE BUTTONS WHERE A DS HAS THEM (XBOX A IS DS B)." });
-#ifndef SSR_PHONE
-    l.push_back({ "pad_touch", "STICK TOUCH CURSOR", onOff, "0", "ON: THE RIGHT STICK MOVES A CURSOR ON THE TOUCH SCREEN AND THE LEFT TRIGGER PRESSES IT." });
-    // (frontend/shortcuts.h, made by the game list: pc_launcher.cpp. Not on a Mac: its Dock and
-    // Launchpad start the app itself.)
-#if defined(_WIN32)
-    l.push_back({ "!shortcuts", "DESKTOP SHORTCUTS", { { "", "CREATE" } }, "",
-                  "PUTS A SHORTCUT FOR EACH GAME IN THIS LIST ON YOUR DESKTOP WITH ITS PICTURE. IT STARTS THAT GAME STRAIGHT AWAY (QUIT IN THE PAUSE MENU STILL COMES BACK TO THIS LIST). CREATE AGAIN AFTER ADDING GAMES OR MOVING THIS FOLDER." });
-#elif !defined(__APPLE__)
-    l.push_back({ "!shortcuts", "DESKTOP SHORTCUTS", { { "", "CREATE" } }, "",
-                  "PUTS A SHORTCUT FOR EACH GAME IN THIS LIST ON YOUR DESKTOP AND IN YOUR APPS MENU WITH ITS PICTURE. IT STARTS THAT GAME STRAIGHT AWAY. ON THE STEAM DECK THEY ALSO SHOW UP IN ADD A NON-STEAM GAME. CREATE AGAIN AFTER ADDING GAMES OR MOVING THIS FOLDER." });
-#endif
-#endif
-#endif
+    l.push_back({ "pad_touch", "STICK TOUCH CURSOR", onOff, "1",
+                  "ON: THE RIGHT STICK MOVES A CURSOR ON THE TOUCH SCREEN AND THE LEFT TRIGGER PRESSES IT (RECOMMENDED FOR TV / DOCKED MODE)." });
 #if defined(__SWITCH__) && defined(SSR_ALL_GAMES)
     // (frontend/switch_forwarder.cpp, made by the game list: switch_platform.cpp.)
     l.push_back({ "!forwarders", "HOME MENU ICONS", { { "", "INSTALL" } }, "",
