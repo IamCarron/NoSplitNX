@@ -1099,6 +1099,58 @@ bool IsHandheld()
     return appletGetOperationMode() == AppletOperationMode_Handheld;
 }
 
+const char* SystemLanguage()
+{
+    static std::string detected;
+    if (!detected.empty()) return detected.c_str();
+
+    Result rc = setInitialize();
+    if (R_SUCCEEDED(rc))
+    {
+        u64 languageCode = 0;
+        if (R_SUCCEEDED(setGetSystemLanguage(&languageCode)))
+        {
+            SetLanguage lang = SetLanguage_ENUS;
+            if (R_SUCCEEDED(setMakeLanguage(languageCode, &lang)))
+            {
+                switch (lang)
+                {
+                case SetLanguage_JA:    detected = "ja"; break;
+                case SetLanguage_ENUS:
+                case SetLanguage_ENGB:  detected = "en"; break;
+                case SetLanguage_FR:
+                case SetLanguage_FRCA:  detected = "fr"; break;
+                case SetLanguage_DE:    detected = "de"; break;
+                case SetLanguage_IT:    detected = "it"; break;
+                case SetLanguage_ES:
+                case SetLanguage_ES419: detected = "es"; break;
+                case SetLanguage_ZHCN:
+                case SetLanguage_ZHTW:
+                case SetLanguage_ZHHANS:
+                case SetLanguage_ZHHANT: detected = "zh"; break;
+                case SetLanguage_KO:    detected = "ko"; break;
+                case SetLanguage_NL:    detected = "nl"; break;
+                case SetLanguage_PT:
+                case SetLanguage_PTBR:  detected = "pt"; break;
+                case SetLanguage_RU:    detected = "ru"; break;
+                default:                detected = "en"; break;
+                }
+            }
+            else
+            {
+                char langStr[9] = {0};
+                std::memcpy(langStr, &languageCode, sizeof(u64));
+                detected = langStr;
+            }
+            fprintf(stderr, "[switch] detected system language: %s (code 0x%llx, enum %d)\n",
+                detected.c_str(), (unsigned long long)languageCode, (int)lang);
+        }
+        setExit();
+    }
+    if (detected.empty()) detected = "en";
+    return detected.c_str();
+}
+
 static Thread g_emuThread;
 
 bool StartThread(void (*entry)(void*), void* arg)
