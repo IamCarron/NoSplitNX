@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+- Graduate Spanish Pokémon Black, White, Black 2 and White 2 to fully supported games with their own function tables, widescreen map expansion and uncropped title menus.
+
 - Windows: allow repeated saves of a custom touch layout while preserving the previous layout if replacement fails.
 
 - Add French, German, Japanese and Korean to the launcher and Fulldex menus, with automatic language detection, embedded fonts and translated controller/touch labels. Embedded GBA menus follow the selected language.

@@ -607,7 +607,10 @@
       "LEFT/RIGHT": "IZQUIERDA / DERECHA",
       "ESCAPE": "ESCAPE",
       "TAB": "TAB",
-      "BACKSPACE": "BACKSPACE"
+      "BACKSPACE": "BACKSPACE",
+      "IRBS": "IRBS",
+      "IRDS": "IRDS",
+      "IRES": "IRES"
     },
     "it": {
       " (NEXT START)": " (AL RIAVVIO)",
@@ -1207,7 +1210,10 @@
       "LEFT/RIGHT": "SINISTRA / DESTRA",
       "ESCAPE": "ESCAPE",
       "TAB": "TAB",
-      "BACKSPACE": "BACKSPACE"
+      "BACKSPACE": "BACKSPACE",
+      "IRBS": "IRBS",
+      "IRDS": "IRDS",
+      "IRES": "IRES"
     },
     "fr": {
       " (NEXT START)": " (PROCHAIN DÉBUT)",
@@ -1807,7 +1813,10 @@
       "LEFT/RIGHT": "GAUCHE / DROITE",
       "ESCAPE": "ESCAPE",
       "TAB": "TAB",
-      "BACKSPACE": "BACKSPACE"
+      "BACKSPACE": "BACKSPACE",
+      "IRBS": "IRBS",
+      "IRDS": "IRDS",
+      "IRES": "IRES"
     },
     "de": {
       " (NEXT START)": " (NÄCHSTER START)",
@@ -2407,7 +2416,10 @@
       "LEFT/RIGHT": "LINKS / RECHTS",
       "ESCAPE": "ESCAPE",
       "TAB": "TAB",
-      "BACKSPACE": "BACKSPACE"
+      "BACKSPACE": "BACKSPACE",
+      "IRBS": "IRBS",
+      "IRDS": "IRDS",
+      "IRES": "IRES"
     },
     "ja": {
       " (NEXT START)": " (次のスタート)",
@@ -3007,7 +3019,10 @@
       "LEFT/RIGHT": "左 / 右",
       "ESCAPE": "ESCAPE",
       "TAB": "TAB",
-      "BACKSPACE": "BACKSPACE"
+      "BACKSPACE": "BACKSPACE",
+      "IRBS": "IRBS",
+      "IRDS": "IRDS",
+      "IRES": "IRES"
     },
     "ko": {
       " (NEXT START)": " (다음 시작)",
@@ -3607,7 +3622,10 @@
       "LEFT/RIGHT": "왼쪽 / 오른쪽",
       "ESCAPE": "ESCAPE",
       "TAB": "TAB",
-      "BACKSPACE": "BACKSPACE"
+      "BACKSPACE": "BACKSPACE",
+      "IRBS": "IRBS",
+      "IRDS": "IRDS",
+      "IRES": "IRES"
     }
   }
 }
