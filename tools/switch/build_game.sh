@@ -72,9 +72,13 @@ case "$GAME" in
     *) fail "which game? tools/switch/build_game.sh soulsilver|hgss|all|black2|white2|black|white your-rom.nds (or bw or platinum, no ROM)" ;;
 esac
 if [ "$GAME" != bw ] && [ "$GAME" != platinum ]; then
-    [ -n "$ROM" ] || fail "give your ROM: tools/switch/build_game.sh $GAME your-rom.nds"
-    [ -f "$ROM" ] || fail "no such file: $ROM"
-    ROM="$(cd "$(dirname "$ROM")" && pwd)/$(basename "$ROM")"
+    if [ "$GAME" = all ] && [ -z "$ROM" ]; then
+        ROM=""
+    else
+        [ -n "$ROM" ] || fail "give your ROM: tools/switch/build_game.sh $GAME your-rom.nds"
+        [ -f "$ROM" ] || fail "no such file: $ROM"
+        ROM="$(cd "$(dirname "$ROM")" && pwd)/$(basename "$ROM")"
+    fi
 fi
 for tool in git cmake ninja python3; do
     command -v "$tool" >/dev/null || fail "$tool is not installed (Ubuntu: sudo apt install git cmake ninja-build python3)"
@@ -143,21 +147,31 @@ all)
     # the SoulSilver ROM as for hgss) and the Black games' function tables in its romfs (as for bw).
     # It shows the list of the player's games when it starts (frontend/launcher.h).
     BUILD=build-switch-all
-    [ "$(dd if="$ROM" bs=1 skip=12 count=4 2>/dev/null)" = IPGE ] ||
-        fail "$ROM is not Pokemon SoulSilver (US, game code IPGE): the tables are made from it"
-    if [ ! -f gen/sources.cmake ]; then
-        say "SoulSilver's tables, from $ROM"
-        python3 tools/recomp.py --rom "$ROM" --layout layouts/soulsilver-us.json melonDS/src gen
-        python3 tools/apps.py --layout layouts/soulsilver-us.json gen
+    if [ -n "$ROM" ]; then
+        [ "$(dd if="$ROM" bs=1 skip=12 count=4 2>/dev/null)" = IPGE ] ||
+            fail "$ROM is not Pokemon SoulSilver (US, game code IPGE): the tables are made from it"
+        if [ ! -f gen/sources.cmake ]; then
+            say "SoulSilver's tables, from $ROM"
+            python3 tools/recomp.py --rom "$ROM" --layout layouts/soulsilver-us.json melonDS/src gen
+            python3 tools/apps.py --layout layouts/soulsilver-us.json gen
+        fi
+        python3 tools/soulsilver/tables_only.py gen build-gen-tables
+        GEN="$HERE/build-gen-tables"
+    elif [ -d "$HERE/build-gen-tables" ] && [ -f "$HERE/build-gen-tables/sources.cmake" ]; then
+        GEN="$HERE/build-gen-tables"
+    else
+        say "No SoulSilver ROM provided: building the all-games program with Gen 5, Platinum and GBA support"
+        GEN="$HERE/tools/bw2/stubgen"
     fi
-    python3 tools/soulsilver/tables_only.py gen build-gen-tables
     ROMFS="$HERE/$BUILD/romfs"
     bw_tables "$ROMFS"
     cp tools/platinum/CPUE.txt "$ROMFS/funcs/CPUE.txt"
     cp tools/platinum/ADAE.txt "$ROMFS/funcs/ADAE.txt" # Diamond: Platinum's names (tools/port_family.py)
     python3 tools/shift_table.py --all "$ROMFS/funcs" # (the other languages: tools/versions)
     cp tools/regions/*.txt "$ROMFS/funcs/"
-    python3 tools/regions/package_profiles.py --funcs "$ROMFS/funcs" --portable "$HERE/build-gen-tables/rc_portable.cpp"
+    if [ -f "$GEN/rc_portable.cpp" ]; then
+        python3 tools/regions/package_profiles.py --funcs "$ROMFS/funcs" --portable "$GEN/rc_portable.cpp"
+    fi
     # The HOME Menu entries' program (HOME MENU ICONS in the list's settings: frontend/switch_forwarder.cpp).
     say "The HOME Menu icons' loader (tools/switch/forwarder)"
     build bash tools/switch/build_forwarder.sh "$HERE/$BUILD/forwarder-build" "$ROMFS/forwarder"
@@ -186,7 +200,7 @@ all)
         say "GBA games too: $SSR_GBA_DIR"
     fi
     say "Compiling for the Switch"
-    build SSR_SWITCH_JIT=1 SSR_SWITCH_GEN="$HERE/build-gen-tables" SSR_SWITCH_BUILD="$BUILD" \
+    build SSR_SWITCH_JIT=1 SSR_SWITCH_GEN="$GEN" SSR_SWITCH_BUILD="$BUILD" \
         SSR_SWITCH_ROMFS="$ROMFS" SSR_ALL_GAMES=ON SSR_PC_ART="$ART" SSR_NRO_TITLE="Pokémon Fulldex" bash tools/switch/build.sh
     mkdir -p build-sd/switch/pokemon-ds-wide/roms
     cp "$BUILD/ssrecomp.nro" build-sd/switch/pokemon-ds-wide/pokemon-ds-wide.nro
