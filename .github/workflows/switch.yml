@@ -41,40 +41,50 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build git python3
 
+      - name: Prepare devkitPro Docker image with switch-sdl2
+        run: |
+          docker pull devkitpro/devkita64
+          docker run --name dkp-builder devkitpro/devkita64 dkp-pacman -Syu --noconfirm --needed switch-dev switch-sdl2
+          docker commit dkp-builder devkitpro/devkita64
+          docker rm dkp-builder
+
       - name: Build all-in-one NoSplitNX (nosplitnx.nro)
-        if: github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'everything'
+        if: github.event_name == 'push' || github.event.inputs.target == 'all' || github.event.inputs.target == 'everything'
         run: |
           bash tools/switch/build_game.sh all
 
       - name: Build standalone Black & White / Black 2 & White 2
-        if: inputs.target == 'bw' || inputs.target == 'everything'
+        if: github.event.inputs.target == 'bw' || github.event.inputs.target == 'everything'
         run: |
           bash tools/switch/build_game.sh bw
 
       - name: Build standalone Platinum
-        if: inputs.target == 'platinum' || inputs.target == 'everything'
+        if: github.event.inputs.target == 'platinum' || github.event.inputs.target == 'everything'
         run: |
           bash tools/switch/build_game.sh platinum
 
       - name: Upload NoSplitNX package
-        if: github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'everything'
+        if: github.event_name == 'push' || github.event.inputs.target == 'all' || github.event.inputs.target == 'everything'
         uses: actions/upload-artifact@v4
         with:
           name: nosplitnx-switch
           path: build-sd/nosplitnx-switch.zip
+          if-no-files-found: warn
 
       - name: Upload standalone Black & White 1 & 2 NROs
-        if: inputs.target == 'bw' || inputs.target == 'everything'
+        if: github.event.inputs.target == 'bw' || github.event.inputs.target == 'everything'
         uses: actions/upload-artifact@v4
         with:
           name: pokemon-bw-standalone-switch
           path: |
             build-sd/pokemon-black2-white2-wide-switch.zip
             build-sd/pokemon-black-white-wide-switch.zip
+          if-no-files-found: warn
 
       - name: Upload standalone Platinum NRO
-        if: inputs.target == 'platinum' || inputs.target == 'everything'
+        if: github.event.inputs.target == 'platinum' || github.event.inputs.target == 'everything'
         uses: actions/upload-artifact@v4
         with:
           name: pokemon-platinum-standalone-switch
           path: build-sd/pokemon-platinum-wide-switch.zip
+          if-no-files-found: warn
