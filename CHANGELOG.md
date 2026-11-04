@@ -3,6 +3,14 @@
 
 ## Unreleased
 
+- **Black 2 and White 2: battle questions keep their buttons** while waiting for an answer,
+  including switching Pokémon between opponents and choosing whether to continue after
+  fainting. The question stays full size, with its choices above it.
+
+- **Black, White, Black 2 and White 2: the Bag's messages stay readable** when selecting
+  or using an item, including teaching a TM. The item card moves below the message box
+  instead of covering its text, and includes the move's type, power, accuracy and PP.
+
 - Graduate Spanish Pokémon Black, White, Black 2 and White 2 to fully supported games with their own function tables, widescreen map expansion and uncropped title menus.
 
 - Nintendo Switch: add GitHub Actions workflow to build release packages, add a default Homebrew Menu icon, and allow building without requiring a SoulSilver ROM.

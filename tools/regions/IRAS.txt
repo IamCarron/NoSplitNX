@@ -23,6 +23,7 @@
 021e9894 t ov93 ? BtlvCore_WaitMoveSelect
 021e98c8 t ov93 ? BtlvCore_WaitTargetSelect
 021eac34 t ov93 ? BChoiceMain_Task
+021eac34 t ov93 ? BtlvCore_PollYesNo
 021ead94 t ov93 ? BtlvCore_WaitLevelUpWin
 021eadb4 t ov93 ? BtlvCore_WaitLevelUpStats
 021eadd4 t ov93 ? BtlvCore_WaitCloseLevelUpWin
