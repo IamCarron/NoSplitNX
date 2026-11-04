@@ -8,6 +8,7 @@ name: Nintendo Switch builds
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*', 'beta*' ]
   workflow_dispatch:
     inputs:
       target:
@@ -88,3 +89,13 @@ jobs:
           name: pokemon-platinum-standalone-switch
           path: build-sd/pokemon-platinum-wide-switch.zip
           if-no-files-found: warn
+
+      - name: Create GitHub Release for Beta Tag
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          name: "NoSplitNX ${{ github.ref_name }}"
+          files: |
+            build-sd/nosplitnx-switch.zip
+          generate_release_notes: true
