@@ -9,17 +9,23 @@
 
 - **Launcher save detection**: auto-detect existing saves matching the ROM's filename, base game title or fallback name when opening a game.
 
-- **Black 2 and White 2: battle questions keep their buttons** while waiting for an answer,
-  including switching Pokémon between opponents and choosing whether to continue after
-  fainting. The question stays full size, with its choices above it.
+- **Nintendo Switch: GitHub Actions workflow** to build release packages, Homebrew Menu icon, and building without requiring a SoulSilver ROM.
 
-- **Black, White, Black 2 and White 2: the Bag's messages stay readable** when selecting
-  or using an item, including teaching a TM. The item card moves below the message box
-  instead of covering its text, and includes the move's type, power, accuracy and PP.
+- **Black 2 and White 2: battle questions keep their buttons** until you answer ("Will you
+  switch your Pokémon?", "Use next Pokémon?"), in every language. The question stays full size
+  with the battle, and both answers sit at the end of the message bar (Black and White too).
+  (Thanks to ahrhamza, PR #35, and IamCarron, PR #70, for the other languages' addresses.)
 
-- Graduate Spanish Pokémon Black, White, Black 2 and White 2 to fully supported games with their own function tables, widescreen map expansion and uncropped title menus.
+- **Black, White, Black 2 and White 2: the Bag shows both screens side by side** once an
+  item is chosen, as on the DS, so its messages are never covered and a TM's type, power,
+  accuracy and PP are all visible. (Thanks to ahrhamza, PR #35.)
 
-- Nintendo Switch: add GitHub Actions workflow to build release packages, add a default Homebrew Menu icon, and allow building without requiring a SoulSilver ROM.
+- **Fast forward: a quick tap moves a menu cursor once** (#73). The games repeat a held
+  direction after a few frames, so at 4x a tap moved it two or three places. A direction's
+  first quarter second now runs at normal speed; held longer, fast forward carries on.
+
+- **Spanish Black, Black 2 and White 2 fully supported**, like Spanish White: any copy of the
+  game works, not only the exact dump the beta profiles were made from. (Thanks to IamCarron, PR #71.)
 
 - Diamond and Pearl in more languages (experimental, like English Diamond/Pearl): Diamond in German
   and Italian, Pearl in French, Spanish, German and Korean. Each has its own save (pearl-fr.sav,
