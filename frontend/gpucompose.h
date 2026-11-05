@@ -357,30 +357,37 @@ private:
         // sprites, drawn again one screen width to the left and to the right.
         if (scene.weatherObj && (left > 0 || right < outW))
         {
-            // (Rows where 2D is continued beside the screen are left out.)
-            for (int side = 0; side < 2; side++)
+            // Extract the weather sprite pixels once for both sides instead of duplicating work.
+            for (int y = 0; y < 192; y++)
             {
-                SDL_Texture* w = Make(WeatherTex[side], 256, 192);
-                if (!w) continue;
-                for (int y = 0; y < 192; y++)
+                uint32_t* row = &Weather[y * 256];
+                if (!MergedWeatherRow(scene, top, y))
                 {
-                    uint32_t* row = &Weather[y * 256];
-                    if (!MergedWeatherRow(scene, top, y))
-                    {
-                        std::fill(row, row + 256, 0u);
-                        continue;
-                    }
-                    for (int x = 0; x < 256; x++)
-                    {
-                        const int i = y * 256 + x;
-                        row[x] = LayerClass(top.flags[i]) == LAYER_OBJ ? 0xFF000000u | (top.pixels[i] & 0xFFFFFF) : 0u;
-                    }
+                    std::fill(row, row + 256, 0u);
+                    continue;
                 }
+                for (int x = 0; x < 256; x++)
+                {
+                    const int i = y * 256 + x;
+                    row[x] = LayerClass(top.flags[i]) == LAYER_OBJ ? 0xFF000000u | (top.pixels[i] & 0xFFFFFF) : 0u;
+                }
+            }
+            SDL_Texture* w = Make(WeatherTex[0], 256, 192);
+            if (w)
+            {
                 SDL_SetTextureBlendMode(w, SDL_BLENDMODE_BLEND);
                 SDL_SetTextureScaleMode(w, SDL_ScaleModeNearest);
                 SDL_UpdateTexture(w, nullptr, Weather, 256 * 4);
-                const SDL_FRect dst = { v.originX + (side ? 256 : -256) * v.unit, (float)y0, 256 * v.unit, (float)h };
-                SDL_RenderCopyF(R, w, nullptr, &dst);
+                if (left > 0)
+                {
+                    const SDL_FRect dst = { v.originX - 256 * v.unit, (float)y0, 256 * v.unit, (float)h };
+                    SDL_RenderCopyF(R, w, nullptr, &dst);
+                }
+                if (right < outW)
+                {
+                    const SDL_FRect dst = { v.originX + 256 * v.unit, (float)y0, 256 * v.unit, (float)h };
+                    SDL_RenderCopyF(R, w, nullptr, &dst);
+                }
             }
         }
         (void)outH;

@@ -2039,14 +2039,12 @@ int main(int argc, char** argv)
     cfg.autoDetail = true; // lower lines dynamically when busy, keeping frames on time
 #ifdef SSR_DEKO3D
     // Black, Black 2 and White 2 (a function table) with the world drawn by the graphics chip:
-    // On the Switch, 384 lines (double the DS's 192 lines) gives sharp, crisp graphics while
-    // maintaining smooth 60 Hz gameplay without frame drops outdoors or during particle weather.
-    // In-between frames (60 fps polygon interpolation) are left off by default so that heavy
-    // polygon-pairing scenes stay rock-solid at full speed.
+    // Default to native 720p resolution and 60 fps interpolation on Switch, with autoDetail enabled
+    // so that heavy particle scenes dynamically scale detail if needed to prevent frame drops.
     if (!opt.funcs.empty())
     {
-        cfg.wideLines = 384;
-        cfg.fps60 = false;
+        cfg.wideLines = 720;
+        cfg.fps60 = true;
         cfg.autoDetail = true;
     }
 #endif
@@ -2079,6 +2077,11 @@ int main(int argc, char** argv)
     // One wide screen always: a layout or large screen saved by an older version is ignored.
     if (!opt.layoutGiven) cfg.layout = "merged";
     cfg.focusMode = 0;
+    // Ensure autoDetail is enabled for Gen 5 so resolution automatically scales under heavy load.
+    if (!opt.funcs.empty())
+    {
+        cfg.autoDetail = true;
+    }
 #endif
     if (opt.layoutGiven || opt.headless) cfg.layout = opt.layout;
     if (opt.fullscreen) cfg.fullscreen = true;
