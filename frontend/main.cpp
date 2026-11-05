@@ -2038,14 +2038,16 @@ int main(int argc, char** argv)
     cfg.fps60 = false;
     cfg.autoDetail = true; // lower lines dynamically when busy, keeping frames on time
 #ifdef SSR_DEKO3D
-    // Black, Black 2 and White 2 (a function table) with the world drawn by the graphics chip
-    // (WORLD ON GPU, on by default): measured at about 16 ms a frame at 720 lines with the
-    // in-between frames on, so they start like that. (If the graphics chip cannot be used,
-    // LOWER DETAIL WHEN BUSY brings the lines down where needed.)
+    // Black, Black 2 and White 2 (a function table) with the world drawn by the graphics chip:
+    // On the Switch, 384 lines (double the DS's 192 lines) gives sharp, crisp graphics while
+    // maintaining smooth 60 Hz gameplay without frame drops outdoors or during particle weather.
+    // In-between frames (60 fps polygon interpolation) are left off by default so that heavy
+    // polygon-pairing scenes stay rock-solid at full speed.
     if (!opt.funcs.empty())
     {
-        cfg.wideLines = 720;
-        cfg.fps60 = true;
+        cfg.wideLines = 384;
+        cfg.fps60 = false;
+        cfg.autoDetail = true;
     }
 #endif
 #endif
@@ -2354,7 +2356,11 @@ int main(int argc, char** argv)
         for (int i = 0; i < 2; i++)
             tex[i] = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, 256, 192);
         applySmooth();
+#ifdef __SWITCH__
+        SDL_ShowCursor(SDL_DISABLE);
+#else
         SDL_ShowCursor(cfg.fullscreen ? SDL_DISABLE : SDL_ENABLE);
+#endif
 
         SDL_AudioSpec want;
         SDL_zero(want);
@@ -2917,6 +2923,27 @@ int main(int argc, char** argv)
         // with black bars beside it); wideView still decides where menus and buttons go, which
         // needs the room.
         const bool worldWide = viewWidth > 256.5f;
+        // Indoor maps (player's room, buildings) render a 3D scene that does not reach the bottom
+        // or sides of the DS screen: the widescreen canvas then has empty black areas instead of
+        // the extended terrain. Detect this from the previous frame's wide picture by sampling the
+        // bottom-centre strip; if all pixels there are transparent, the room is indoors and the
+        // view should not be widened (soft bars from the DS screen's edges show instead).
+        auto isIndoorScene = [&]() -> bool {
+            if (!worldWide || !melonDS::Wide.Front || melonDS::Wide.FrontW <= 0 || melonDS::Wide.FrontH <= 0)
+                return false;
+            const int fw = melonDS::Wide.FrontW, fh = melonDS::Wide.FrontH;
+            const int startX = fw / 2 - 20, endX = fw / 2 + 20;
+            const int startY = fh - 5;
+            int empty = 0, total = 0;
+            for (int fy = startY; fy < fh; fy++)
+                for (int fx = startX; fx < endX; fx++)
+                {
+                    total++;
+                    if (!(melonDS::Wide.Front[(size_t)fy * fw + fx] >> 24)) empty++;
+                }
+            // All sampled pixels transparent at the bottom centre → no terrain → indoors.
+            return total > 0 && empty == total;
+        };
         // A panel of touch-screen controls in the lower right corner of the view, below the
         // player's HP box (whose numbers end at y 132), over the empty right part of the
         // message box, keeping the game's own arrangement so that the D-pad moves the
@@ -3286,20 +3313,22 @@ int main(int argc, char** argv)
                 panelLeft = (wideView ? 128 + viewWidth / 2 : 256.0f) - w - 4;
                 cornerPanel(Crop(1, 0, 22, 256, 110), 0.45f); // the targets (50 high)
             }
-            if (wideView && (moves || command || target) && panelLeft > viewLeft && !sc.items.empty() && sc.items[0].holeCount < 4)
+            if (wideView && (moves || command || target) && panelLeft > viewLeft && !sc.items.empty())
             {
-                // Prevent the message box from being overlapped by the combat buttons:
-                // punch a hole in the top screen for the original message box area...
-                const int boxHole[4] = { 0, 144, 256, 192 };
-                std::copy(boxHole, boxHole + 4, sc.items[0].holes[sc.items[0].holeCount++]);
-                // ...and scale the message box to fit the available space beside the combat panel.
+                // The message box occupies rows 144-191 on the top screen. On a wide view, the
+                // combat panel sits at the right edge, so the message box is rescaled to fit the
+                // space to the left of the panel without being covered by it. No hole is punched
+                // in the DS screen: doing so reveals the wide arena through the bottom strip and
+                // cuts any Pokemon sprite whose lower body overlaps rows 144-191 (GitHub visual
+                // defect: Oshawott's body was halved by the hole in a first-turn single battle).
+                // The rescaled message box is drawn on top of the top screen, covering the
+                // original position, so no arena gap appears and sprites stay intact.
                 const float availBoxW = panelLeft - 2 - viewLeft;
                 const float boxScale = std::min(1.0f, availBoxW / 256.0f);
                 Element msgBox = Crop(0, 0, 144, 256, 48);
                 msgBox.dx = viewLeft;
                 msgBox.dy = 192 - 48.0f * boxScale;
                 msgBox.scale = boxScale;
-                msgBox.wideOnly = true;
                 sc.items.push_back(msgBox);
             }
         }
@@ -3314,9 +3343,11 @@ int main(int argc, char** argv)
             // else for more than a second: the layout stays, rather than the two screens side
             // by side popping up for that time, as they did.)
             only("save", 0);
-            sc.wide = worldWide;
-            sc.weatherObj = weatherParticles();
-            if (worldWide) sc.items[0].drop = LAYER_BG1; // the strip pointing at the other screen (as in the X menu)
+            const bool indoor = isIndoorScene();
+            sc.wide = !indoor && worldWide;
+            if (!indoor) sc.weatherObj = weatherParticles();
+            if (indoor) sc.softBars = true;
+            if (sc.wide) sc.items[0].drop = LAYER_BG1; // the strip pointing at the other screen (as in the X menu)
             SaveScreenPieces(sc, wideView, viewRight, screens);
         }
         else if (funcWatch.Ran(bw2.fieldMenu, 8)) // (it skips a few frames while the menu opens)
@@ -3325,12 +3356,14 @@ int main(int argc, char** argv)
             // own grid of two columns, so that the D-pad moves the highlight where it looks
             // like it should.
             only("start-menu", 0);
-            sc.wide = worldWide;
-            sc.weatherObj = weatherParticles();
+            const bool indoor = isIndoorScene();
+            sc.wide = !indoor && worldWide;
+            if (!indoor) sc.weatherObj = weatherParticles();
+            if (indoor) sc.softBars = true;
             // The strip along the bottom of the top screen (BG1, with an arrow down) only says
             // to look at the other screen; without it the overworld shows there instead (only where
             // the world is widened: a 4:3 view has nothing under it, and showed a black band).
-            if (worldWide) sc.items[0].drop = LAYER_BG1;
+            if (sc.wide) sc.items[0].drop = LAYER_BG1;
             // The touch screen holds up to six buttons, two to a row, in a fixed grid: 126 x 44
             // pixels each, rows 48 apart from y = 22. A slot is used when its button's left
             // edge (a light frame) is there; the menu fills the slots row by row.
@@ -3373,8 +3406,17 @@ int main(int argc, char** argv)
         else if (funcWatch.Ran(bw2.field, 16))
         {
             only("top", 0);
-            sc.wide = worldWide;
-            sc.weatherObj = weatherParticles();
+            if (isIndoorScene())
+            {
+                // Indoor room: keep the 4:3 DS view and fill the bars beside it with colours
+                // from the picture's edges, so that walls and ceilings do not look cut off.
+                sc.softBars = true;
+            }
+            else
+            {
+                sc.wide = worldWide;
+                sc.weatherObj = weatherParticles();
+            }
         }
         else if (funcWatch.Ran(bw2.bag, 2))
             sc = BagScene(viewWidth, screens);
@@ -5844,7 +5886,9 @@ int main(int argc, char** argv)
                     {
                         cfg.fullscreen = !cfg.fullscreen;
                         SDL_SetWindowFullscreen(window, cfg.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+#ifndef __SWITCH__
                         SDL_ShowCursor(cfg.fullscreen ? SDL_DISABLE : SDL_ENABLE);
+#endif
                     }
                 }
                 else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST)

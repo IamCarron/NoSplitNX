@@ -497,11 +497,22 @@ inline Scene BagScene(float viewWidth, const ScreenImage* screens)
             }
     Scene sc;
     sc.name = "bag";
-    Element list = FullScreen(1);
-    sc.items = { list };
+    // The bottom screen holds the pocket tabs (top ~24 rows), the item list (most of the screen,
+    // right ~140 columns) and the pocket controls / item info panel (left ~116 columns). The top
+    // screen shows the item's description card when an item is highlighted or selected.
     if (text >= 12)
     {
-        list.dx = viewRight - 256;
+        // A description card is on the top screen: show it on the left side of the view, and the
+        // bottom screen's item list on the right, against the view's right edge. The left part of
+        // the bottom screen (the pocket info panel, x 0–115) is hidden behind the card, so only
+        // the item list portion (x 116–255) is shown, cropped and placed cleanly at the right.
+        // The pocket tab bar along the bottom (y ~170–191) is kept full-width at the view's bottom
+        // by drawing the full bottom screen first at the right edge and then overlaying the card.
+        const float listX = 116; // x where the item list begins on the touch screen
+        const float listW = 256 - listX;
+        Element list = Crop(1, (int)listX, 0, (int)listW, 192);
+        list.dx = viewRight - listW;
+        list.dy = 0;
         const auto white = [&](int x, int y) {
             if (!screens || !screens[1].pixels) return false;
             const uint32_t c = screens[1].pixels[y * 256 + x];
@@ -511,13 +522,25 @@ inline Scene BagScene(float viewWidth, const ScreenImage* screens)
         // Include the move's type, category, power, accuracy and PP below the description.
         Element card = Crop(0, 8, 28, 240, 164);
         card.dy = message ? 48.0f : 4.0f;
-        const float left = viewRight - 256 + 116 - viewLeft;
+        const float left = viewRight - listW - viewLeft;
         card.scale = std::min({ 0.85f, (left - 6) / card.sw, (164 - card.dy) / card.sh });
         card.dx = viewLeft + 3;
         card.border = true;
         card.borderRadius = 3.0f;
         card.borderColor = 0x2A2E38;
-        sc.items = { list, card };
+        // The pocket tabs bar at the bottom of the bottom screen, full width, so the view's
+        // bottom edge is clean (the tab bar has the pocket arrows and icons at y ~170–191).
+        Element tabs = Crop(1, 0, 168, 256, 192 - 168);
+        tabs.dx = viewRight - 256;
+        tabs.dy = 192 - (192 - 168);
+        sc.items = { list, tabs, card };
+    }
+    else
+    {
+        // No card: show the full bottom screen at the right edge.
+        Element list = FullScreen(1);
+        list.dx = viewRight - 256;
+        sc.items = { list };
     }
     sc.bgScreen = 1;
     sc.bgX = 2;
