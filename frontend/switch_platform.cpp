@@ -635,7 +635,7 @@ static bool FulldexFolder(const std::string& folder)
     {
         std::string n = e->d_name;
         for (char& c : n) c = (char)tolower((unsigned char)c);
-        if (n.size() > 4 && n.compare(n.size() - 4, 4, ".nro") == 0 && n.find("pokemon") != std::string::npos) { own = true; break; }
+        if (n.size() > 4 && n.compare(n.size() - 4, 4, ".nro") == 0 && (n.find("pokemon") != std::string::npos || n.find("nosplitnx") != std::string::npos)) { own = true; break; }
     }
     closedir(d);
     return own;
