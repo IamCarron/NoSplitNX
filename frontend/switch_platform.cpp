@@ -598,21 +598,28 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                             Updater::PopupNote(Updater::Get().canInstall));
 #endif
         {
-            // The title band's buttons rendered as sleek Horizon-style rounded pills.
+            // Title band buttons rendered with tactile button badges and frosted glass.
             const int s = std::max(1, canvas.h / 240);
             const Launcher::Theme& th = theme;
-            auto button = [&](int x, const char* text, bool on) {
-                const int bw = Canvas::TextWidth(text, s) + 8 * s;
+            auto button = [&](int x, const char* badge, const char* label, bool on) {
                 const int bh = 11 * s;
+                const int textW = Canvas::TextWidth(label, s);
+                const int bw = bh + textW + 12 * s;
                 const int by = 5 * s;
-                const uint32_t bgCol = on ? th.frame : 0xFF22293A;
-                const uint32_t borderCol = on ? th.title : 0xFF333D54;
-                canvas.FillRound(x - 4 * s, by, bw, bh, 3 * s, bgCol);
-                canvas.OutlineRound(x - 4 * s, by, bw, bh, 3 * s, std::max(1, s / 2), borderCol);
-                canvas.Text(x, 6 * s, text, s, on ? th.title : th.hint);
+                const uint32_t borderCol = on ? th.title : 0xFF35415A;
+                if (on) canvas.GlowRound(x, by, bw, bh, 3 * s, 2 * s, th.frame);
+                canvas.FillGlass(x, by, bw, bh, 3 * s, on ? th.frame : 0xFF242C3E, on ? (th.frame & 0x00FFFFFF) | 0xDD000000 : 0xFF181E2B, borderCol, 1);
+                canvas.DrawButtonBadge(x + 2 * s, by, badge, s, on ? th.title : 0xFF333E56, on ? th.frame : 0xFFFFFFFF, 0);
+                canvas.Text(x + bh + 5 * s, by + 2 * s, label, s, on ? th.title : th.hint);
             };
-            if (guide && !keysOpen) button(12 * s, "< BACK (B)", false);
-            else if (!guide) button(canvas.w - 8 * s - Canvas::TextWidth("SETTINGS (Y)", s), "SETTINGS (Y)", onSettings);
+            if (guide && !keysOpen)
+                button(12 * s, "B", "BACK", false);
+            else if (!guide)
+            {
+                const int bh = 11 * s;
+                const int bw = bh + Canvas::TextWidth("SETTINGS", s) + 12 * s;
+                button(canvas.w - bw - 12 * s, "Y", "SETTINGS", onSettings);
+            }
         }
         u32 stride;
         u32* out = (u32*)framebufferBegin(&fb, &stride);

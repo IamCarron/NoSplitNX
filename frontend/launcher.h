@@ -675,32 +675,148 @@ inline void LoadLook(const std::string& cfg, const std::string& folder, Theme& t
     }
 }
 
+// Renders a tactile physical cartridge (Nintendo DS or GBA) when high-res box art is not present.
+inline void DrawCartridgeCase(Canvas& c, int x, int y, int sz, int platform, const uint32_t* icon32,
+                              const std::string& code, const std::string& name, int s)
+{
+    const bool isGba = (platform == GBA);
+    const int cw = isGba ? sz * 92 / 100 : sz * 86 / 100;
+    const int ch = isGba ? sz * 78 / 100 : sz * 88 / 100;
+    const int cx = x + (sz - cw) / 2;
+    const int cy = y + (sz - ch) / 2;
+    const int rad = std::max(2, 4 * s);
+
+    c.ShadowRound(cx, cy, cw, ch, rad, s, std::max(1, s / 2));
+
+    const uint32_t shellTop = isGba ? 0xFF2A2F3B : 0xFF242730;
+    const uint32_t shellBot = isGba ? 0xFF191C24 : 0xFF15181F;
+    const uint32_t shellBorder = isGba ? 0xFF3C4354 : 0xFF363B48;
+    c.FillGlass(cx, cy, cw, ch, rad, shellTop, shellBot, shellBorder, 1);
+
+    if (isGba)
+    {
+        const int lipW = cw * 70 / 100;
+        const int lipH = std::max(2, 3 * s);
+        const int lipX = cx + (cw - lipW) / 2;
+        c.FillRound(lipX, cy + s, lipW, lipH, s, 0x55000000);
+        c.OutlineRound(lipX, cy + s, lipW, lipH, s, 1, 0x44FFFFFF);
+    }
+    else
+    {
+        const int notchW = std::max(2, 4 * s);
+        const int notchH = std::max(3, 6 * s);
+        c.Fill(cx + cw - notchW, cy, notchW, notchH, 0xFF11141A);
+        const int arrowW = 6 * s, arrowH = 2 * s;
+        c.FillRound(cx + (cw - arrowW) / 2, cy + ch - arrowH - s, arrowW, arrowH, 1, 0x44000000);
+    }
+
+    const int stickerPad = std::max(3, 4 * s);
+    const int sx = cx + stickerPad;
+    const int sy = cy + (isGba ? 6 * s : 4 * s);
+    const int sw = cw - 2 * stickerPad;
+    const int sh = ch - (isGba ? 9 * s : 8 * s);
+    const int sRad = std::max(2, 2 * s);
+
+    const uint32_t labelTop = isGba ? 0xFF261D3A : 0xFFE2E6EC;
+    const uint32_t labelBot = isGba ? 0xFF140E20 : 0xFFCBD2DA;
+    c.FillGradV(sx, sy, sw, sh, labelTop, labelBot, sRad);
+    c.OutlineRound(sx, sy, sw, sh, sRad, 1, isGba ? 0xFF4A3870 : 0xFF9CA7B4);
+
+    const int stripH = std::max(3, 5 * s);
+    if (isGba)
+    {
+        c.FillRound(sx + s, sy + s, sw - 2 * s, stripH, 1, 0xFF4D1D88);
+        const int bs = std::max(1, s - 1);
+        c.Text(sx + 3 * s, sy + s + (stripH - 7 * bs) / 2, "GAME BOY ADVANCE", bs, 0xFFE6D6FF);
+    }
+    else
+    {
+        c.FillRound(sx + s, sy + s, sw - 2 * s, stripH, 1, 0xFF163E78);
+        const int bs = std::max(1, s - 1);
+        c.Text(sx + 3 * s, sy + s + (stripH - 7 * bs) / 2, "NINTENDO DS", bs, 0xFFFFFFFF);
+    }
+
+    if (icon32)
+    {
+        const int maxArtH = sh - stripH - (isGba ? 8 * s : 7 * s);
+        const int iconScale = std::max(1, std::min(sw - 4 * s, maxArtH) / 32);
+        const int iconSz = 32 * iconScale;
+        const int ix = sx + (sw - iconSz) / 2;
+        const int iy = sy + stripH + (maxArtH - iconSz) / 2 + s;
+
+        c.FillRound(ix - s, iy - s, iconSz + 2 * s, iconSz + 2 * s, 2, isGba ? 0x66000000 : 0x22000000);
+        for (int py = 0; py < 32; py++)
+            for (int px = 0; px < 32; px++)
+            {
+                const uint32_t p = icon32[py * 32 + px];
+                if ((p >> 24) >= 0x40)
+                    c.Fill(ix + px * iconScale, iy + py * iconScale, iconScale, iconScale, p | 0xFF000000u);
+            }
+    }
+    else
+    {
+        std::string initials;
+        for (char ch : name)
+            if (isupper((unsigned char)ch) && initials.size() < 4) initials += ch;
+        if (initials.empty() && !code.empty()) initials = code;
+        const int is = std::max(1, s);
+        const int iw = Canvas::TextWidth(initials, is);
+        c.Text(sx + (sw - iw) / 2, sy + (sh - 7 * is) / 2, initials, is, isGba ? 0xFFFFFFFF : 0xFF1E2634);
+    }
+
+    std::string serial = (isGba ? "AGB-" : "NTR-") + code;
+    const int ss = std::max(1, s / 2);
+    const int swidth = Canvas::TextWidth(serial, ss);
+    if (swidth + 4 * ss <= sw)
+    {
+        const int serY = sy + sh - 7 * ss - 2 * ss;
+        c.Text(sx + (sw - swidth) / 2, serY, serial, ss, isGba ? 0x99D0C0F0 : 0xFF5A6678);
+    }
+
+    for (int gy = 0; gy < sh / 2; gy++)
+    {
+        const int gw = std::max(0, sw - gy * 2);
+        if (gw > 0)
+            c.FillBlend(sx + s, sy + s + gy, gw, 1, 0x14FFFFFF);
+    }
+}
+
 // Where the list's parts go on a canvas: the title band, the tabs under it, then the games'
-// tiles (each the game's picture with its name below), four across at most, in a part of their
-// own that scrolls: the content, with y from its top.
+// tiles (each the game's picture with its name below), in an adaptive grid that scales
+// gracefully across orientations and high resolutions.
 struct Grid
 {
-    int s, gap, labelH, tabsY, tabsH, headH, top, bottom, tile, cols, gx;
+    int s, gap, colGap, rowGap, labelH, tabsY, tabsH, headH, top, bottom, tile, cols, gx;
     int panelX = 0, panelW = 0;
-    int rowH() const { return tile + labelH + gap; }
+    int rowH() const { return tile + labelH + rowGap; }
 };
 inline Grid Layout(const Canvas& c)
 {
     Grid g;
     g.s = std::max(1, std::min(c.w, c.h) / 240); // the font's scale: 3 at 720 lines
-    g.gap = 8 * g.s;
+    g.colGap = 7 * g.s;
+    g.rowGap = 7 * g.s;
+    g.gap = g.rowGap;
     g.labelH = (UiLang::Tall() ? 32 : 20) * g.s;
     g.tabsY = (c.h > c.w ? 46 : 25) * g.s;
     g.tabsH = 13 * g.s;
     g.headH = 13 * g.s;
     g.top = g.tabsY + g.tabsH + 5 * g.s;
     g.bottom = c.h - 16 * g.s;
-    // Tiles at most Art x Art at 720 lines, small enough for two rows and a heading on a screen.
-    g.tile = std::max(32, std::min(Art * c.h / 720, (g.bottom - g.top - g.headH) / 2 - g.labelH - g.gap));
-    if (c.h > c.w) g.tile = std::max(32, (c.w - 7 * g.gap) / 2);
-    g.cols = std::max(1, std::min(4, (c.w - g.gap) / (g.tile + g.gap * 3)));
-    const int gridW = g.cols * g.tile + (g.cols - 1) * g.gap * 3;
-    g.gx = (c.w - gridW) / 2;
+    const int availH = g.bottom - g.top - g.headH;
+    if (c.h > c.w) // portrait / vertical screen
+    {
+        g.cols = 2;
+        g.tile = std::max(32, (c.w - 3 * g.colGap) / 2);
+    }
+    else // landscape widescreen
+    {
+        g.tile = std::max(32, std::min(Art * c.h / 720, (availH - g.rowGap) / 2 - g.labelH - g.rowGap));
+        const int maxCols = c.w >= 2560 ? 7 : c.w >= 1920 ? 6 : c.w >= 1400 ? 5 : 4;
+        g.cols = std::max(2, std::min(maxCols, (c.w - 4 * g.colGap) / (g.tile + g.colGap)));
+    }
+    const int gridW = g.cols * g.tile + (g.cols - 1) * g.colGap;
+    g.gx = std::max(0, (c.w - gridW) / 2);
     return g;
 }
 
@@ -746,12 +862,12 @@ inline View MakeView(const Canvas& c, const std::vector<Game>& games, int tab)
         if (mine.empty())
         {
             v.heads.push_back({ p, y, true });
-            y += emptyH + g.gap;
+            y += emptyH + g.rowGap;
             continue;
         }
         for (size_t k = 0; k < mine.size(); k++)
-            v.spots.push_back({ mine[k], g.gx + (int)(k % g.cols) * (g.tile + g.gap * 3), y + (int)(k / g.cols) * g.rowH(), p });
-        y += (int)((mine.size() + g.cols - 1) / g.cols) * g.rowH() + g.gap;
+            v.spots.push_back({ mine[k], g.gx + (int)(k % g.cols) * (g.tile + g.colGap), y + (int)(k / g.cols) * g.rowH(), p });
+        y += (int)((mine.size() + g.cols - 1) / g.cols) * g.rowH() + g.rowGap;
     }
     v.height = y;
     return v;
@@ -881,19 +997,18 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     }
 #endif
 
-    // Segmented pill bar for console tabs (ALL, DS, GBA, 3DS) with L / R shoulder badges.
+    // Segmented pill bar for console tabs (ALL, DS, GBA, 3DS) with tactile L / R bumper badges.
     const int tabStep = 22 * 6 * s / 3;
     const int segW = TABS * tabStep + 8 * s;
     const int segX = (c.w - segW) / 2;
     const int segY = grid.tabsY - s;
     const int segH = grid.tabsH + 2 * s;
-    c.FillRound(segX, segY, segW, segH, 4 * s, 0xCC111520);
-    c.OutlineRound(segX, segY, segW, segH, 4 * s, 1, 0xFF262E42);
+    c.ShadowRound(segX, segY, segW, segH, 4 * s, s, std::max(1, s / 2));
+    c.FillGlass(segX, segY, segW, segH, 4 * s, 0xDD161C2A, 0xDD0D111A, 0xFF28344C, 1);
 
-    const int lW = Canvas::TextWidth("L", s) + 6 * s;
-    c.FillRound(segX - lW - 4 * s, grid.tabsY + s, lW, 11 * s, 2 * s, 0xFF1F2637);
-    c.OutlineRound(segX - lW - 4 * s, grid.tabsY + s, lW, 11 * s, 2 * s, 1, 0xFF343F58);
-    c.Text(segX - lW - 4 * s + 3 * s, grid.tabsY + 3 * s, "L", s, th.hint);
+    const int badgeH = 11 * s;
+    c.DrawButtonBadge(segX - badgeH - 4 * s, segY + (segH - badgeH) / 2, "L", s, 0xFF222B3D, 0xFFE0E8F5, 0xFF3D4B66);
+    c.DrawButtonBadge(segX + segW + 4 * s, segY + (segH - badgeH) / 2, "R", s, 0xFF222B3D, 0xFFE0E8F5, 0xFF3D4B66);
 
     for (int t = 0; t < TABS; t++)
     {
@@ -905,21 +1020,23 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
         const int pillX = cx - pillW / 2;
         if (t == tab)
         {
-            const uint32_t pillCol = onTabs ? th.frame : 0xFF252D40;
-            c.FillRound(pillX, grid.tabsY, pillW, grid.tabsH, 3 * s, pillCol);
-            c.OutlineRound(pillX, grid.tabsY, pillW, grid.tabsH, 3 * s, std::max(1, s / 2), th.frame);
-            c.Text(x, y, name, s, th.title);
+            if (onTabs)
+            {
+                c.GlowRound(pillX, grid.tabsY, pillW, grid.tabsH, 3 * s, 3 * s, th.frame);
+                c.FillRound(pillX, grid.tabsY, pillW, grid.tabsH, 3 * s, th.frame);
+                c.Text(x, y, name, s, th.title);
+            }
+            else
+            {
+                c.FillGlass(pillX, grid.tabsY, pillW, grid.tabsH, 3 * s, 0xFF263146, 0xFF19202E, th.frame, 1);
+                c.Text(x, y, name, s, th.title);
+            }
         }
         else
         {
             c.Text(x, y, name, s, th.hint);
         }
     }
-
-    const int rW = Canvas::TextWidth("R", s) + 6 * s;
-    c.FillRound(segX + segW + 4 * s, grid.tabsY + s, rW, 11 * s, 2 * s, 0xFF1F2637);
-    c.OutlineRound(segX + segW + 4 * s, grid.tabsY + s, rW, 11 * s, 2 * s, 1, 0xFF343F58);
-    c.Text(segX + segW + 4 * s + 3 * s, grid.tabsY + 3 * s, "R", s, th.hint);
 
     FollowSelection(v, selected, scroll, follow);
     const int top = grid.top, bottom = grid.bottom, tile = grid.tile, labelH = grid.labelH;
@@ -953,7 +1070,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
         c.FillRound(grid.gx, y + s, 2 * s, 8 * s, s, th.frame);
         c.Text(grid.gx + 4 * s, y + s, name, s + 1, th.title);
         const int lx = grid.gx + 4 * s + Canvas::TextWidth(name, s + 1) + 5 * s;
-        const int rx = grid.gx + grid.cols * tile + (grid.cols - 1) * grid.gap * 3;
+        const int rx = grid.gx + grid.cols * tile + (grid.cols - 1) * grid.colGap;
         if (rx > lx)
         {
             c.Fill(lx, y + 5 * s, std::min(24 * s, rx - lx), std::max(1, s / 2), th.frame);
@@ -963,130 +1080,192 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     }
 
     // Elevated rounded game cards with cover art, cartridge icon well, platform badge, and save status pill.
-    const int cardRad = std::max(3, 5 * s);
+    const int cardRad = std::max(4, 5 * s);
     for (const View::Spot& sp : v.spots)
     {
         const int x = sp.x, y = top + sp.y - scroll;
-        if (y < top || y + tile + labelH > bottom) continue;
+        const int cardH = tile + labelH - 2 * s;
+        if (y < top || y + cardH > bottom) continue;
         const Game& g = games[sp.game];
         const bool sel = sp.game == selected;
-        const int cardH = tile + labelH - 2 * s;
 
-        c.ShadowRound(x, y, tile, cardH, cardRad, s, 2 * s);
-        const uint32_t cardTop = sel ? 0xFF242D42 : 0xFF1A202E;
-        const uint32_t cardBot = sel ? 0xFF1B2233 : 0xFF131824;
-        c.FillGradV(x, y, tile, cardH, cardTop, cardBot, cardRad);
+        if (sel)
+            c.GlowRound(x, y, tile, cardH, cardRad, 5 * s, th.frame);
+        else
+            c.ShadowRound(x, y, tile, cardH, cardRad, s, 2 * s);
 
-        // Cover art area at the top of the card.
-        c.FillRound(x + s, y + s, tile - 2 * s, tile - 2 * s, std::max(2, cardRad - s), 0xFF111520);
+        const uint32_t cardTop = sel ? 0xFF263248 : 0xFF181E2C;
+        const uint32_t cardBot = sel ? 0xFF1A2234 : 0xFF111520;
+        const uint32_t cardBorder = sel ? th.frame : 0xFF28344C;
+        c.FillGlass(x, y, tile, cardH, cardRad, cardTop, cardBot, cardBorder, 1);
+
+        // Cover art area at top of card
+        const int artPad = 2 * s;
+        const int artX = x + artPad, artY = y + artPad;
+        const int artSz = tile - 2 * artPad;
+
         if (!g.art.empty())
         {
-            const int artRad = std::max(2, cardRad - s);
-            for (int py = 0; py < tile; py++)
+            const int artRad = std::max(2, cardRad - artPad);
+            c.FillRound(artX, artY, artSz, artSz, artRad, 0xFF0D1017);
+            for (int py = 0; py < artSz; py++)
             {
-                int ix0 = 0, ix1 = tile;
-                Canvas::RoundedSpan(tile, tile, artRad, py, ix0, ix1);
+                const int cy = artY + py;
+                if (cy < 0 || cy >= c.h) continue;
+                int ix0 = 0, ix1 = artSz;
+                Canvas::RoundedSpan(artSz, artSz, artRad, py, ix0, ix1);
                 if (ix0 >= ix1) continue;
-                const uint32_t* row = &g.art[(size_t)(py * Art / tile) * Art];
+                const uint32_t* row = &g.art[(size_t)(py * Art / artSz) * Art];
                 for (int px = ix0; px < ix1; px++)
                 {
-                    const uint32_t p = row[px * Art / tile];
-                    if (p >> 24 >= 0x80) c.px[(size_t)(y + py) * c.w + x + px] = p | 0xFF000000u;
+                    const int cx = artX + px;
+                    if (cx < 0 || cx >= c.w) continue;
+                    const uint32_t p = row[px * Art / artSz];
+                    if ((p >> 24) >= 0x80) c.px[(size_t)cy * c.w + cx] = p | 0xFF000000u;
                 }
             }
-            c.Fill(x + tile / 2, y + tile / 2, 1, 1, c.px[(size_t)(y + tile / 2) * c.w + x + tile / 2]);
-        }
-        else if (g.hasIcon)
-        {
-            // Stylized inner cartridge well for 32x32 DS banner icons.
-            const int is = std::max(1, tile / 42), iconSz = 32 * is;
-            const int wellPad = 4 * s;
-            const int wellSz = std::min(tile - 4 * s, iconSz + 2 * wellPad);
-            const int wx = x + (tile - wellSz) / 2, wy = y + (tile - wellSz) / 2;
-            c.FillGradV(wx, wy, wellSz, wellSz, 0xFF232B3E, 0xFF161B28, std::max(2, 4 * s));
-            c.OutlineRound(wx, wy, wellSz, wellSz, std::max(2, 4 * s), 1, 0xFF313C54);
-            const int o = (tile - iconSz) / 2;
-            for (int py = 0; py < 32; py++)
-                for (int px = 0; px < 32; px++)
-                    if (g.icon[py * 32 + px] >> 24)
-                        c.Fill(x + o + px * is, y + o + py * is, is, is, g.icon[py * 32 + px]);
-        }
-
-        // Rounded platform pill badge (NDS / GBA) in the top-left of the tile.
-        const char* platBadge = g.platform == GBA ? "GBA" : "NDS";
-        const uint32_t badgeBg = g.platform == GBA ? 0xE659289E : 0xE6184C9E;
-        const uint32_t badgeText = g.platform == GBA ? 0xFFEAD6FF : 0xFFD6EAFF;
-        const int bScale = std::max(1, s - 1);
-        const int bW = Canvas::TextWidth(platBadge, bScale) + 6 * bScale;
-        const int bH = 9 * bScale;
-        c.FillRound(x + 3 * s, y + 3 * s, bW, bH, 2 * bScale, badgeBg);
-        c.Text(x + 3 * s + 3 * bScale, y + 3 * s + bScale, platBadge, bScale, badgeText);
-
-        // COMING SOON banner over darkened art.
-        if (g.comingSoon)
-        {
-            c.FillBlend(x, y, tile, tile, 0x9906080E);
-            const std::string soon = "COMING SOON";
-            const int bs = Canvas::TextWidth(soon, s) + 8 * s <= tile ? s : std::max(1, s - 1);
-            c.FillRound(x + 2 * s, y + tile / 2 - 7 * bs, tile - 4 * s, 14 * bs, 3 * bs, 0xEE151924);
-            c.OutlineRound(x + 2 * s, y + tile / 2 - 7 * bs, tile - 4 * s, 14 * bs, 3 * bs, 1, th.frame);
-            c.Text(x + (tile - Canvas::TextWidth(soon, bs)) / 2, y + tile / 2 - 3 * bs, soon, bs, th.title);
-        }
-
-        // Card border and Switch-style double selection ring.
-        if (sel)
-        {
-            const int fw = th.frameW * s;
-            c.OutlineRound(x - fw - s, y - fw - s, tile + 2 * (fw + s), cardH + 2 * (fw + s), cardRad + fw + s, s, (th.frame & 0x00FFFFFF) | 0x55000000u);
-            c.OutlineRound(x - fw, y - fw, tile + 2 * fw, cardH + 2 * fw, cardRad + fw, fw, th.frame);
+            c.FillBlend(artX, artY + artSz - 3 * s, artSz, 3 * s, 0x44000000);
         }
         else
         {
-            c.OutlineRound(x, y, tile, cardH, cardRad, 1, 0xFF2A3348);
+            DrawCartridgeCase(c, artX, artY, artSz, g.platform, g.hasIcon ? g.icon : nullptr, g.code, g.name, s);
         }
 
-        // Game title and rounded status pill inside the lower footer of the card.
+        // Platform badge (NDS / GBA) on top-left of box art
+        if (!g.art.empty())
+        {
+            const char* platText = g.platform == GBA ? "GBA" : "NDS";
+            const uint32_t platBg = g.platform == GBA ? 0xEE4E1D88 : 0xEE0B4FA8;
+            const uint32_t platBorder = g.platform == GBA ? 0xFF9D4EDD : 0xFF3A86FF;
+            const int bScale = std::max(1, s - 1);
+            const int bW = Canvas::TextWidth(platText, bScale) + 6 * bScale;
+            const int bH = 9 * bScale;
+            const int bx = artX + 3 * s, by = artY + 3 * s;
+            c.FillRound(bx, by, bW, bH, 2 * bScale, platBg);
+            c.OutlineRound(bx, by, bW, bH, 2 * bScale, 1, platBorder);
+            c.Text(bx + 3 * bScale, by + bScale, platText, bScale, 0xFFFFFFFF);
+        }
+
+        // COMING SOON overlay if unreleased
+        if (g.comingSoon)
+        {
+            c.FillBlend(artX, artY, artSz, artSz, 0xAA080B12);
+            const std::string soon = "COMING SOON";
+            const int bs = Canvas::TextWidth(soon, s) + 8 * s <= artSz ? s : std::max(1, s - 1);
+            const int bannerH = 14 * bs;
+            const int bannerY = artY + (artSz - bannerH) / 2;
+            c.FillRound(artX + 2 * s, bannerY, artSz - 4 * s, bannerH, 3 * bs, 0xF0151924);
+            c.OutlineRound(artX + 2 * s, bannerY, artSz - 4 * s, bannerH, 3 * bs, 1, th.frame);
+            c.Text(artX + (artSz - Canvas::TextWidth(soon, bs)) / 2, bannerY + 3 * bs, soon, bs, th.title);
+        }
+
+        // Focused double selection ring
+        if (sel)
+        {
+            const int fw = th.frameW * s;
+            c.OutlineRound(x - fw, y - fw, tile + 2 * fw, cardH + 2 * fw, cardRad + fw, fw, th.frame);
+            c.OutlineRound(x - fw - s, y - fw - s, tile + 2 * (fw + s), cardH + 2 * (fw + s), cardRad + fw + s, s, (th.frame & 0x00FFFFFF) | 0x44000000u);
+        }
+
+        // Game title
         std::string name = g.name;
         if (name.rfind("POKEMON ", 0) == 0) name = name.substr(8);
-        const int ns = Canvas::TextWidth(name, s) <= tile - 4 * s ? s : std::max(1, s - 1);
+        int ns = s;
+        while (ns > 1 && Canvas::TextWidth(name, ns) > tile - 6 * s) --ns;
         c.Text(x + (tile - Canvas::TextWidth(name, ns)) / 2, y + tile + 2 * s, name, ns, sel ? th.nameSel : th.name);
 
+        // Status string & hardware LED dot
         std::string sub = g.comingSoon ? "COMING SOON" : !g.known ? "NOT PLAYABLE" : g.hasSave ? "SAVE FOUND" : "NEW GAME";
         if (!g.where.empty() && g.known) sub = (g.hasSave ? "SAVE " : "NEW ") + g.where;
         const int ss = std::max(1, s * 2 / 3);
-        const uint32_t subColor = !g.known && !g.comingSoon ? 0xFFFF8080
-                                : g.comingSoon ? th.hint
-                                : g.hasSave ? 0xFF4CE080
-                                : 0xFFFFC857;
-        const uint32_t subBg = !g.known && !g.comingSoon ? 0xFF3B1820
-                             : g.comingSoon ? 0xFF1F2533
-                             : g.hasSave ? 0xFF143325
-                             : 0xFF332814;
-        const int subW = Canvas::TextWidth(sub, ss) + 6 * ss;
-        const int subH = 9 * ss;
-        const int subY = y + tile + (UiLang::Tall() ? 18 : 10) * s;
-        c.FillRound(x + (tile - subW) / 2, subY - ss, subW, subH, 2 * ss, subBg);
-        c.Text(x + (tile - Canvas::TextWidth(sub, ss)) / 2, subY, sub, ss, subColor);
+        const uint32_t ledCol = !g.known && !g.comingSoon ? 0xFFFF453A
+                              : g.comingSoon ? 0xFFA855F7
+                              : g.hasSave ? 0xFF00E676
+                              : 0xFFFFB020;
+        const uint32_t pillBg = !g.known && !g.comingSoon ? 0xDD3B141C
+                              : g.comingSoon ? 0xDD251A38
+                              : g.hasSave ? 0xDD123624
+                              : 0xDD3A2B12;
+        const uint32_t pillBorder = !g.known && !g.comingSoon ? 0x88FF453A
+                                  : g.comingSoon ? 0x88A855F7
+                                  : g.hasSave ? 0x8800E676
+                                  : 0x88FFB020;
+
+        const int dotR = std::max(2, 2 * ss);
+        const int textW = Canvas::TextWidth(sub, ss);
+        const int pillW = textW + dotR * 2 + 10 * ss;
+        const int pillH = 10 * ss;
+        const int pillX = x + (tile - pillW) / 2;
+        const int pillY = y + tile + (UiLang::Tall() ? 19 : 12) * s;
+
+        c.FillRound(pillX, pillY - ss, pillW, pillH, 3 * ss, pillBg);
+        c.OutlineRound(pillX, pillY - ss, pillW, pillH, 3 * ss, 1, pillBorder);
+
+        const int dotX = pillX + 4 * ss + dotR;
+        const int dotY = pillY - ss + pillH / 2;
+        c.FillRound(dotX - dotR - 1, dotY - dotR - 1, (dotR + 1) * 2, (dotR + 1) * 2, dotR + 1, (ledCol & 0x00FFFFFF) | 0x44000000u);
+        c.FillRound(dotX - dotR, dotY - dotR, dotR * 2, dotR * 2, dotR, ledCol);
+        c.Fill(dotX - 1, dotY - 1, 2, 2, 0xFFFFFFFF);
+
+        c.Text(dotX + dotR + 3 * ss, pillY, sub, ss, ledCol | 0xFF000000u);
     }
 
     // Scroll indicator pill when more games lie below.
     if (scroll + (bottom - top) < v.height - grid.gap)
         c.FillRound(c.w / 2 - 10 * s, bottom - 2 * s, 20 * s, s + 1, std::max(1, s / 2), th.frame);
 
-    // Bottom control dock bar.
-    const int dockH = 16 * s;
-    c.FillGradV(0, c.h - dockH, c.w, dockH, 0xFF141824, 0xFF0E111A, 0);
-    c.Fill(0, c.h - dockH, c.w, std::max(1, s / 2), 0xFF262F45);
-    const std::string hint = !note.empty() ? note : !hintText.empty() ? hintText : "A: PLAY   Y: SETTINGS   X: RANDOM   L / R: TABS   +: QUIT";
-    int hintScale = s;
-    while (hintScale > 1 && Canvas::TextWidth(hint, hintScale) > c.w - 16 * s) --hintScale;
-    const uint32_t dockTextCol = !note.empty() ? th.title : th.hint;
+    // Bottom control dock bar with tactile button badges
+    const int dockH = 18 * s;
+    c.FillGlass(0, c.h - dockH, c.w, dockH, 0, 0xFA141926, 0xFA0B0E16, 0xFF28344C, 1);
+
     if (!note.empty())
     {
-        const int nw = Canvas::TextWidth(hint, hintScale) + 8 * s;
-        c.FillRound((c.w - nw) / 2, c.h - 13 * s, nw, 10 * s, 2 * s, (th.frame & 0x00FFFFFF) | 0x44000000u);
+        int noteScale = s;
+        while (noteScale > 1 && Canvas::TextWidth(note, noteScale) > c.w - 32 * s) --noteScale;
+        const int nw = Canvas::TextWidth(note, noteScale) + 16 * noteScale;
+        const int nh = 12 * noteScale;
+        const int nx = (c.w - nw) / 2, ny = c.h - dockH + (dockH - nh) / 2;
+        c.FillRound(nx, ny, nw, nh, 3 * noteScale, 0xEE1E2638);
+        c.OutlineRound(nx, ny, nw, nh, 3 * noteScale, 1, th.frame);
+        c.Text(nx + 8 * noteScale, ny + 2 * noteScale, note, noteScale, th.title);
     }
-    c.Text((c.w - Canvas::TextWidth(hint, hintScale)) / 2, c.h - 11 * s, hint, hintScale, dockTextCol);
+    else
+    {
+        struct DockItem { const char* badge; const char* label; };
+        static const DockItem items[] = {
+            { "A", "PLAY" }, { "Y", "SETTINGS" }, { "X", "RANDOM" }, { "L", "TABS" }, { "+", "QUIT" }
+        };
+        const int itemCount = 5;
+        const int bh = 11 * s;
+        int totalW = 0;
+        int widths[itemCount];
+        for (int i = 0; i < itemCount; i++)
+        {
+            widths[i] = bh + Canvas::TextWidth(items[i].label, s) + 5 * s;
+            totalW += widths[i];
+        }
+        const int itemGap = 14 * s;
+        totalW += (itemCount - 1) * itemGap;
+
+        if (totalW <= c.w - 16 * s)
+        {
+            int dx = (c.w - totalW) / 2;
+            const int by = c.h - dockH + (dockH - bh) / 2;
+            for (int i = 0; i < itemCount; i++)
+            {
+                c.DrawButtonBadge(dx, by, items[i].badge, s, 0xFF222B3D, 0xFFFFFFFF, 0xFF3D4B66);
+                c.Text(dx + bh + 4 * s, by + 2 * s, items[i].label, s, th.hint);
+                dx += widths[i] + itemGap;
+            }
+        }
+        else
+        {
+            const std::string hint = !hintText.empty() ? hintText : "A: PLAY   Y: SETTINGS   X: RANDOM   L / R: TABS   +: QUIT";
+            int hintScale = s;
+            while (hintScale > 1 && Canvas::TextWidth(hint, hintScale) > c.w - 16 * s) --hintScale;
+            c.Text((c.w - Canvas::TextWidth(hint, hintScale)) / 2, c.h - 11 * s, hint, hintScale, th.hint);
+        }
+    }
 }
 
 // The settings page (Y on the Switch's list, H or a controller's Y on a PC's): the pause menu's
@@ -1486,9 +1665,9 @@ struct SettingsPage
         c.FillGradV(0, 0, c.w, bandH, 0xFF191F2D, th.band, 0);
         c.Fill(0, bandH, c.w, th.bandLineH * s, th.bandLine);
         const std::string title = group < 0 ? "SETTINGS" : std::string("SETTINGS: ") + UiLang::Tr(SettingsGroups()[group].name);
-        int titleScale=s+1;
-        while(titleScale>1 && Canvas::TextWidth(title,titleScale)>c.w-8)--titleScale;
-        c.Text((c.w-Canvas::TextWidth(title,titleScale))/2,6*s,title,titleScale,th.title);
+        int titleScale = s + 1;
+        while (titleScale > 1 && Canvas::TextWidth(title, titleScale) > c.w - 8) --titleScale;
+        c.Text((c.w - Canvas::TextWidth(title, titleScale)) / 2, 6 * s, title, titleScale, th.title);
         const int width = std::min(c.w - 24 * s, 100 * 6 * ts);
         const int x = (c.w - width) / 2;
         struct Line { std::string text, value; int item; bool name; };
@@ -1526,8 +1705,8 @@ struct SettingsPage
         scroll = std::max(0, std::min(scroll, (int)out.size() - fit));
         rows.clear();
 
-        // Draw rounded setting cards behind each visible item group before drawing text.
-        const int cardRad = std::max(2, 3 * ts);
+        // Draw elevated frosted glass cards behind each visible item group before drawing text.
+        const int cardRad = std::max(3, 4 * ts);
         for (int i = scroll; i < (int)out.size(); )
         {
             const int y0 = top + (i - scroll) * lineH;
@@ -1541,15 +1720,13 @@ struct SettingsPage
             const bool sel = it == selected;
             if (sel)
             {
-                c.ShadowRound(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, ts, ts);
-                c.FillGradV(x - 6 * ts, cardY, width + 12 * ts, cardH, 0xFF222B3E, 0xFF192030, cardRad);
-                c.OutlineRound(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, std::max(1, ts / 2), th.frame);
-                c.FillRound(x - 4 * ts, cardY + 2 * ts, std::max(2, ts), cardH - 4 * ts, std::max(1, ts / 2), th.frame);
+                c.GlowRound(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, 3 * ts, th.frame);
+                c.FillGlass(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, 0xFF242E44, 0xFF192030, th.frame, 1);
+                c.FillRound(x - 4 * ts, cardY + 2 * ts, std::max(2, 2 * ts), cardH - 4 * ts, ts, th.frame);
             }
             else
             {
-                c.FillRound(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, 0xB8141926);
-                c.OutlineRound(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, 1, 0xFF222A3D);
+                c.FillGlass(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, 0xC0171D2A, 0xC010141F, 0xFF242C3F, 1);
             }
             i = j;
         }
@@ -1572,16 +1749,48 @@ struct SettingsPage
                 }
             }
             else if (!l.text.empty())
+            {
                 c.TextRaw(x + 2 * 6 * ts, y, l.text, ts, sel ? th.name : th.sub);
+            }
         }
         if (scroll > 0) c.FillRound(c.w / 2 - 10 * s, top - 4 * s, 20 * s, s + 1, std::max(1, s / 2), th.frame);
         if (scroll + fit < (int)out.size()) c.FillRound(c.w / 2 - 10 * s, bottom + s, 20 * s, s + 1, std::max(1, s / 2), th.frame);
-        const int dockH = 16 * s;
-        c.FillGradV(0, c.h - dockH, c.w, dockH, 0xFF141824, 0xFF0E111A, 0);
-        c.Fill(0, c.h - dockH, c.w, std::max(1, s / 2), 0xFF262F45);
-        int hintScale=s;
-        while(hintScale>1 && Canvas::TextWidth(hint,hintScale)>c.w-16*s)--hintScale;
-        c.Text((c.w - Canvas::TextWidth(hint, hintScale)) / 2, c.h - 11 * s, hint, hintScale, th.pokemon ? 0xFFDBE9FAu : th.hint);
+        const int dockH = 18 * s;
+        c.FillGlass(0, c.h - dockH, c.w, dockH, 0, 0xFA141926, 0xFA0B0E16, 0xFF28344C, 1);
+
+        struct DockItem { const char* badge; const char* label; };
+        static const DockItem items[] = {
+            { "A", "CHANGE" }, { "B", "BACK" }
+        };
+        const int itemCount = 2;
+        const int bh = 11 * s;
+        int totalW = 0;
+        int widths[itemCount];
+        for (int i = 0; i < itemCount; i++)
+        {
+            widths[i] = bh + Canvas::TextWidth(items[i].label, s) + 5 * s;
+            totalW += widths[i];
+        }
+        const int itemGap = 16 * s;
+        totalW += (itemCount - 1) * itemGap;
+
+        if (totalW <= c.w - 16 * s)
+        {
+            int dx = (c.w - totalW) / 2;
+            const int by = c.h - dockH + (dockH - bh) / 2;
+            for (int i = 0; i < itemCount; i++)
+            {
+                c.DrawButtonBadge(dx, by, items[i].badge, s, 0xFF222B3D, 0xFFFFFFFF, 0xFF3D4B66);
+                c.Text(dx + bh + 4 * s, by + 2 * s, items[i].label, s, th.hint);
+                dx += widths[i] + itemGap;
+            }
+        }
+        else
+        {
+            int hintScale = s;
+            while (hintScale > 1 && Canvas::TextWidth(hint, hintScale) > c.w - 16 * s) --hintScale;
+            c.Text((c.w - Canvas::TextWidth(hint, hintScale)) / 2, c.h - 11 * s, hint, hintScale, th.pokemon ? 0xFFDBE9FAu : th.hint);
+        }
     }
 };
 

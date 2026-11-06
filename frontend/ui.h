@@ -226,6 +226,99 @@ struct Canvas
         if (borderArgb >> 24) OutlineRound(x, y, rw, rh, r, borderT, borderArgb);
     }
 
+    void GlowRound(int x, int y, int rw, int rh, int radius, int spread, uint32_t glowArgb)
+    {
+        const uint32_t rgb = glowArgb & 0x00FFFFFF;
+        const uint32_t baseA = (glowArgb >> 24) & 0xFF;
+        if (baseA == 0 || spread <= 0 || rw <= 0 || rh <= 0) return;
+        for (int s = spread; s >= 1; s--)
+        {
+            const uint32_t a = (baseA * (uint32_t)(spread - s + 1) * (uint32_t)(spread - s + 1)) / (uint32_t)(spread * spread * 2);
+            if (a > 0) OutlineRound(x - s, y - s, rw + 2 * s, rh + 2 * s, radius + s, 1, (a << 24) | rgb);
+        }
+    }
+
+    void FillGlass(int x, int y, int rw, int rh, int radius, uint32_t topArgb, uint32_t botArgb, uint32_t borderArgb, int borderT = 1)
+    {
+        if (rw <= 0 || rh <= 0) return;
+        FillGradV(x, y, rw, rh, topArgb, botArgb, radius);
+        if (rh > 4 && radius > 0)
+        {
+            int dx0 = 0, dx1 = rw;
+            RoundedSpan(rw, rh, radius, 1, dx0, dx1);
+            if (dx1 > dx0 + 4)
+                FillBlend(x + dx0 + 2, y + 1, dx1 - dx0 - 4, 1, 0x44FFFFFF);
+        }
+        if ((borderArgb >> 24) > 0 && borderT > 0)
+            OutlineRound(x, y, rw, rh, radius, borderT, borderArgb);
+    }
+
+    void FillVignette(int intensity = 120)
+    {
+        if (w <= 0 || h <= 0) return;
+        const int cornerSteps = std::min(w, h) / 6;
+        for (int i = 0; i < cornerSteps; i += 4)
+        {
+            const uint32_t alpha = (uint32_t)(intensity * (cornerSteps - i)) / (uint32_t)cornerSteps;
+            if (alpha > 0)
+                OutlineRound(i, i, w - 2 * i, h - 2 * i, cornerSteps - i, 4, (alpha << 24));
+        }
+    }
+
+    void DrawButtonBadge(int x, int y, const std::string& label, int scale, uint32_t badgeColor = 0xFF2A344A, uint32_t textCol = 0xFFFFFFFF, uint32_t borderCol = 0xFF455577)
+    {
+        const int s = std::max(1, scale);
+        const int tw = TextWidthRaw(label, s);
+        const bool single = label.size() <= 1 || label == "+" || label == "-";
+        const int bh = 11 * s;
+        const int bw = single ? bh : tw + 8 * s;
+        const int rad = bh / 2;
+        const uint32_t topBevel = (((badgeColor >> 16) & 0xFF) + 30 <= 255 ? badgeColor + 0x001E1E1E : 0xFFFFFFFF);
+        const uint32_t botBevel = (((badgeColor >> 16) & 0xFF) >= 25 ? badgeColor - 0x00191919 : badgeColor);
+        FillGradV(x, y, bw, bh, topBevel, botBevel, rad);
+        OutlineRound(x, y, bw, bh, rad, 1, borderCol);
+        if (bh > 4) FillBlend(x + s + 1, y + 1, bw - 2 * (s + 1), 1, 0x33FFFFFF);
+        TextRaw(x + (bw - tw) / 2, y + (bh - 7 * s) / 2, label, s, textCol);
+    }
+
+    void DrawSwitch(int x, int y, int scale, bool on, uint32_t accentColor)
+    {
+        const int s = std::max(1, scale);
+        const int sw = 22 * s, sh = 11 * s;
+        const int rad = sh / 2;
+        const uint32_t trackBg = on ? accentColor : 0xFF262E3E;
+        const uint32_t trackBorder = on ? (accentColor | 0xFF000000) : 0xFF3D4B63;
+        FillRound(x, y, sw, sh, rad, trackBg);
+        OutlineRound(x, y, sw, sh, rad, 1, trackBorder);
+        const int knobSz = sh - 2 * s;
+        const int knobX = on ? (x + sw - knobSz - s) : (x + s);
+        const int knobY = y + s;
+        ShadowRound(knobX, knobY, knobSz, knobSz, knobSz / 2, s, 60);
+        FillGradV(knobX, knobY, knobSz, knobSz, 0xFFFFFFFF, 0xFFD8E2EC, knobSz / 2);
+        OutlineRound(knobX, knobY, knobSz, knobSz, knobSz / 2, 1, 0xFF94A3B8);
+    }
+
+    void DrawSliderBar(int x, int y, int rw, int rh, int progress, int maxProgress, uint32_t accentColor, bool focused = false)
+    {
+        if (rw <= 0 || rh <= 0 || maxProgress <= 0) return;
+        const int rad = rh / 2;
+        FillRound(x, y, rw, rh, rad, 0xFF19202E);
+        OutlineRound(x, y, rw, rh, rad, 1, 0xFF2E394E);
+        const int fillW = std::clamp((progress * rw) / maxProgress, 0, rw);
+        if (fillW > 0)
+        {
+            const uint32_t fillTop = (((accentColor >> 16) & 0xFF) + 35 <= 255 ? accentColor + 0x00232323 : 0xFFFFFFFF);
+            FillGradV(x, y, fillW, rh, fillTop, accentColor, rad);
+            if (focused) GlowRound(x, y, fillW, rh, rad, 2, (accentColor & 0x00FFFFFF) | 0x66000000);
+        }
+        const int thumbSz = rh + 4;
+        const int thumbX = x + std::clamp((progress * (rw - thumbSz)) / maxProgress, 0, rw - thumbSz);
+        const int thumbY = y - 2;
+        ShadowRound(thumbX, thumbY, thumbSz, thumbSz, thumbSz / 2, 2, 80);
+        FillGradV(thumbX, thumbY, thumbSz, thumbSz, 0xFFFFFFFF, 0xFFCBD5E1, thumbSz / 2);
+        OutlineRound(thumbX, thumbY, thumbSz, thumbSz, thumbSz / 2, 1, focused ? accentColor : 0xFF64748B);
+    }
+
     // 5x7 glyphs, one row per byte, bit 4 is the leftmost pixel.
     static const uint8_t* Glyph(char c)
     {
@@ -313,8 +406,22 @@ struct Canvas
 inline uint32_t AccentNamed(const std::string& name)
 {
     static const struct { const char* name; uint32_t argb; } colours[] = {
-        { "red", 0xFFE0242C }, { "blue", 0xFF2A7BE0 }, { "green", 0xFF2EB85C }, { "purple", 0xFF9B4DE0 },
-        { "gold", 0xFFE0A82C }, { "pink", 0xFFE0479A }, { "teal", 0xFF1FB5A8 },
+        { "red", 0xFFE52535 },      // Crimson Switch Red
+        { "crimson", 0xFFE52535 },
+        { "blue", 0xFF0090FF },     // Electric Azure Blue
+        { "cyber", 0xFF0090FF },
+        { "green", 0xFF00D668 },    // Emerald Mint
+        { "emerald", 0xFF00D668 },
+        { "purple", 0xFFA855F7 },   // Cosmic Amethyst
+        { "amethyst", 0xFFA855F7 },
+        { "gold", 0xFFFFB020 },     // Sunset Amber Gold
+        { "amber", 0xFFFFB020 },
+        { "pink", 0xFFFF3B88 },     // Neon Coral Pink
+        { "neon_pink", 0xFFFF3B88 },
+        { "teal", 0xFF00C7B5 },     // Cyan Aqua Mint
+        { "cyan", 0xFF00C7B5 },
+        { "obsidian", 0xFFCBD5E1 }, // Luxury Platinum Silver
+        { "silver", 0xFFCBD5E1 },
     };
     for (const auto& c : colours)
         if (name == c.name) return c.argb;
@@ -462,67 +569,65 @@ struct Menu
         drawnFirstY = by + (hasTitle ? lineH : 0) + 5 * scale - 2 * scale;
 
         if (!c.px.empty() && (c.px[0] >> 24) != 0)
-            c.FillBlend(0, 0, c.w, c.h, 0xB006080E);
+            c.FillBlend(0, 0, c.w, c.h, 0xBC05070D);
         else
-            c.Fill(0, 0, c.w, c.h, 0xA806080E);
+            c.Fill(0, 0, c.w, c.h, 0xB405070D);
+        const_cast<Canvas&>(c).FillVignette(70);
 
-        const int rad = std::max(2, 4 * scale);
-        c.ShadowRound(bx, by, boxW, boxH, rad, 2 * scale, 2 * scale);
-        c.FillGradV(bx, by, boxW, boxH, boxTop, boxBot, rad);
+        const int rad = std::max(3, 5 * scale);
+        const_cast<Canvas&>(c).ShadowRound(bx, by, boxW, boxH, rad, 3 * scale, 110);
+        const_cast<Canvas&>(c).GlowRound(bx, by, boxW, boxH, rad, 2 * scale, (Accent & 0x00FFFFFF) | 0x33000000u);
+        const_cast<Canvas&>(c).FillGlass(bx, by, boxW, boxH, rad, boxTop, boxBot, borderCol, std::max(1, scale / 2));
         if (hasTitle)
         {
-            const int hdrH = lineH + 2 * scale;
-            c.FillRound(bx + scale, by + scale, boxW - 2 * scale, hdrH, std::max(1, rad - scale), headerCol);
+            const int hdrH = lineH + 3 * scale;
+            c.FillGradV(bx + scale, by + scale, boxW - 2 * scale, hdrH, headerCol + 0x0006080C, headerCol, std::max(1, rad - scale));
             c.Fill(bx + 6 * scale, by + hdrH, boxW - 12 * scale, std::max(1, scale / 2), Accent);
-            c.Text(bx + (boxW - Canvas::TextWidth(title, scale)) / 2, by + 3 * scale, title, scale, 0xFFFFE074);
+            c.Text(bx + (boxW - Canvas::TextWidth(title, scale)) / 2, by + 4 * scale, title, scale, 0xFFFFE58F);
         }
-        c.OutlineRound(bx, by, boxW, boxH, rad, std::max(1, scale / 2), borderCol);
 
         int y = by + (hasTitle ? lineH : 0) + 5 * scale;
-        // (Marks at the box's right edge where rows are scrolled out of view, above or below.)
         if (scroll > 0) c.Text(bx + boxW - 8 * scale, y - lineH + 2 * scale, "+", scale, hintCol);
         if (scroll + shown < (int)items.size()) c.Text(bx + boxW - 8 * scale, y + shown * lineH - 2 * scale, "+", scale, hintCol);
-        const int rowRad = std::max(1, 2 * scale);
+        const int rowRad = std::max(2, 3 * scale);
         for (int i = scroll; i < scroll + shown; i++)
         {
             bool sel = i == selected;
             if (sel)
             {
+                const_cast<Canvas&>(c).GlowRound(bx + 2 * scale, y - 2 * scale, boxW - 4 * scale, lineH, rowRad, scale, (Accent & 0x00FFFFFF) | 0x55000000u);
                 c.FillGradV(bx + 2 * scale, y - 2 * scale, boxW - 4 * scale, lineH, selTop, selBot, rowRad);
                 c.OutlineRound(bx + 2 * scale, y - 2 * scale, boxW - 4 * scale, lineH, rowRad, std::max(1, scale / 2), selBorder);
-                c.FillRound(bx + 3 * scale, y - scale, std::max(1, scale), lineH - 2 * scale, std::max(1, scale / 2), 0xFFE8F4FF);
+                c.FillRound(bx + 3 * scale, y - scale, std::max(2, scale), lineH - 2 * scale, std::max(1, scale / 2), 0xFFFFFFFF);
             }
             else if (((i - scroll) & 1) == 1)
             {
                 c.FillRound(bx + 3 * scale, y - 2 * scale, boxW - 6 * scale, lineH - scale, rowRad, rowCardCol);
             }
             uint32_t col = sel ? 0xFFFFFFFF : textCol;
-            c.Text(bx + 6 * scale, y, items[i].label, scale, col);
+            c.Text(bx + 7 * scale, y, items[i].label, scale, col);
             if (!items[i].value.empty())
             {
                 const std::string v = shownValue(items[i]);
-                // (A slider's value right-aligned in room for its widest, "< 100% >", the bar left
-                // of it, so the bar stays put as the number changes.)
                 const int vx = bx + boxW - 6 * scale - Canvas::TextWidth(items[i].slider >= 0 ? "< 100% >" : v, scale);
                 c.Text(items[i].slider >= 0 ? bx + boxW - 6 * scale - Canvas::TextWidth(v, scale) : vx, y, v, scale, col);
                 if (items[i].slider >= 0)
                 {
                     barStep = 5 * scale;
                     barX = vx - 4 * scale - 10 * barStep;
-                    for (int k = 0; k < 10; k++)
-                        c.FillRound(barX + k * barStep, y, 4 * scale, 7 * scale, std::max(1, scale / 2),
-                                    k < items[i].slider ? (sel ? 0xFFFFFFFF : textCol) : (sel ? barOffSel : barOff));
+                    const int barW = 10 * barStep - scale;
+                    const int barH = 7 * scale;
+                    const_cast<Canvas&>(c).DrawSliderBar(barX, y, barW, barH, items[i].slider, 10, sel ? 0xFFFFFFFF : Accent, sel);
                 }
             }
             y += lineH;
         }
-        // Subtle separator above the footer hint.
         c.Fill(bx + 6 * scale, y + scale, boxW - 12 * scale, std::max(1, scale / 2), borderCol);
         c.Text(bx + (boxW - Canvas::TextWidth(hint, scale)) / 2, y + 4 * scale, hint, scale, hintCol);
         if (!noteLines.empty())
         {
             const int ny = by + boxH + 3 * scale;
-            c.ShadowRound(bx, ny, boxW, noteH, rad, 2 * scale, 2 * scale);
+            const_cast<Canvas&>(c).ShadowRound(bx, ny, boxW, noteH, rad, 2 * scale, 90);
             c.FillGradV(bx, ny, boxW, noteH, noteBox, boxBot, rad);
             c.OutlineRound(bx, ny, boxW, noteH, rad, std::max(1, scale / 2), borderCol);
             for (size_t i = 0; i < noteLines.size(); i++)

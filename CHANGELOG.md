@@ -3,6 +3,16 @@
 
 ## Unreleased
 
+- **Complete Horizon OS launcher, settings, and in-game HUD visual overhaul**:
+  - **Dynamic responsive grid**: eliminated the 4-column cap on widescreen, high-resolution (1080p, 1440p, 4K), and ultra-wide displays; balanced horizontal and vertical card gaps evenly; adaptive 2-column portrait layout for vertical displays.
+  - **Tactile physical cartridge case fallback**: when custom box art is absent, rendered a detailed 3D retro cartridge case (Nintendo DS matte dark charcoal with grip arrow/notch or GBA slate with curved lip relief), complete with metallic label sticker, platform header, crisp 32x32 scaled pixel icon, and authentic serial code (`NTR-` / `AGB-`).
+  - **Frosted glass acrylic cards & radiant glow**: added multi-layer radiant bloom glow to focused cards, tabs, and buttons; soft ambient drop shadows; rounded top corners on cover art matching card geometry.
+  - **Glowing hardware LED status indicators**: replaced plain text status with realistic illuminated LED dots (emerald for save found, amber for new game, ruby for unsupported, violet for coming soon) and luminous glass status capsules.
+  - **Tactile controller button badges dock**: replaced plain text button hints with physical 3D beveled controller button badges `[A] PLAY`, `[Y] SETTINGS`, `[X] RANDOM`, `[L] [R] TABS`, `[+] QUIT` in both launcher and settings pages, as well as top header buttons `[< BACK (B)]` and `[SETTINGS (Y)]`.
+  - **Horizon OS sliding toggle switches & slider bars**: upgraded settings page and in-game pause menu with modern sliding switches, smooth continuous volume slider bars with circular thumb knobs, and frosted glass panels with subtle cinematic perimeter vignetting.
+  - **In-game HUD glassmorphism**: sleek frosted glass capsules for the FPS counter and fast-forward indicator (`>>`) with glowing status dots, and modernized notification toasts with luminous accent stripes.
+  - **Vibrant color palette**: overhauled accent themes with 8 rich high-contrast colours (Crimson Red, Electric Azure, Emerald Mint, Cosmic Amethyst, Sunset Amber, Coral Pink, Aqua Teal, Platinum Silver).
+
 
 ## v1.0.0-beta.7 — Fix overworld clipping overflow, candidate search stall, and 60 FPS interpolation toggle
 

@@ -8017,25 +8017,34 @@ int main(int argc, char** argv)
         {
             int sc = outH / 240 < 1 ? 1 : outH / 240;
             const std::string text = std::to_string(shownFps) + " FPS";
-            const int tw = Canvas::TextWidth(text, sc) + 8 * sc;
+            const int dotR = std::max(2, 2 * sc);
+            const int tw = Canvas::TextWidth(text, sc) + dotR * 2 + 12 * sc;
+            const int th = 13 * sc;
             const int fx = outW - cornerInset - tw - 4 * sc;
             const int fy = cornerY + 3 * sc;
-            const uint32_t fpsCol = shownFps >= 55 ? 0xFF5CE68C : shownFps >= 40 ? 0xFFFFD166 : 0xFFFF6B6B;
-            canvas.FillRound(fx, fy, tw, 13 * sc, 3 * sc, 0xCC0D111A);
-            canvas.OutlineRound(fx, fy, tw, 13 * sc, 3 * sc, 1, 0xFF283248);
-            canvas.Text(fx + 4 * sc, fy + 3 * sc, text, sc, fpsCol);
+            const uint32_t ledCol = shownFps >= 55 ? 0xFF00E676 : shownFps >= 40 ? 0xFFFFB020 : 0xFFFF453A;
+            canvas.ShadowRound(fx, fy, tw, th, 3 * sc, sc, sc);
+            canvas.FillGlass(fx, fy, tw, th, 3 * sc, 0xD0171D2A, 0xD00F131D, 0xFF28344C, 1);
+            const int dotX = fx + 4 * sc + dotR;
+            const int dotY = fy + th / 2;
+            canvas.FillRound(dotX - dotR - 1, dotY - dotR - 1, (dotR + 1) * 2, (dotR + 1) * 2, dotR + 1, (ledCol & 0x00FFFFFF) | 0x33000000u);
+            canvas.FillRound(dotX - dotR, dotY - dotR, dotR * 2, dotR * 2, dotR, ledCol);
+            canvas.Fill(dotX - 1, dotY - 1, 2, 2, 0xFFFFFFFF);
+            canvas.Text(dotX + dotR + 4 * sc, fy + 3 * sc, text, sc, 0xFFFFFFFF);
             cornerY += 16 * sc;
             overlayUsed = true;
         }
         if (speed > 1)
         {
             int sc = outH / 240 < 1 ? 1 : outH / 240;
-            const int fw = Canvas::TextWidth(">>", sc) + 8 * sc;
+            const int fw = Canvas::TextWidth(">>", sc) + 12 * sc;
+            const int th = 13 * sc;
             const int fx = outW - cornerInset - fw - 4 * sc;
             const int fy = cornerY + 3 * sc;
-            canvas.FillRound(fx, fy, fw, 13 * sc, 3 * sc, 0xCC0D111A);
-            canvas.OutlineRound(fx, fy, fw, 13 * sc, 3 * sc, 1, 0xFF283248);
-            canvas.Text(fx + 4 * sc, fy + 3 * sc, ">>", sc, 0xFFFFD166);
+            canvas.GlowRound(fx, fy, fw, th, 3 * sc, 2 * sc, 0xFFFFB020);
+            canvas.FillGlass(fx, fy, fw, th, 3 * sc, 0xEE2A2414, 0xEE1E190E, 0xFFFFB020, 1);
+            canvas.Text(fx + 6 * sc, fy + 3 * sc, ">>", sc, 0xFFFFD166);
+            cornerY += 16 * sc;
             overlayUsed = true;
         }
 #if defined(__ANDROID__) && !defined(SSR_PC_LAUNCHER)
@@ -8128,14 +8137,15 @@ int main(int argc, char** argv)
         if (frame < toastUntil)
         {
             int sc = outH / 240 < 1 ? 1 : outH / 240;
-            const int tw = Canvas::TextWidth(toast, sc) + 10 * sc;
-            const int tx = 4 * sc, ty = 3 * sc;
-            // Fading out over its last second.
+            const int tw = Canvas::TextWidth(toast, sc) + 14 * sc;
+            const int th = 14 * sc;
+            const int tx = 6 * sc, ty = 5 * sc;
             const uint32_t left = toastUntil - frame;
             const uint32_t fade = left >= 60 ? 255 : left * 255 / 60;
-            canvas.FillRound(tx, ty, tw, 13 * sc, 3 * sc, ((0xD8 * fade / 255) << 24) | 0x0D111Au);
-            canvas.OutlineRound(tx, ty, tw, 13 * sc, 3 * sc, 1, ((0xFF * fade / 255) << 24) | 0x2E3B56u);
-            canvas.Text(tx + 5 * sc, ty + 3 * sc, toast, sc, (fade << 24) | 0xFFFFFF);
+            canvas.ShadowRound(tx, ty, tw, th, 3 * sc, sc, sc);
+            canvas.FillGlass(tx, ty, tw, th, 3 * sc, ((0xE0 * fade / 255) << 24) | 0x161C28u, ((0xE0 * fade / 255) << 24) | 0x0E121Au, ((0xFF * fade / 255) << 24) | 0x2A354Au, 1);
+            canvas.FillRound(tx + sc, ty + 2 * sc, std::max(2, 2 * sc), th - 4 * sc, sc, ((0xFF * fade / 255) << 24) | 0x0090FFu);
+            canvas.Text(tx + 7 * sc, ty + 3 * sc, toast, sc, (fade << 24) | 0xFFFFFF);
             overlayUsed = true;
         }
         if (menu.open)

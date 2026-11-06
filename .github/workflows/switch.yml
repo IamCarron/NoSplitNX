@@ -91,17 +91,23 @@ jobs:
           cat << EOF > build-sd/RELEASE_NOTES.md
           # NoSplitNX ${{ github.ref_name }}
 
-          This release fixes a crash on Nintendo Switch when stepping out through doors or transitions into the outdoor overworld, resolves the stack buffer overflow in polygon clipping, eliminates the candidate search stall on large overworld scenes, and prevents crashes when toggling 60 FPS interpolation.
+          This release delivers a comprehensive visual and UX overhaul of the entire application: the Game Launcher, In-Game Pause Menu, Settings Page, and In-Game HUD now feature a modern Horizon OS glassmorphism design with tactile 3D controller button badges, radiant glow highlights, physical retro cartridge shells, and adaptive responsive grid layout.
 
-          ### Fixes & Improvements
+          ### Visual & UX Overhaul
 
-          - **Door Exit & Outdoor Overworld Crash**: Fixed stack buffer overflow in `ClipAgainstPlane` where clipping complex outdoor overworld geometry (up to 2,656 polygons) generated $\ge 10$ vertices, overflowing the 10-vertex stack array and tripping GCC's stack protector (`__stack_chk_fail`).
-          - **Candidate Stall Elimination**: Optimized `ExtendToEdges` by reordering 2D bounding-box and depth rejection before `sharesCorner`, eliminating up to 7 million expensive corner tests and preventing CPU watchdog freezes when entering large maps.
-          - **Safe 60 FPS Interpolation Toggle**: Toggling 60 FPS in the pause menu mid-dialogue or during static scenes now safely resets `RawCurrent`, `RawPrevious`, and all pending interpolation queues, eliminating crashes from stale polygon pointers.
-          - **Deko3D Memory Cleanup**: Ensured `FreeTargets()` is cleanly called on dimension changes in `MakeTargets` to reallocate Tegra X1 texture memory with proper alignment and compression metadata.
-          - **Arithmetic Safety**: Added divide-by-zero protection in `ClipSegment` when vertices share identical plane distance.
-          - **Launcher Theme Persistence**: Settings and accent color changes save immediately on Switch FAT32 SD cards.
-          - **In-Console Updater**: Fully functional update path via `SETTINGS (Y)` -> `CHECK FOR UPDATES`.
+          - **Dynamic Responsive Grid**: Eliminated the 4-column clamp on 1080p, 1440p, 4K, and ultra-wide displays; balanced horizontal and vertical card spacing uniformly; adaptive 2-column portrait layout for vertical screens.
+          - **Tactile Physical Cartridge Cases**: When custom box art is absent, rendered a detailed 3D retro cartridge case (Nintendo DS matte dark charcoal with grip arrow/notch or GBA slate with curved lip relief), complete with metallic label sticker, platform header, crisp 32x32 scaled pixel icon, and authentic serial code (\`NTR-\` / \`AGB-\`).
+          - **Frosted Glass Cards & Radiant Glow**: Added multi-layer radiant bloom glow to focused cards, tabs, and buttons; soft ambient drop shadows; rounded top corners on cover art matching card geometry.
+          - **Glowing Hardware LED Status Indicators**: Replaced plain text status with realistic illuminated LED dots (emerald for save found, amber for new game, ruby for unsupported, violet for coming soon) and luminous glass status capsules.
+          - **Tactile Controller Button Badges Dock**: Replaced plain text button hints with physical 3D beveled controller button badges \`[A] PLAY\`, \`[Y] SETTINGS\`, \`[X] RANDOM\`, \`[L] [R] TABS\`, \`[+] QUIT\` in both launcher and settings pages, as well as top header buttons \`[< BACK (B)]\` and \`[SETTINGS (Y)]\`.
+          - **Horizon OS Sliding Toggle Switches & Slider Bars**: Upgraded settings page and in-game pause menu with modern sliding switches, smooth continuous volume slider bars with circular thumb knobs, and frosted glass panels with subtle cinematic perimeter vignetting.
+          - **In-Game HUD Glassmorphism**: Sleek frosted glass capsules for the FPS counter and fast-forward indicator (\`>>\`) with glowing status dots, and modernized notification toasts with luminous accent stripes.
+          - **Vibrant Color Palette**: Overhauled accent themes with 8 rich high-contrast colors (Crimson Red, Electric Azure, Emerald Mint, Cosmic Amethyst, Sunset Amber, Coral Pink, Aqua Teal, Platinum Silver).
+
+          ### Stability & Rendering (from Beta 7)
+          - Door exit and map transition stability with stack buffer overflow fix in polygon clipping.
+          - Candidate search stall elimination when loading outdoor overworld maps.
+          - Safe 60 FPS motion interpolation toggle mid-dialogue.
 
           ### Installation & Updating
 
