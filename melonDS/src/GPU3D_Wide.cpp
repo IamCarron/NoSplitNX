@@ -789,7 +789,7 @@ struct WideAccess
             NumInterp = 0;
             {
                 std::lock_guard<std::mutex> lock(Mutex);
-                Paired = interpolate && !Prev.empty();
+                Paired = interpolate && !Prev.empty() && !Cur.empty();
                 for (int i = 0; i < 3; i++)
                 {
                     Job& j = Jobs[i];
@@ -1148,7 +1148,14 @@ struct WideAccess
                 for (u32 j = 0; j < count && blocker < 0; j++)
                 {
                     const Box& o = boxes[j];
-                    if (j == i || o.x1 < o.x0 || (o.side & side)) continue;
+                    if (j == i || o.x1 < o.x0 || (o.side & side) || !list[j]) continue;
+                    const s32 rows = std::min(o.y1, b.y1) - std::max(o.y0, b.y0);
+                    if (rows <= 0) continue;
+                    if (o.x0 > sx1 || o.x1 < sx0) continue;
+                    if ((s64)o.w1 * 21 < (s64)b.w0 * 20) continue;
+                    if (farBox && b.y0 <= 0 && o.y0 > 0) continue;
+                    if ((distant || layer) && o.w0 > b.w1) continue;
+
                     // (A neighbour sharing a corner always holds it back, even a see-through one: the
                     // haze at Aspertia's lookout is a dome of panels sharing their corners, whose
                     // column at the view's left edge would otherwise have been folded up by the
@@ -1156,22 +1163,11 @@ struct WideAccess
                     const bool shares = sharesCorner(j);
                     if (!shares && list[j]->Translucent && (side == 1 ? o.x0 <= 0 : o.x1 >= full)) continue;
                     if (farBox && !shares && (o.x1 - o.x0 < full / 10 || SeeThrough(list[j]))) continue;
-                    // (Nor anything wholly nearer, by more than a twentieth: it stays in front of
-                    // what is continued behind it; the trees before a far line of trees at Aspertia's
-                    // lookout.)
-                    if ((s64)o.w1 * 21 < (s64)b.w0 * 20) continue;
-                    // (For a layer of the distance, a sky's mountains or haze: nor, if it hangs from
-                    // the top of the view, what stands below its top, nor anything wholly further,
-                    // which it covers, as it would on the DS: the land beside the lookout that
-                    // Black 2 draws once it loads more of its map, frontend/bw2map.h.)
-                    if (farBox && b.y0 <= 0 && o.y0 > 0) continue;
-                    if ((distant || layer) && o.w0 > b.w1) continue;
 
                     // (Touching counts: a neighbour sharing the corner to be moved would be bent.
                     // One beside only a third of its rows or less does not: the sea below the
                     // sky's haze at the horizon.)
-                    const s32 rows = std::min(o.y1, b.y1) - std::max(o.y0, b.y0);
-                    if (o.x0 <= sx1 && o.x1 >= sx0 && rows > 0 && rows * 3 > b.y1 - b.y0) blocker = (s32)j;
+                    if (rows * 3 > b.y1 - b.y0) blocker = (s32)j;
                 }
                 if (log)
                     fprintf(stderr, "[extend] polygon %u (x %d-%d, y %d-%d of %d, w %d-%d of %d) %s on the %s\n", i, b.x0, b.x1, b.y0, b.y1, full, b.w0, b.w1, farW,
@@ -1565,7 +1561,11 @@ struct WideAccess
         {
             const Polygon* poly = list[p];
             if (!poly || poly->Degenerate || poly->IsShadowMask || poly->IsShadow || poly->Type != 0) continue;
-            if (poly->NumVertices < 3) continue;
+            if (poly->NumVertices < 3 || poly->NumVertices > 10) continue;
+            bool valid = true;
+            for (u32 i = 0; i < poly->NumVertices; i++)
+                if (!poly->Vertices[i]) { valid = false; break; }
+            if (!valid) continue;
             Texture* tex = texturing && ((poly->TexParam >> 26) & 0x7) ? findTexture(poly->TexParam, poly->TexPalette) : nullptr;
             WideVertex v[10];
             for (u32 i = 0; i < poly->NumVertices; i++)

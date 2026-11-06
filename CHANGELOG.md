@@ -4,6 +4,19 @@
 ## Unreleased
 
 
+## v1.0.0-beta.7 — Fix overworld clipping overflow, candidate search stall, and 60 FPS interpolation toggle
+
+- **Overworld door exit and map transition stability**:
+  - Fixed a fatal crash (`__stack_chk_fail` stack canary trip) when exiting houses or buildings into outdoor maps with over 2,600 polygons in Pokémon Black and White by adding strict boundary checks in `ClipAgainstPlane` and `SubmitPolygon` to prevent stack array overflows during polygon clipping.
+  - Eliminated a severe CPU stall and OS watchdog hang when loading outdoor overworld geometry by reordering 2D bounding-box and depth culling before `sharesCorner` in `ExtendToEdges`, reducing millions of redundant polygon candidate corner tests to near zero.
+  - Added arithmetic safety against division by zero in `ClipSegment` when vertices share identical clipping plane distances.
+  - Cleaned up deko3D image target allocation by ensuring `FreeTargets()` is called on dimension changes in `MakeTargets` to prevent Tegra X1 texture memory corruption.
+
+- **Safe 60 FPS interpolation toggle**:
+  - Fixed crash when toggling the 60 FPS interpolation setting from the pause menu mid-dialogue or during static scenes by clearing raw polygon buffers (`RawCurrent`, `RawPrevious`) and resetting all interpolation state.
+  - Clarified that the "60 FPS" setting generates intermediate in-between frames for DS 3D polygon rendering (motion interpolation) rather than acting as a frame rate limiter.
+
+
 ## v1.0.0-beta.6 — Fix door transition crash and Tegra X1 texture alignment
 
 - **Door exit and map transition stability**:

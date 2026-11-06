@@ -551,6 +551,9 @@ void WideGpuBuild(const GPU& gpu, Polygon* const* list, u32 count, int W, int H,
 
     // A polygon's triangles (a fan), appended to the vertices.
     auto add = [&](const Polygon* poly) {
+        if (!poly || poly->NumVertices < 3 || poly->NumVertices > 10) return;
+        for (u32 i = 0; i < poly->NumVertices; i++)
+            if (!poly->Vertices[i]) return;
         const u32 index = (u32)f.Polygons.size();
         WideGpuPolygon p;
         p.Attr = poly->Attr;
@@ -596,7 +599,7 @@ void WideGpuBuild(const GPU& gpu, Polygon* const* list, u32 count, int W, int H,
         }
     };
     auto drawable = [](const Polygon* poly) {
-        return poly && !poly->Degenerate && !poly->IsShadowMask && !poly->IsShadow && poly->Type == 0 && poly->NumVertices >= 3;
+        return poly && !poly->Degenerate && !poly->IsShadowMask && !poly->IsShadow && poly->Type == 0 && poly->NumVertices >= 3 && poly->NumVertices <= 10;
     };
     auto frontFirst = [](const Polygon* poly) { return !poly->Translucent && !(poly->Attr & (1 << 14)); };
 

@@ -1862,7 +1862,65 @@ index 1204741..22f58ea 100644
  
      file->Var32((u32*)&VertexPipeline);
      file->Var32((u32*)&NormalPipeline);
-@@ -971,6 +1005,19 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -812,6 +846,7 @@ void ClipSegment(Vertex* outbuf, Vertex* vin, Vertex* vout)
+ {
+     s64 factor_num = vin->Position[3] - (plane*vin->Position[comp]);
+     s32 factor_den = factor_num - (vout->Position[3] - (plane*vout->Position[comp]));
++    if (factor_den == 0) factor_den = 1;
+ 
+ #define INTERPOLATE(var)  { outbuf->var = (vin->var + ((vout->var - vin->var) * factor_num) / factor_den); }
+ 
+@@ -861,6 +896,7 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
+             Vertex* vprev = &vertices[prev];
+             if (vprev->Position[comp] <= vprev->Position[3])
+             {
++                if (c >= 10) return 0;
+                 ClipSegment<comp, 1, attribs>(&temp[c], &vtx, vprev);
+                 c++;
+             }
+@@ -871,12 +907,16 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
+             Vertex* vnext = &vertices[next];
+             if (vnext->Position[comp] <= vnext->Position[3])
+             {
++                if (c >= 10) return 0;
+                 ClipSegment<comp, 1, attribs>(&temp[c], &vtx, vnext);
+                 c++;
+             }
+         }
+         else
++        {
++            if (c >= 10) return 0;
+             temp[c++] = vtx;
++        }
+     }
+ 
+     nverts = c; c = clipstart;
+@@ -888,6 +928,7 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
+             Vertex* vprev = &temp[prev];
+             if (vprev->Position[comp] >= -vprev->Position[3])
+             {
++                if (c >= 10) return 0;
+                 ClipSegment<comp, -1, attribs>(&vertices[c], &vtx, vprev);
+                 c++;
+             }
+@@ -898,12 +939,16 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
+             Vertex* vnext = &temp[next];
+             if (vnext->Position[comp] >= -vnext->Position[3])
+             {
++                if (c >= 10) return 0;
+                 ClipSegment<comp, -1, attribs>(&vertices[c], &vtx, vnext);
+                 c++;
+             }
+         }
+         else
++        {
++            if (c >= 10) return 0;
+             vertices[c++] = vtx;
++        }
+     }
+ 
+     // checkme
+@@ -971,6 +1014,19 @@ void GPU3D::SubmitPolygon() noexcept
      // TODO: work out how it works on the real thing
      // the normalization part is a wild guess
  
@@ -1882,7 +1940,27 @@ index 1204741..22f58ea 100644
      Vertex *v0, *v1, *v2, *v3;
      s64 normalX, normalY, normalZ;
      s64 dot;
-@@ -1092,7 +1139,7 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -1050,8 +1106,8 @@ void GPU3D::SubmitPolygon() noexcept
+         }
+ 
+         if (LastStripPolygon->NumVertices == lastpolyverts &&
+-            !LastStripPolygon->Vertices[id0]->Clipped &&
+-            !LastStripPolygon->Vertices[id1]->Clipped)
++            LastStripPolygon->Vertices[id0] && !LastStripPolygon->Vertices[id0]->Clipped &&
++            LastStripPolygon->Vertices[id1] && !LastStripPolygon->Vertices[id1]->Clipped)
+         {
+             reusedvertices[0] = LastStripPolygon->Vertices[id0];
+             reusedvertices[1] = LastStripPolygon->Vertices[id1];
+@@ -1086,7 +1142,7 @@ void GPU3D::SubmitPolygon() noexcept
+     // clipping
+ 
+     nverts = ClipPolygon<true>(*this, clippedvertices, nverts, clipstart);
+-    if (nverts == 0)
++    if (nverts < 3 || nverts > 10)
+     {
+         LastStripPolygon = NULL;
+         return;
+@@ -1092,7 +1148,7 @@ void GPU3D::SubmitPolygon() noexcept
  
      // reject the polygon if it's not going to fit in polygon/vertex RAM
  

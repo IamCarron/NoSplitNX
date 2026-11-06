@@ -91,17 +91,17 @@ jobs:
           cat << EOF > build-sd/RELEASE_NOTES.md
           # NoSplitNX ${{ github.ref_name }}
 
-          This release fixes a crash on Nintendo Switch when exiting through doors or transitions into the overworld, ensures full Tegra X1 texture alignment, fixes the mid-dialogue 60 FPS toggle crash, and preserves all stability improvements.
+          This release fixes a crash on Nintendo Switch when stepping out through doors or transitions into the outdoor overworld, resolves the stack buffer overflow in polygon clipping, eliminates the candidate search stall on large overworld scenes, and prevents crashes when toggling 60 FPS interpolation.
 
           ### Fixes & Improvements
 
-          - **Door Exit & Overworld Transition Crash**: Fixed a hardware stride crash on Nintendo Switch when walking through doors or transitioning into the overworld by aligning narrow side bar textures (\`NarrowTex\`) to 8x192 with a 32-byte stride (matching Tegra X1 requirements).
-          - **Transition Safety & Null Guards**: Added strict null pointer and bounds validation for screen textures, background pixels, and hole-filling buffers in \`GpuCompositor\` and \`MergedFillWideHoles\`.
-          - **Polygon Vertex Protections**: Added vertex count limits and null checks in \`ExtendToEdges\` to prevent stack corruption and segmentation faults during outdoor map entry.
-          - **Safe 60 FPS Toggle**: Fixed crash when toggling 60 FPS in the pause menu mid-dialogue or during static scenes. In-between frame queues (\`InterpPending\`, \`InterpDeferred\`) are safely cleared.
-          - **3D Frame Interpolation vs Limiting**: Clarified that the "60 FPS" option performs DS 3D polygon interpolation (generating intermediate frames so 3D camera and geometry move at 60 FPS instead of the DS native 30 FPS).
-          - **Launcher Theme Persistence**: Setting and theme color changes save immediately on Switch FAT32 SD cards and update in real-time.
-          - **In-Console Updater**: Fully functional update path via \`SETTINGS (Y)\` -> \`CHECK FOR UPDATES\`.
+          - **Door Exit & Outdoor Overworld Crash**: Fixed stack buffer overflow in `ClipAgainstPlane` where clipping complex outdoor overworld geometry (up to 2,656 polygons) generated $\ge 10$ vertices, overflowing the 10-vertex stack array and tripping GCC's stack protector (`__stack_chk_fail`).
+          - **Candidate Stall Elimination**: Optimized `ExtendToEdges` by reordering 2D bounding-box and depth rejection before `sharesCorner`, eliminating up to 7 million expensive corner tests and preventing CPU watchdog freezes when entering large maps.
+          - **Safe 60 FPS Interpolation Toggle**: Toggling 60 FPS in the pause menu mid-dialogue or during static scenes now safely resets `RawCurrent`, `RawPrevious`, and all pending interpolation queues, eliminating crashes from stale polygon pointers.
+          - **Deko3D Memory Cleanup**: Ensured `FreeTargets()` is cleanly called on dimension changes in `MakeTargets` to reallocate Tegra X1 texture memory with proper alignment and compression metadata.
+          - **Arithmetic Safety**: Added divide-by-zero protection in `ClipSegment` when vertices share identical plane distance.
+          - **Launcher Theme Persistence**: Settings and accent color changes save immediately on Switch FAT32 SD cards.
+          - **In-Console Updater**: Fully functional update path via `SETTINGS (Y)` -> `CHECK FOR UPDATES`.
 
           ### Installation & Updating
 

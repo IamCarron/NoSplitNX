@@ -648,6 +648,7 @@ private:
     bool MakeTargets(int w, int h)
     {
         dkQueueWaitIdle(Queue);
+        if (W != w || H != h) FreeTargets();
         const u32 render = DkImageFlags_UsageRender | (Sh->Compress ? DkImageFlags_HwCompression : 0);
         if (!Image(ColorImage, ColorMem, ColorCap, DkImageFormat_RGBA8_Unorm, w, h, render) ||
             !Image(AttrImage, AttrMem, AttrCap, DkImageFormat_RG32_Uint, w, h, render) ||

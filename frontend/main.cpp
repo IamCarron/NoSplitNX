@@ -6453,6 +6453,8 @@ int main(int argc, char** argv)
                 nds->GPU.GPU3D.InterpPending = false;
                 nds->GPU.GPU3D.InterpDeferred = false;
                 nds->GPU.GPU3D.InterpShowReal = false;
+                nds->GPU.GPU3D.RawCurrent.clear();
+                nds->GPU.GPU3D.RawPrevious.clear();
                 break;
 #if !defined(__SWITCH__) && !defined(SSR_PHONE)
             case M_FULLSCREEN:
@@ -7343,6 +7345,8 @@ int main(int argc, char** argv)
                 nds->GPU.GPU3D.InterpPending = false;
                 nds->GPU.GPU3D.InterpDeferred = false;
                 nds->GPU.GPU3D.InterpShowReal = false;
+                nds->GPU.GPU3D.RawCurrent.clear();
+                nds->GPU.GPU3D.RawPrevious.clear();
             }
             if (ahead)
             {
