@@ -14,6 +14,7 @@
 #include <string>
 #include <utility>
 #include <cmath>
+#include <ctime>
 #include <vector>
 #include <dirent.h>
 #include "ssr_os.h"
@@ -675,6 +676,100 @@ inline void LoadLook(const std::string& cfg, const std::string& folder, Theme& t
     }
 }
 
+// Draw the iconic Nintendo DS dual-screen logo [ ⊟ ]
+inline void DrawDsLogo(Canvas& c, int x, int y, int s, uint32_t color)
+{
+    const int sw = 10 * s, sh = 6 * s;
+    const int gap = 2 * s;
+    c.OutlineRound(x, y, sw, sh, s, 1, color);
+    c.FillBlend(x + s, y + s, sw - 2 * s, sh - 2 * s, (color & 0x00FFFFFF) | 0x33000000);
+    c.OutlineRound(x, y + sh + gap, sw, sh, s, 1, color);
+    c.FillBlend(x + s, y + sh + gap + s, sw - 2 * s, sh - 2 * s, (color & 0x00FFFFFF) | 0x66000000);
+}
+
+// Draw the iconic Nintendo DS / DSi 3-bar battery meter [ ||| ]
+inline void DrawDsBattery(Canvas& c, int x, int y, int s, int level = 3)
+{
+    const int bw = 15 * s, bh = 8 * s;
+    const int nubW = 2 * s, nubH = 4 * s;
+    c.OutlineRound(x, y, bw, bh, s, 1, 0xFF7A8A9E);
+    c.Fill(x + bw, y + (bh - nubH) / 2, nubW, nubH, 0xFF7A8A9E);
+    const uint32_t barColor = (level <= 1) ? 0xFFFF3B30 : 0xFF00E676;
+    const int barW = 3 * s, barH = bh - 4 * s;
+    for (int i = 0; i < level; i++)
+        c.Fill(x + 2 * s + i * (barW + s), y + 2 * s, barW, barH, barColor);
+}
+
+// Draw the authentic Nintendo DSi / DS firmware micro-mesh background
+inline void DrawDsMesh(Canvas& c, int s)
+{
+    const int step = std::max(6, 6 * s);
+    for (int y = 0; y < c.h; y += step)
+    {
+        const int xOff = ((y / step) % 2) * (step / 2);
+        for (int x = xOff; x < c.w; x += step)
+            c.FillBlend(x, y, std::max(1, s / 2), std::max(1, s / 2), 0x0AFFFFFF);
+    }
+}
+
+// Draw the Nintendo DSi Upper Display Game Showcase Card
+inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& g, int s, uint32_t accent)
+{
+    c.ShadowRound(x, y, w, h, 4 * s, s, 70);
+    c.FillGlass(x, y, w, h, 4 * s, 0xEE1E2638, 0xEE121824, 0xFF2F3C54, 1);
+    c.FillRound(x + 3 * s, y + 4 * s, 3 * s, h - 8 * s, s, accent);
+
+    const int wellSz = h - 10 * s;
+    const int wellX = x + 10 * s, wellY = y + 5 * s;
+    c.FillRound(wellX, wellY, wellSz, wellSz, 3 * s, 0xFF0E131C);
+    c.OutlineRound(wellX, wellY, wellSz, wellSz, 3 * s, 1, 0xFF2A364C);
+
+    if (g.hasIcon)
+    {
+        const int iconScale = std::max(1, (wellSz - 4 * s) / 32);
+        const int iconSz = 32 * iconScale;
+        const int ix = wellX + (wellSz - iconSz) / 2;
+        const int iy = wellY + (wellSz - iconSz) / 2;
+        for (int py = 0; py < 32; py++)
+            for (int px = 0; px < 32; px++)
+            {
+                const uint32_t p = g.icon[py * 32 + px];
+                if ((p >> 24) >= 0x40)
+                    c.Fill(ix + px * iconScale, iy + py * iconScale, iconScale, iconScale, p | 0xFF000000u);
+            }
+    }
+    else
+    {
+        const int cartW = wellSz * 75 / 100, cartH = wellSz * 80 / 100;
+        const int cx = wellX + (wellSz - cartW) / 2, cy = wellY + (wellSz - cartH) / 2;
+        c.FillRound(cx, cy, cartW, cartH, 2 * s, 0xFF262C38);
+        c.OutlineRound(cx, cy, cartW, cartH, 2 * s, 1, 0xFF455064);
+        c.FillRound(cx + s, cy + s, cartW - 2 * s, 3 * s, 1, (g.platform == GBA ? 0xFF4D1D88 : 0xFF143A70));
+    }
+
+    const int textX = wellX + wellSz + 8 * s;
+    std::string title = g.name;
+    int ts = s + 1;
+    while (ts > 1 && Canvas::TextWidth(title, ts) > w - wellSz - 160 * s) --ts;
+    c.Text(textX, y + 6 * s, title, ts, 0xFFFFFFFF);
+
+    const std::string plat = (g.platform == GBA ? "GAME BOY ADVANCE" : "NINTENDO DS");
+    const std::string serial = (g.platform == GBA ? "AGB-" : "NTR-") + g.code;
+    const std::string meta = plat + "  -  " + serial;
+    c.Text(textX, y + 6 * s + 9 * ts, meta, s, 0xFF8FA0B8);
+
+    const std::string status = g.comingSoon ? UiLang::Tr("COMING SOON") : !g.known ? UiLang::Tr("NOT PLAYABLE") : g.hasSave ? UiLang::Tr("SAVE FOUND") : UiLang::Tr("NEW GAME");
+    const uint32_t statusCol = !g.known && !g.comingSoon ? 0xFFFF453A : g.comingSoon ? 0xFFA855F7 : g.hasSave ? 0xFF00E676 : 0xFFFFB020;
+    const uint32_t statusBg = !g.known && !g.comingSoon ? 0xDD3B141C : g.comingSoon ? 0xDD251A38 : g.hasSave ? 0xDD123624 : 0xDD3A2B12;
+    const int sw = Canvas::TextWidth(status, s) + 16 * s;
+    const int sh = 12 * s;
+    const int sx = x + w - sw - 12 * s, sy = y + (h - sh) / 2;
+    c.FillRound(sx, sy, sw, sh, 3 * s, statusBg);
+    c.OutlineRound(sx, sy, sw, sh, 3 * s, 1, (statusCol & 0x00FFFFFF) | 0x88000000);
+    c.FillRound(sx + 5 * s, sy + 4 * s, 4 * s, 4 * s, 2 * s, statusCol);
+    c.Text(sx + 12 * s, sy + 3 * s, status, s, statusCol);
+}
+
 // Renders a tactile physical cartridge (Nintendo DS or GBA) when high-res box art is not present.
 inline void DrawCartridgeCase(Canvas& c, int x, int y, int sz, int platform, const uint32_t* icon32,
                               const std::string& code, const std::string& name, int s)
@@ -787,6 +882,7 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int sz, int platform, con
 struct Grid
 {
     int s, gap, colGap, rowGap, labelH, tabsY, tabsH, headH, top, bottom, tile, cols, gx;
+    int bannerY = 0, bannerH = 0; // Nintendo DSi Upper Display Showcase Banner
     int panelX = 0, panelW = 0;
     int rowH() const { return tile + labelH + rowGap; }
 };
@@ -798,11 +894,13 @@ inline Grid Layout(const Canvas& c)
     g.rowGap = 7 * g.s;
     g.gap = g.rowGap;
     g.labelH = (UiLang::Tall() ? 32 : 20) * g.s;
-    g.tabsY = (c.h > c.w ? 46 : 25) * g.s;
+    g.bannerY = (c.h > c.w ? 44 : 24) * g.s;
+    g.bannerH = (c.h > c.w ? 0 : 26 * g.s);
+    g.tabsY = (c.h > c.w ? 46 * g.s : g.bannerY + g.bannerH + 4 * g.s);
     g.tabsH = 13 * g.s;
     g.headH = 13 * g.s;
     g.top = g.tabsY + g.tabsH + 5 * g.s;
-    g.bottom = c.h - 16 * g.s;
+    g.bottom = c.h - 18 * g.s;
     const int availH = g.bottom - g.top - g.headH;
     if (c.h > c.w) // portrait / vertical screen
     {
@@ -965,37 +1063,70 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     const int s = grid.s;
     const uint32_t bgBot = 0xFF07090E;
     c.FillGradV(0, 0, c.w, c.h, th.bg, bgBot, 0);
+    DrawDsMesh(c, s);
     if (th.background)
         if (const uint32_t* bgPx = th.background->Fitted(c.w, c.h)) std::copy(bgPx, bgPx + (size_t)c.w * c.h, c.px.begin());
 
-    // Modern top header bar with accent underline.
+    // Nintendo DS / DSi top header bar with twin-screen logo and date / battery widget.
     const int bandH = (c.h > c.w ? 43 : 22) * s;
     c.FillGradV(0, 0, c.w, bandH, 0xFF191F2D, th.band, 0);
     c.Fill(0, bandH, c.w, th.bandLineH * s, th.bandLine);
-    const std::string title = "NOSPLIT NX";
-    c.Text((c.w - Canvas::TextWidth(title, s + 1)) / 2, 6 * s, title, s + 1, th.title);
+    c.FillBlend(0, bandH + th.bandLineH * s, c.w, 2 * s, 0x33000000);
+
+    DrawDsLogo(c, 10 * s, (bandH - 12 * s) / 2, s, th.title);
+    const std::string title = "NOSPLIT DS";
+    c.Text(24 * s, (bandH - 7 * (s + 1)) / 2, title, s + 1, th.title);
+
+    // Center pill: console mode indicator
 #ifdef __SWITCH__
-    // Placed on the top-left of the header bar so it never collides with SETTINGS (Y) on the right.
+    const std::string modeStr = SwitchPlatform::IsHandheld() ? "MODO PORTATIL" : "MODO CONSOLA";
+#else
+    const std::string modeStr = "NOSPLIT DS";
+#endif
+    const int modeW = Canvas::TextWidth(modeStr, s) + 8 * s;
+    const int modeH = 11 * s;
+    const int modeY = (bandH - modeH) / 2;
+    c.FillRound((c.w - modeW) / 2, modeY, modeW, modeH, 3 * s, 0xFF222938);
+    c.OutlineRound((c.w - modeW) / 2, modeY, modeW, modeH, 3 * s, 1, 0xFF354258);
+    c.Text((c.w - Canvas::TextWidth(modeStr, s)) / 2, modeY + 2 * s, modeStr, s, th.hint);
+
+    // Right: Date, Time & DS 3-bar battery widget
     int yr = 0, mo = 0, dy = 0, hr = 0, mn = 0, sc = 0;
-    if (SwitchPlatform::LocalTime(yr, mo, dy, hr, mn, sc))
+    bool haveTime = false;
+#ifdef __SWITCH__
+    haveTime = SwitchPlatform::LocalTime(yr, mo, dy, hr, mn, sc);
+#else
+    time_t raw = time(nullptr);
+    if (tm* lt = localtime(&raw))
     {
-        char timeBuf[16];
-        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", hr, mn);
-        const std::string clockStr = timeBuf;
-        const std::string modeStr = SwitchPlatform::IsHandheld() ? "HANDHELD" : "DOCKED";
-        const int modeScale = std::max(1, s - 1);
-        const int modeW = Canvas::TextWidth(modeStr, modeScale) + 6 * s;
-        const int pillH = 11 * s;
-        const int pillY = 5 * s;
-        c.FillRound(8 * s, pillY, modeW, pillH, 3 * s, 0xFF22293A);
-        c.OutlineRound(8 * s, pillY, modeW, pillH, 3 * s, 1, 0xFF333D54);
-        c.Text(8 * s + 3 * s, pillY + (pillH - 7 * modeScale) / 2, modeStr, modeScale, th.hint);
-        const int clockX = 8 * s + modeW + 4 * s;
-        const int clockW = Canvas::TextWidth(clockStr, s) + 6 * s;
-        c.FillRound(clockX, pillY, clockW, pillH, 3 * s, 0xFF22293A);
-        c.Text(clockX + 3 * s, 6 * s, clockStr, s, th.title);
+        yr = lt->tm_year + 1900; mo = lt->tm_mon + 1; dy = lt->tm_mday;
+        hr = lt->tm_hour; mn = lt->tm_min; sc = lt->tm_sec;
+        haveTime = true;
     }
 #endif
+    if (haveTime)
+    {
+        char dateBuf[16], timeBuf[16];
+        snprintf(dateBuf, sizeof(dateBuf), "%02d/%02d", mo, dy);
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", hr, mn);
+        const std::string dateStr = dateBuf;
+        const std::string timeStr = timeBuf;
+        const int clockW = Canvas::TextWidth(dateStr, s) + Canvas::TextWidth(timeStr, s + 1) + 36 * s;
+        const int clockX = c.w - clockW - 10 * s;
+        const int clockY = (bandH - 14 * s) / 2;
+        c.FillRound(clockX, clockY, clockW, 14 * s, 4 * s, 0xFF202736);
+        c.OutlineRound(clockX, clockY, clockW, 14 * s, 4 * s, 1, 0xFF354258);
+        c.Text(clockX + 6 * s, clockY + 4 * s, dateStr, s, th.hint);
+        c.Text(clockX + Canvas::TextWidth(dateStr, s) + 12 * s, clockY + 2 * s, timeStr, s + 1, th.title);
+        DrawDsBattery(c, clockX + clockW - 18 * s, clockY + 3 * s, s, 3);
+    }
+
+    // Nintendo DSi Upper Display Game Showcase Card
+    if (grid.bannerH > 0 && !games.empty() && selected >= 0 && selected < (int)games.size())
+    {
+        const int bannerW = c.w - 32 * s;
+        DrawDsiTopBanner(c, 16 * s, grid.bannerY, bannerW, grid.bannerH, games[selected], s, th.frame);
+    }
 
     // Segmented pill bar for console tabs (ALL, DS, GBA, 3DS) with tactile L / R bumper badges.
     const int tabStep = 22 * 6 * s / 3;
@@ -1623,10 +1754,13 @@ struct SettingsPage
 #endif
         const int bandH = (c.h > c.w ? 43 : 22) * s;
         c.FillGradV(0, 0, c.w, c.h, th.bg, 0xFF07090E, 0);
+        DrawDsMesh(c, s);
         if (th.background)
             if (const uint32_t* bgPx = th.background->Fitted(c.w, c.h)) std::copy(bgPx, bgPx + (size_t)c.w * c.h, c.px.begin());
         c.FillGradV(0, 0, c.w, bandH, 0xFF191F2D, th.band, 0);
         c.Fill(0, bandH, c.w, th.bandLineH * s, th.bandLine);
+        c.FillBlend(0, bandH + th.bandLineH * s, c.w, 2 * s, 0x33000000);
+        DrawDsLogo(c, 10 * s, (bandH - 12 * s) / 2, s, th.title);
         const std::string title = group < 0 ? "SETTINGS" : std::string("SETTINGS: ") + UiLang::Tr(SettingsGroups()[group].name);
         int titleScale = s + 1;
         while (titleScale > 1 && Canvas::TextWidth(title, titleScale) > c.w - 8) --titleScale;

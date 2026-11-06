@@ -583,6 +583,12 @@ struct Menu
             const int hdrH = lineH + 3 * scale;
             c.FillGradV(bx + scale, by + scale, boxW - 2 * scale, hdrH, headerCol + 0x0006080C, headerCol, std::max(1, rad - scale));
             c.Fill(bx + 6 * scale, by + hdrH, boxW - 12 * scale, std::max(1, scale / 2), Accent);
+            const int sw = 8 * scale, sh = 5 * scale, gap = scale;
+            const int logoX = bx + 8 * scale, logoY = by + (hdrH - (sh * 2 + gap)) / 2;
+            c.OutlineRound(logoX, logoY, sw, sh, scale, 1, 0xFFFFFFFF);
+            c.FillBlend(logoX + scale, logoY + scale, sw - 2 * scale, sh - 2 * scale, 0x33FFFFFF);
+            c.OutlineRound(logoX, logoY + sh + gap, sw, sh, scale, 1, 0xFFFFFFFF);
+            c.FillBlend(logoX + scale, logoY + sh + gap + scale, sw - 2 * scale, sh - 2 * scale, 0x66FFFFFF);
             c.Text(bx + (boxW - Canvas::TextWidth(title, scale)) / 2, by + 4 * scale, title, scale, 0xFFFFE58F);
         }
 
