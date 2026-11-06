@@ -3,6 +3,21 @@
 
 ## Unreleased
 
+- **Tegra X1 deko3D render target alignment fix (door exit crash)**:
+  - Fixed MMU fault / hardware crash on Nintendo Switch when walking through doors or transitioning from buildings/houses to the overworld in Pokémon Black and White. Maxwell compressed color and depth render targets (`DkImageFlags_HwCompression`) require 64 KB alignment; `Image()` allocated `size + align` but passed an offset of `0` to `dkImageInitialize()`. Now computes the aligned offset `(align - (base % align)) % align` to guarantee exact hardware alignment.
+  - Added alignment check in `SlotImage()` for pitch-linear render targets, safely falling back to final pass image blits if unaligned.
+  - Guarded `WideGpuSendJoin(2)` and buffer publishing in `GPU3D_Wide` to prevent joining unqueued jobs or publishing stale frame buffers when GPU submission fails.
+  - Defaulted `wideMap` to `false` to prevent unwanted zone loading heap modifications on map transitions.
+
+- **Fast forward performance optimization (10 FPS slowdown fix)**:
+  - Eliminated the 60 Hz wall-clock timer stall in `presentDue`, `presentFrame`, and ahead-pipeline waits while fast forwarding (`speed > 1`), allowing the emulator to run unthrottled at true multi-speed.
+  - Reduced wide 3D GPU render height to 192p (native DS resolution) while fast forwarding, slashing Tegra X1 fillrate and memory bandwidth bottlenecks by ~14x.
+  - Skipped intermediate wide 3D GPU rendering (`rc_wide_render_skip`) on all intermediate frames so only the displayed frame is drawn.
+  - Reduced fast forward audio queue backlog buffer from 30 seconds to 2 seconds, eliminating multi-megabyte `vector::erase` memory copies that evicted CPU cache every few frames.
+
+- **Settings and menu simplification**:
+  - Pruned confusing, redundant, or unstable settings from the launcher and pause menu (`wide_map`, `battle_buttons`, `busy_detail`, `start_button`, `pad_touch`, and non-interactive help cards), keeping menus uncluttered, intuitive, and focused.
+
 - **Complete Horizon OS launcher, settings, and in-game HUD visual overhaul**:
   - **Dynamic responsive grid**: eliminated the 4-column cap on widescreen, high-resolution (1080p, 1440p, 4K), and ultra-wide displays; balanced horizontal and vertical card gaps evenly; adaptive 2-column portrait layout for vertical displays.
   - **Tactile physical cartridge case fallback**: when custom box art is absent, rendered a detailed 3D retro cartridge case (Nintendo DS matte dark charcoal with grip arrow/notch or GBA slate with curved lip relief), complete with metallic label sticker, platform header, crisp 32x32 scaled pixel icon, and authentic serial code (`NTR-` / `AGB-`).

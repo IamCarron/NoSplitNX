@@ -1532,7 +1532,7 @@ struct Settings
     bool wide = true;   // widescreen 3D overworld
     // Black, White, Black 2 and White 2: more of the map loaded around the player, so the wide
     // view does not run out of land at its sides (frontend/bw2map.h). Read when the game starts.
-    bool wideMap = true;
+    bool wideMap = false;
     int wideLines = 720; // height the widescreen 3D is drawn at, at most
     // Fewer of those lines while the drawing cannot keep up: off unless turned on (LOWER DETAIL /
     // RES WHEN BUSY). Kept as busy_detail: the auto_detail an older version saved was on by default.
@@ -4774,9 +4774,6 @@ int main(int argc, char** argv)
 #endif
 #endif
             add(M_SMOOTH, "SMOOTH SCALING", onOff(cfg.smooth));
-            // (Black and Black 2; SoulSilver has a layout of its own. Black 2 has no STRIP.)
-            add(M_BATTLEBUTTONS, "BATTLE BUTTONS",
-                !funcWatchOn || pt.on ? "-" : cfg.battleButtons == 2 ? "PANEL" : cfg.battleButtons == 0 || !bw1.on ? "CORNER" : "STRIP");
             add(M_SHOWFPS, "FPS COUNTER", onOff(cfg.showFps));
             add(M_BACK, "BACK", "");
         }
@@ -4791,14 +4788,8 @@ int main(int argc, char** argv)
         {
             add(M_FPS60, "60 FPS", onOff(cfg.fps60));
             add(M_WIDE, "WIDESCREEN WORLD", onOff(cfg.wide));
-            // (Black, White, Black 2 and White 2. The game sets its memory up for it as it
-            // starts, so a change waits for the next start.)
-            add(M_WIDEMAP, "WIDE MAP LOADING", !bw2map.Supported() ? "-" : onOff(cfg.wideMap) + (cfg.wideMap != bw2map.on ? " (NEXT START)" : ""));
 #ifdef __SWITCH__
             add(M_WIDELINES, "WORLD DETAIL", std::to_string(detailLines[detailIndex()]));
-            // ON: fewer lines than WORLD DETAIL for a moment where drawing them cannot keep up
-            // (a move's animation full of effects), so that the game does not slow down.
-            add(M_AUTODETAIL, "LOWER DETAIL WHEN BUSY", onOff(cfg.autoDetail));
 #else
             // (The same setting, named as on a PC's other games: the lines the 3D world is drawn
             // with, as a screen resolution.)
@@ -4806,7 +4797,6 @@ int main(int argc, char** argv)
                 const int l = detailLines[detailIndex()];
                 add(M_WIDELINES, "3D RESOLUTION", std::to_string(l) + "P" + (l == 192 ? " (DS)" : l == 1440 ? " (2K)" : l == 2160 ? " (4K)" : ""));
             }
-            add(M_AUTODETAIL, "LOWER RES WHEN BUSY", onOff(cfg.autoDetail));
 #endif
 #if SSR_WORLD_ON_GPU && !defined(__SWITCH__)
             // ON: the widescreen world drawn by the graphics card (OpenGL), not the processor.
@@ -4997,8 +4987,6 @@ int main(int argc, char** argv)
         else if (menuPage == PAGE_CONTROLS)
         {
             add(M_CONTROLS, "KEYS AND BUTTONS", "");
-            add(M_STARTBTN, "START BUTTON", cfg.startMenu ? "PAUSE MENU" : "DS START");
-            add(M_PADTOUCH, "STICK TOUCH CURSOR", onOff(cfg.padTouch));
             add(M_BACK, "BACK", "");
         }
     };
@@ -5109,6 +5097,7 @@ int main(int argc, char** argv)
     bool ffInBattle = false;
     bool audioWasFastForward = false;
     bool running = true;
+    int speed = 1;
     bool mouseDown = false;
     int mouseTapHold = 0;      // frames a click lasts at least (see SDL_MOUSEBUTTONDOWN)
     int mouseX = 0, mouseY = 0;
@@ -5299,7 +5288,7 @@ int main(int argc, char** argv)
         {
             // (The widescreen world drawn during a frame is shown after the next one.)
             rc_frame_hidden = !ffFull && emuSpeed > 1 && i < emuSpeed - 1;
-            rc_wide_render_skip = !ffFull && emuSpeed > 1 && i < emuSpeed - 2;
+            rc_wide_render_skip = !ffFull && emuSpeed > 1 && i < emuSpeed - 1;
             rc_frame++;
             if (funcWatchOn) funcWatch.NextFrame();
             nds->RunFrame();
@@ -5430,7 +5419,7 @@ int main(int argc, char** argv)
         // picture early and a slow one late, and with syncToDisplay walked past a 59.94 Hz
         // screen. Present itself then blocks only for the last couple of milliseconds (or
         // returns at once without vsync), right on the deadline.
-        if (pace)
+        if (pace && speed == 1)
         {
             const uint64_t now = SDL_GetPerformanceCounter();
             if (now < nextTick)
@@ -5548,7 +5537,7 @@ int main(int argc, char** argv)
     auto presentDue = [&](bool now) -> bool {
         if (!aheadCount) return false;
         uint64_t t = SDL_GetPerformanceCounter();
-        if (!now && t < nextTick) return false;
+        if (!now && speed == 1 && t < nextTick) return false;
         const uint64_t ft = (uint64_t)(frameTime * perfFreq);
         if (t > nextTick + perfFreq / 500) aheadLate++; // (over 2 ms after its time)
         aheadShown++;
@@ -5579,6 +5568,7 @@ int main(int argc, char** argv)
         aheadRendered = true;
     };
     auto secondsToTick = [&]() {
+        if (speed > 1) return 0.0;
         const uint64_t t = SDL_GetPerformanceCounter();
         return t < nextTick ? (double)(nextTick - t) / perfFreq : 0.0;
     };
@@ -6609,7 +6599,7 @@ int main(int argc, char** argv)
         if (menu.open && menuPage == PAGE_RA && !raTyping && frame % 20 == 0) buildMenu();
 
         bool paused = menu.open;
-        int speed = 1;
+        speed = 1;
         if (!paused && !swallowMenuButtons)
         {
             if (saveEdge) saveQuick();
@@ -6810,10 +6800,8 @@ int main(int argc, char** argv)
                 }
             }
             WideLinesNow = std::min(adaptLines, cfg.wideLines);
-            // While fast forwarding, at most 360 lines (not in the tests without a window) with
-            // FAST FORWARD LOW RES on: it shows one frame in several, and the detail comes
-            // straight back when it stops.
-            if (speed > 1 && !opt.headless && cfg.ffLowRes) WideLinesNow = std::min(WideLinesNow, 360);
+            // While fast forwarding, at most 192 lines so GPU load remains lightweight.
+            if (speed > 1 && !opt.headless) WideLinesNow = std::min(WideLinesNow, 192);
 #ifdef __SWITCH__
             // In handheld mode the console's screen is 1280x720: drawing more than 720 lines is
             // never seen on it and wastes fragment shading and memory bandwidth.
@@ -7355,7 +7343,11 @@ int main(int argc, char** argv)
                     if (!presentDue(false))
                     {
                         renderAhead();
-                        if (!presentDue(false)) std::this_thread::sleep_for(std::chrono::duration<double>(std::max(0.0002, secondsToTick())));
+                        if (!presentDue(false))
+                        {
+                            if (speed == 1) std::this_thread::sleep_for(std::chrono::duration<double>(std::max(0.0002, secondsToTick())));
+                            else presentDue(true);
+                        }
                     }
                 emuThread.Kick();
                 // The newest waiting picture's widened battle picture, from what its frame
@@ -7378,7 +7370,7 @@ int main(int argc, char** argv)
                     if (presentDue(false)) continue;
                     renderAhead();
                     if (presentDue(false)) continue;
-                    if (emuThread.WaitFor(aheadCount ? std::max(0.0001, secondsToTick()) : 0.1)) break;
+                    if (emuThread.WaitFor(aheadCount && speed == 1 ? std::max(0.0001, secondsToTick()) : 0.0005)) break;
                 }
                 perfEmu += emuMs;
             }
@@ -7859,7 +7851,7 @@ int main(int argc, char** argv)
         ffInBattle = inBattle;
         if (speed > 1)
         {
-            const int cap = 48000 * 30;
+            const int cap = 48000 * 2;
             int have = ((int)ffAudio.size() - ffAudioAt) / 2;
             if (have <= 0)
             {

@@ -242,9 +242,9 @@ struct WideAccess
             if (WideGpuSendOnThread())
             {
                 WideGpuSendJoin(1);
-                WideGpuSendJoin(2);
+                if (SentOk) WideGpuSendJoin(2);
             }
-            else if (WideGpuCurrent) WideGpuCurrent->Fetch(PendingSlot);
+            else if (WideGpuCurrent && SentOk) WideGpuCurrent->Fetch(PendingSlot);
             if (prof)
             {
                 static double total = 0;
@@ -1426,7 +1426,7 @@ struct WideAccess
         Wait();
         if (PendingPublish)
         {
-            Publish();
+            if (!DrawingOnWideGpu || SentOk) Publish();
             PendingPublish = false;
         }
         // The lists built on the helper thread (ListHelper): the in-between frame's for it, or

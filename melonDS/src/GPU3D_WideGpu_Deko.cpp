@@ -612,7 +612,9 @@ private:
         lm.dimensions[1] = (u32)h;
         DkImageLayout layout;
         dkImageLayoutInitialize(&layout, &lm);
-        const u32 need = (u32)dkImageLayoutGetSize(&layout) + dkImageLayoutGetAlignment(&layout);
+        const u32 align = dkImageLayoutGetAlignment(&layout);
+        const u32 size = (u32)dkImageLayoutGetSize(&layout);
+        const u32 need = size + align;
         if (mem && cap < need)
         {
             dkMemBlockDestroy(mem);
@@ -625,7 +627,9 @@ private:
             cap = mem ? need : 0;
         }
         if (!mem) return false;
-        dkImageInitialize(&image, &layout, mem, 0);
+        const DkGpuAddr base = dkMemBlockGetGpuAddr(mem);
+        const u32 offset = (u32)((align - (base % align)) % align);
+        dkImageInitialize(&image, &layout, mem, offset);
         return true;
     }
 
@@ -700,6 +704,9 @@ private:
         lm.pitchStride = (u32)W * 4;
         DkImageLayout layout;
         dkImageLayoutInitialize(&layout, &lm);
+        const u32 align = dkImageLayoutGetAlignment(&layout);
+        const DkGpuAddr base = dkMemBlockGetGpuAddr(s.Mem);
+        if (base % align != 0) return false;
         if (dkImageLayoutGetSize(&layout) > s.Cap) return false;
         dkImageInitialize(&s.Image, &layout, s.Mem, 0);
         s.ImageW = W;
