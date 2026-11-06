@@ -89,31 +89,24 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           cat << 'EOF' > build-sd/RELEASE_NOTES.md
-          # 🎮 NoSplitNX v1.0.0-beta.3 — Nintendo Switch Release
+          # NoSplitNX v1.0.0-beta.3
 
-          Esta versión **Beta 3** soluciona los problemas críticos reportados en la Beta 2: corrige la persistencia y cambio de colores en el lanzador, optimiza la tasa de cuadros y el audio en las pantallas de inicio/carga (eliminando el bajón a 30 FPS y el tartamudeo) y arregla el bloqueo/cierre crítico al salir de casas hacia el overworld en Pokémon Blanco y Negro.
+          This release addresses critical issues reported in Beta 2, fixing theme color persistence in the launcher, frame pacing and audio stutter during intro and loading screens, and a fatal crash when transitioning between interiors and the overworld in Gen 5 games.
 
-          ---
+          ### Fixes & Improvements
 
-          ## 🆚 Novedades y Correcciones: Beta 3 vs Beta 2 vs Beta 1
+          - **Launcher Theme Persistence**: Settings and accent color (`COLOUR`) changes now save reliably on FAT32 filesystems on Switch SD cards, updating the UI immediately without requiring a restart.
+          - **Intro & Loading Frame Pacing**: Fixed 30 FPS drops and robotic audio stutter during title, intro, and 2D loading scenes in Pokémon Black and White by skipping unnecessary 3D widescreen rendering passes and tuning audio queue feedback.
+          - **Overworld Transition Crash**: Resolved a crash when exiting houses/buildings into the overworld in Pokémon Black and White by safely releasing and recreating deko3D texture targets (`FreeTargets()`) upon dimension changes and waiting for GPU idle.
+          - **In-Console Updater**: Fully functional update path via `SETTINGS (Y)` -> `CHECK FOR UPDATES`, supporting direct downloads and hot-reloads between beta versions while preserving saves, settings, and ROMs.
 
-          | Área | Beta 1 | Beta 2 | Beta 3 (`v1.0.0-beta.3`) |
-          |---|---|---|---|
-          | **Temas y Colores del Launcher** | Cajas rectangulares básicas, paleta fija. | Nuevo diseño Horizon OS, pero los colores no guardaban en tarjetas SD FAT32 de Switch. | **Persistencia inmediata y fiable**: los cambios de color de acento (`COLOUR` / `list_colour`) se guardan de forma instantánea en microSD FAT32 y se reflejan en tiempo real en tarjetas, pestañas y líneas. |
-          | **Pantallas de Carga, Título e Intro** | 60 FPS básicos sin optimizaciones panorámicas. | Caída a 30 FPS en la pantalla de carga e intro con audio robotizado/tartamudeando. | **60 FPS fluidos y audio limpio**: se omite el renderizado 3D panorámico innecesario en pantallas 2D (`skipWide`), se calibra la resolución por defecto a 384 líneas con auto-detalle y se estabiliza el búfer de audio WSOLA. |
-          | **Transición de Interiores a Overworld (Casas/Edificios)** | Estable en configuraciones estándar. | Crasheo inmediato al salir de una casa hacia el mapa exterior en Pokémon Blanco/Negro. | **Estabilidad 100%**: se libera y recrea limpiamente la memoria de compresión de textura de `deko3D` (`FreeTargets()`) al cambiar de dimensiones entre interiores y overworld, con esperas de cola GPU antes de destruir memoria y comprobación de límites. |
-          | **Diseño del Launcher y Menús** | Cuadrado, plano, texto solapado. | Horizon OS con tarjetas redondeadas, sombras y reloj sin solapes. | **Horizon OS refinado**: todos los estilos visuales modernos de la Beta 2 con respuesta en tiempo real a los cambios de color y opciones. |
-          | **Actualizador en Consola (Updater)** | No funcionaba. | Funcionamiento restaurado para buscar betas en GitHub y verificar SHA-256. | **Actualización directa en caliente**: abre `SETTINGS (Y)` -> `CHECK FOR UPDATES` en tu Switch para actualizar directamente a Beta 3 conservando tus ROMs, partidas y ajustes. |
+          ### Installation & Updating
 
-          ---
-
-          ## 📦 Instalación y Actualización en Nintendo Switch
-
-          1. **Actualización automática (Recomendada):** En tu Nintendo Switch con NoSplitNX Beta 1 o Beta 2, pulsa `Y` para abrir Ajustes y selecciona `CHECK FOR UPDATES`. La consola descargará e instalará automáticamente la Beta 3 reiniciando en la nueva versión.
-          2. **Instalación manual:** Descarga `nosplitnx-switch.zip`, descomprímelo en la raíz de tu tarjeta microSD (`sdmc:/switch/nosplitnx/nosplitnx.nro`) y coloca tus ROMs en `sdmc:/switch/nosplitnx/roms/`.
+          - **From console:** If you are already running Beta 1 or Beta 2, open `SETTINGS (Y)` -> `CHECK FOR UPDATES` and press `A` to install.
+          - **Manual install:** Extract `nosplitnx-switch.zip` to the root of your microSD card (`sdmc:/switch/nosplitnx/nosplitnx.nro`) and place your ROMs in `sdmc:/switch/nosplitnx/roms/`.
           EOF
           echo "" >> build-sd/RELEASE_NOTES.md
-          echo "### 🔒 SHA-256 Checksum (\`SHA256SUMS.txt\`)" >> build-sd/RELEASE_NOTES.md
+          echo "### Checksums (\`SHA256SUMS.txt\`)" >> build-sd/RELEASE_NOTES.md
           echo "\`\`\`text" >> build-sd/RELEASE_NOTES.md
           cat build-sd/SHA256SUMS.txt >> build-sd/RELEASE_NOTES.md
           echo "\`\`\`" >> build-sd/RELEASE_NOTES.md
