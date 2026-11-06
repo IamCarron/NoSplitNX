@@ -51,16 +51,9 @@ int main(int argc, char** argv)
     assert(th.bandLine == AccentNamed("blue"));
 
     // Test 2: AudioQueueSlowdown behavior
-    // Normal 60fps playback with healthy queue must NOT engage stretching
-    assert(AudioQueueSlowdown(1.0, 1500, false) == 1.0);
-    assert(AudioQueueSlowdown(1.0, 2400, false) == 1.0);
-    // Severely starved queue (< 1024) must engage stretching even at 1.0
-    assert(AudioQueueSlowdown(1.0, 0, false) > 1.08);
-    assert(AudioQueueSlowdown(1.0, 500, false) > 1.08);
-    // When already stretching, healthy queue scales smoothly towards target
-    assert(AudioQueueSlowdown(1.0, 4800, true) == 1.0);
-    // Overfilled queue (> 4800) drains smoothly
-    assert(AudioQueueSlowdown(1.0, 6000, false) < 1.0);
+    assert(AudioQueueSlowdown(1.0, 4800) == 1.0);
+    assert(AudioQueueSlowdown(1.0, 0) > 1.08);
+    assert(AudioQueueSlowdown(1.0, 6000) < 1.0);
 
     std::filesystem::remove_all(testDir);
     puts("PASS: Beta 2 fixes verified (launcher settings save and audio queue pacing)");

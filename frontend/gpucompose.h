@@ -310,8 +310,12 @@ private:
                 if (!MergedBlankRow(top, y)) { y++; continue; }
                 int e = y;
                 while (e < 192 && MergedBlankRow(top, e)) e++;
-                const SDL_Rect r = { 0, y0 + (int)(y * v.unit), outW, (int)(e * v.unit + 0.5f) - (int)(y * v.unit) };
-                SDL_RenderFillRect(R, &r);
+                const int rh = (int)(e * v.unit + 0.5f) - (int)(y * v.unit);
+                if (rh > 0)
+                {
+                    const SDL_Rect r = { 0, y0 + (int)(y * v.unit), outW, rh };
+                    SDL_RenderFillRect(R, &r);
+                }
                 y = e;
             }
         }
@@ -335,13 +339,14 @@ private:
                 // is covered by the same, or a slit shows at the screen's edge. Elsewhere: left as it is.)
                 const bool inner = !c.none() && MergedEdgeColumn(top, y, side) != (side ? 255 : 0);
                 anyInner |= inner;
-                EdgeIn[y] = EdgeCustomFailed ? 0u : 0xFF000000u;
+                uint32_t inPx = EdgeCustomFailed ? 0u : 0xFF000000u;
                 uint32_t* row = &Edge[y * 16];
                 if (c.pattern)
                 {
-                    if (inner) EdgeIn[y] = (EdgeCustomFailed ? 0xFF000000u : 0u) | (top.pixels[y * 256 + (side ? 239 : 16)] & 0xFFFFFF);
+                    if (inner && top.pixels) inPx = (EdgeCustomFailed ? 0xFF000000u : 0u) | (top.pixels[y * 256 + (side ? 239 : 16)] & 0xFFFFFF);
                     for (int k = 0; k < 16; k++)
-                        row[k] = (EdgeCustomFailed ? 0xFF000000u : 0u) | (top.pixels[y * 256 + (side ? 240 : 0) + k] & 0xFFFFFF);
+                        row[k] = (EdgeCustomFailed ? 0xFF000000u : 0u) | (top.pixels ? (top.pixels[y * 256 + (side ? 240 : 0) + k] & 0xFFFFFF) : 0u);
+                    std::fill(&EdgeIn[y * 8], &EdgeIn[y * 8] + 8, inPx);
                     continue;
                 }
                 uint32_t r = (c.rgb >> 16) & 0xFF, g = (c.rgb >> 8) & 0xFF, b = c.rgb & 0xFF;
@@ -366,7 +371,8 @@ private:
                     px = (uint32_t)(a * 255 / 16) << 24 | r << 16 | g << 8 | b;
                 }
                 std::fill(row, row + 16, px);
-                if (inner) EdgeIn[y] = px;
+                if (inner) inPx = px;
+                std::fill(&EdgeIn[y * 8], &EdgeIn[y * 8] + 8, inPx);
             }
             if (!any) continue;
             const float barW = side == 0 ? (float)left : (float)(outW - right);
@@ -399,13 +405,14 @@ private:
                 SDL_RenderCopyF(R, e, &src, &dst);
             }
             if (anyInner)
-                if (SDL_Texture* in = Make(EdgeInTex[side], 1, 192))
+                if (SDL_Texture* in = Make(EdgeInTex[side], 8, 192))
                 {
                     SDL_SetTextureBlendMode(in, EdgeCustomFailed ? SDL_BLENDMODE_BLEND : EdgeMode);
                     SDL_SetTextureScaleMode(in, SDL_ScaleModeNearest);
-                    SDL_UpdateTexture(in, nullptr, EdgeIn, 4);
+                    SDL_UpdateTexture(in, nullptr, EdgeIn, 8 * 4);
+                    const SDL_Rect src = { 0, 0, 1, 192 };
                     const SDL_FRect dst = { side ? v.originX + 255 * v.unit : v.originX, (float)y0, v.unit, (float)h };
-                    SDL_RenderCopyF(R, in, nullptr, &dst);
+                    SDL_RenderCopyF(R, in, &src, &dst);
                 }
         }
         // The weather's particles beside the screen (Scene::weatherObj): the top screen's
@@ -517,7 +524,7 @@ private:
     std::vector<SDL_Rect> Spans;
     std::vector<uint32_t> Buf, WideFilled;
     uint32_t Edge[16 * 192];
-    uint32_t EdgeIn[192]; // the screen's own outermost column, where a row is continued from the next one in
+    uint32_t EdgeIn[8 * 192]; // the screen's own outermost column, where a row is continued from the next one in
     uint32_t Weather[256 * 192];
     SDL_BlendMode EdgeMode = SDL_BLENDMODE_INVALID;
     bool EdgeCustomFailed = false;
