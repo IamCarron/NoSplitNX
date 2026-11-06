@@ -22,6 +22,7 @@ namespace
 {
 std::once_flag g_curlInit;
 bool g_curlOk = false;
+bool g_socketOpen = false;
 std::atomic<bool> g_stop{ false };
 
 int Progress(void*, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
@@ -34,7 +35,11 @@ int Progress(void*, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
 void CloseNetwork()
 {
     g_stop = true;
-    socketExit();
+    if (g_socketOpen)
+    {
+        g_socketOpen = false;
+        socketExit();
+    }
 }
 
 struct Sink
@@ -59,6 +64,7 @@ bool Request(const std::string& url, const std::string& post, const std::string&
     // sockets left open that start never came (a black screen).
     std::call_once(g_curlInit, [] {
         if (R_FAILED(socketInitializeDefault())) return;
+        g_socketOpen = true;
         g_curlOk = curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK;
         atexit(CloseNetwork);
     });
@@ -73,6 +79,9 @@ bool Request(const std::string& url, const std::string& post, const std::string&
     curl_easy_setopt(c, CURLOPT_USERAGENT, userAgent.c_str());
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(c, CURLOPT_BUFFERSIZE, 128L * 1024L);
     curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(c, CURLOPT_TIMEOUT, timeout);
     if (!post.empty())
@@ -113,6 +122,7 @@ bool HttpDownload(const std::string& url, const std::string& userAgent, int& sta
 void HttpStop(bool on)
 {
     g_stop = on;
+    if (on) CloseNetwork();
 }
 
 #else

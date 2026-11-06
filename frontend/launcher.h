@@ -524,13 +524,13 @@ inline void Sort(std::vector<Game>& games)
     });
 }
 
-// The list's colours (ARGB): near-black with white text and red details, on the Switch and on a PC.
+// The list's colours (ARGB): Horizon-inspired dark slate with white text and accent details.
 struct Theme
 {
-    uint32_t bg = 0xFF0B0B0C, band = 0xFF141416, bandLine = 0xFFE0242C, title = 0xFFFFFFFF;
-    uint32_t tile = 0xFF1A1A1D, frame = 0xFFE0242C;
-    uint32_t name = 0xFFB8B8BC, nameSel = 0xFFFFFFFF, sub = 0xFF707076, subSel = 0xFFE0242C, bad = 0xFFE0242C;
-    uint32_t hint = 0xFF8A8A90;
+    uint32_t bg = 0xFF0D1017, band = 0xFF151924, bandLine = 0xFFE0242C, title = 0xFFFFFFFF;
+    uint32_t tile = 0xFF1A202E, frame = 0xFFE0242C;
+    uint32_t name = 0xFFC8D0E0, nameSel = 0xFFFFFFFF, sub = 0xFF7E8A9E, subSel = 0xFFE0242C, bad = 0xFFE0242C;
+    uint32_t hint = 0xFF94A0B8;
     int bandLineH = 1;       // the band's line, in font pixels
     int frameW = 2;          // the chosen game's frame, in font pixels
     uint32_t selBar = 0;     // a bar under the chosen game's name (0: none)
@@ -847,153 +847,246 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     const View v = MakeView(c, games, tab);
     const Grid& grid = v.g;
     const int s = grid.s;
-    c.Fill(0, 0, c.w, c.h, th.bg);
+    const uint32_t bgBot = 0xFF07090E;
+    c.FillGradV(0, 0, c.w, c.h, th.bg, bgBot, 0);
     if (th.background)
         if (const uint32_t* bgPx = th.background->Fitted(c.w, c.h)) std::copy(bgPx, bgPx + (size_t)c.w * c.h, c.px.begin());
-    // A band along the top with the title and Switch status.
-    c.Fill(0, 0, c.w, (c.h > c.w ? 43 : 22) * s, th.band);
-    c.Fill(0, (c.h > c.w ? 43 : 22) * s, c.w, th.bandLineH * s, th.bandLine);
+
+    // Modern top header bar with accent underline.
+    const int bandH = (c.h > c.w ? 43 : 22) * s;
+    c.FillGradV(0, 0, c.w, bandH, 0xFF191F2D, th.band, 0);
+    c.Fill(0, bandH, c.w, th.bandLineH * s, th.bandLine);
     const std::string title = "NOSPLIT NX";
     c.Text((c.w - Canvas::TextWidth(title, s + 1)) / 2, 6 * s, title, s + 1, th.title);
 #ifdef __SWITCH__
+    // Placed on the top-left of the header bar so it never collides with SETTINGS (Y) on the right.
     int yr = 0, mo = 0, dy = 0, hr = 0, mn = 0, sc = 0;
     if (SwitchPlatform::LocalTime(yr, mo, dy, hr, mn, sc))
     {
         char timeBuf[16];
         snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", hr, mn);
         const std::string clockStr = timeBuf;
-        const int clockX = c.w - Canvas::TextWidth(clockStr, s) - 10 * s;
-        c.Text(clockX, 6 * s, clockStr, s, th.title);
-        const std::string modeStr = SwitchPlatform::IsHandheld() ? "HANDHELD" : "TV";
-        const int modeX = clockX - Canvas::TextWidth(modeStr, std::max(1, s - 1)) - 8 * s;
-        c.Text(modeX, 7 * s, modeStr, std::max(1, s - 1), th.hint);
+        const std::string modeStr = SwitchPlatform::IsHandheld() ? "HANDHELD" : "DOCKED";
+        const int modeScale = std::max(1, s - 1);
+        const int modeW = Canvas::TextWidth(modeStr, modeScale) + 6 * s;
+        const int pillH = 11 * s;
+        const int pillY = 5 * s;
+        c.FillRound(8 * s, pillY, modeW, pillH, 3 * s, 0xFF22293A);
+        c.OutlineRound(8 * s, pillY, modeW, pillH, 3 * s, 1, 0xFF333D54);
+        c.Text(8 * s + 3 * s, pillY + (pillH - 7 * modeScale) / 2, modeStr, modeScale, th.hint);
+        const int clockX = 8 * s + modeW + 4 * s;
+        const int clockW = Canvas::TextWidth(clockStr, s) + 6 * s;
+        c.FillRound(clockX, pillY, clockW, pillH, 3 * s, 0xFF22293A);
+        c.Text(clockX + 3 * s, 6 * s, clockStr, s, th.title);
     }
 #endif
-    // The tabs: modern clean pills for selected tab.
-    const int firstTabX = TabX(c, grid, 0) - Canvas::TextWidth(TabName(0), s) / 2;
-    c.Text(firstTabX - Canvas::TextWidth("[L] ", s), grid.tabsY + 3 * s, "[L] ", s, th.hint);
+
+    // Segmented pill bar for console tabs (ALL, DS, GBA, 3DS) with L / R shoulder badges.
+    const int tabStep = 22 * 6 * s / 3;
+    const int segW = TABS * tabStep + 8 * s;
+    const int segX = (c.w - segW) / 2;
+    const int segY = grid.tabsY - s;
+    const int segH = grid.tabsH + 2 * s;
+    c.FillRound(segX, segY, segW, segH, 4 * s, 0xCC111520);
+    c.OutlineRound(segX, segY, segW, segH, 4 * s, 1, 0xFF262E42);
+
+    const int lW = Canvas::TextWidth("L", s) + 6 * s;
+    c.FillRound(segX - lW - 4 * s, grid.tabsY + s, lW, 11 * s, 2 * s, 0xFF1F2637);
+    c.OutlineRound(segX - lW - 4 * s, grid.tabsY + s, lW, 11 * s, 2 * s, 1, 0xFF343F58);
+    c.Text(segX - lW - 4 * s + 3 * s, grid.tabsY + 3 * s, "L", s, th.hint);
+
     for (int t = 0; t < TABS; t++)
     {
         const std::string name = TabName(t);
         const int nameW = Canvas::TextWidth(name, s);
-        const int x = TabX(c, grid, t) - nameW / 2, y = grid.tabsY + 3 * s;
+        const int cx = TabX(c, grid, t);
+        const int x = cx - nameW / 2, y = grid.tabsY + 3 * s;
+        const int pillW = std::max(nameW + 10 * s, tabStep - 4 * s);
+        const int pillX = cx - pillW / 2;
         if (t == tab)
         {
-            if (onTabs) c.Fill(x - 4 * s, y - 2 * s, nameW + 8 * s, 12 * s, th.frame);
-            else c.Fill(x - 3 * s, y - 2 * s, nameW + 6 * s, 12 * s, 0xFF24242A);
+            const uint32_t pillCol = onTabs ? th.frame : 0xFF252D40;
+            c.FillRound(pillX, grid.tabsY, pillW, grid.tabsH, 3 * s, pillCol);
+            c.OutlineRound(pillX, grid.tabsY, pillW, grid.tabsH, 3 * s, std::max(1, s / 2), th.frame);
             c.Text(x, y, name, s, th.title);
-            c.Fill(x - 2 * s, grid.tabsY + grid.tabsH - s, nameW + 4 * s, s, th.frame);
         }
         else
         {
             c.Text(x, y, name, s, th.hint);
         }
     }
-    const int lastTabX = TabX(c, grid, TABS - 1) + Canvas::TextWidth(TabName(TABS - 1), s) / 2;
-    c.Text(lastTabX + 4 * s, grid.tabsY + 3 * s, " [R]", s, th.hint);
+
+    const int rW = Canvas::TextWidth("R", s) + 6 * s;
+    c.FillRound(segX + segW + 4 * s, grid.tabsY + s, rW, 11 * s, 2 * s, 0xFF1F2637);
+    c.OutlineRound(segX + segW + 4 * s, grid.tabsY + s, rW, 11 * s, 2 * s, 1, 0xFF343F58);
+    c.Text(segX + segW + 4 * s + 3 * s, grid.tabsY + 3 * s, "R", s, th.hint);
 
     FollowSelection(v, selected, scroll, follow);
     const int top = grid.top, bottom = grid.bottom, tile = grid.tile, labelH = grid.labelH;
-    // The headings (on ALL): the console's name and a line to the right edge of the tiles.
+
+    // Console section headers on ALL tab, or empty-state cards when a console has no ROMs.
     for (const View::Head& h : v.heads)
     {
         const int y = top + h.y - scroll;
         if (h.empty)
         {
             const std::string none = UiLang::Tr("NO GAMES FOUND") + " (" + PlatformName(h.platform) + ")";
-            // (On its own tab: in the middle of the page.)
-            if (tab != 0) c.Text((c.w - Canvas::TextWidth(none, s)) / 2, (top + bottom) / 2 - 4 * s, none, s, th.hint);
-            else if (y >= top && y + 10 * s <= bottom) c.Text(grid.gx, y + 2 * s, none, s, th.hint);
+            if (tab != 0)
+            {
+                const int ew = Canvas::TextWidth(none, s) + 16 * s;
+                const int eh = 18 * s;
+                const int ex = (c.w - ew) / 2, ey = (top + bottom - eh) / 2;
+                c.FillRound(ex, ey, ew, eh, 4 * s, 0xCC141926);
+                c.OutlineRound(ex, ey, ew, eh, 4 * s, 1, 0xFF283248);
+                c.Text(ex + 8 * s, ey + 5 * s, none, s, th.hint);
+            }
+            else if (y >= top && y + 12 * s <= bottom)
+            {
+                const int ew = Canvas::TextWidth(none, s) + 10 * s;
+                c.FillRound(grid.gx, y, ew, 12 * s, 3 * s, 0x99141926);
+                c.Text(grid.gx + 5 * s, y + 2 * s, none, s, th.hint);
+            }
             continue;
         }
         if (y < top || y + 10 * s > bottom) continue;
         const std::string name = PlatformName(h.platform);
-        c.Text(grid.gx, y + s, name, s + 1, th.frame);
-        const int lx = grid.gx + Canvas::TextWidth(name, s + 1) + 4 * s;
+        c.FillRound(grid.gx, y + s, 2 * s, 8 * s, s, th.frame);
+        c.Text(grid.gx + 4 * s, y + s, name, s + 1, th.title);
+        const int lx = grid.gx + 4 * s + Canvas::TextWidth(name, s + 1) + 5 * s;
         const int rx = grid.gx + grid.cols * tile + (grid.cols - 1) * grid.gap * 3;
-        if (rx > lx) c.Fill(lx, y + 6 * s, rx - lx, std::max(1, s / 2), th.tile);
+        if (rx > lx)
+        {
+            c.Fill(lx, y + 5 * s, std::min(24 * s, rx - lx), std::max(1, s / 2), th.frame);
+            if (rx > lx + 24 * s)
+                c.Fill(lx + 24 * s, y + 5 * s, rx - lx - 24 * s, std::max(1, s / 2), 0xFF252D40);
+        }
     }
-    // The tiles that are wholly in view.
+
+    // Elevated rounded game cards with cover art, cartridge icon well, platform badge, and save status pill.
+    const int cardRad = std::max(3, 5 * s);
     for (const View::Spot& sp : v.spots)
     {
         const int x = sp.x, y = top + sp.y - scroll;
         if (y < top || y + tile + labelH > bottom) continue;
         const Game& g = games[sp.game];
         const bool sel = sp.game == selected;
-        // A clean double-ring highlight frame round the chosen one.
-        if (sel)
-        {
-            c.Fill(x - (th.frameW + 1) * s, y - (th.frameW + 1) * s, tile + 2 * (th.frameW + 1) * s, tile + 2 * (th.frameW + 1) * s, (th.frame & 0x00FFFFFF) | 0x40000000);
-            c.Fill(x - th.frameW * s, y - th.frameW * s, tile + 2 * th.frameW * s, tile + 2 * th.frameW * s, th.frame);
-        }
-        c.Fill(x, y, tile, tile, th.tile);
+        const int cardH = tile + labelH - 2 * s;
+
+        c.ShadowRound(x, y, tile, cardH, cardRad, s, 2 * s);
+        const uint32_t cardTop = sel ? 0xFF242D42 : 0xFF1A202E;
+        const uint32_t cardBot = sel ? 0xFF1B2233 : 0xFF131824;
+        c.FillGradV(x, y, tile, cardH, cardTop, cardBot, cardRad);
+
+        // Cover art area at the top of the card.
+        c.FillRound(x + s, y + s, tile - 2 * s, tile - 2 * s, std::max(2, cardRad - s), 0xFF111520);
         if (!g.art.empty())
         {
+            const int artRad = std::max(2, cardRad - s);
             for (int py = 0; py < tile; py++)
             {
+                int ix0 = 0, ix1 = tile;
+                Canvas::RoundedSpan(tile, tile, artRad, py, ix0, ix1);
+                if (ix0 >= ix1) continue;
                 const uint32_t* row = &g.art[(size_t)(py * Art / tile) * Art];
-                for (int px = 0; px < tile; px++)
+                for (int px = ix0; px < ix1; px++)
                 {
                     const uint32_t p = row[px * Art / tile];
                     if (p >> 24 >= 0x80) c.px[(size_t)(y + py) * c.w + x + px] = p | 0xFF000000u;
                 }
             }
-            c.Fill(x, y, 1, 1, th.tile); // (so the canvas knows the tile was drawn)
+            c.Fill(x + tile / 2, y + tile / 2, 1, 1, c.px[(size_t)(y + tile / 2) * c.w + x + tile / 2]);
         }
         else if (g.hasIcon)
         {
-            // The DS icon, enlarged by whole pixels.
-            const int is = std::max(1, tile / 40), o = (tile - 32 * is) / 2;
+            // Stylized inner cartridge well for 32x32 DS banner icons.
+            const int is = std::max(1, tile / 42), iconSz = 32 * is;
+            const int wellPad = 4 * s;
+            const int wellSz = std::min(tile - 4 * s, iconSz + 2 * wellPad);
+            const int wx = x + (tile - wellSz) / 2, wy = y + (tile - wellSz) / 2;
+            c.FillGradV(wx, wy, wellSz, wellSz, 0xFF232B3E, 0xFF161B28, std::max(2, 4 * s));
+            c.OutlineRound(wx, wy, wellSz, wellSz, std::max(2, 4 * s), 1, 0xFF313C54);
+            const int o = (tile - iconSz) / 2;
             for (int py = 0; py < 32; py++)
                 for (int px = 0; px < 32; px++)
-                    if (g.icon[py * 32 + px] >> 24) c.Fill(x + o + px * is, y + o + py * is, is, is, g.icon[py * 32 + px]);
+                    if (g.icon[py * 32 + px] >> 24)
+                        c.Fill(x + o + px * is, y + o + py * is, is, is, g.icon[py * 32 + px]);
         }
-        // Platform badge on the game tile
-        const char* platBadge = g.platform == GBA ? "GBA" : "NDS";
-        const uint32_t badgeColor = g.platform == GBA ? 0xFF9B4DE0 : 0xFF2A7BE0;
-        const int bScale = std::max(1, s - 1);
-        const int bW = Canvas::TextWidth(platBadge, bScale) + 4 * bScale;
-        const int bH = 8 * bScale;
-        c.Fill(x + 3 * s, y + 3 * s, bW, bH, 0xCC101014);
-        c.Fill(x + 3 * s, y + 3 * s + bH - 1, bW, 1, badgeColor);
-        c.Text(x + 3 * s + 2 * bScale, y + 3 * s + 1, platBadge, bScale, badgeColor);
 
-        // COMING SOON across the picture of a game on its way, the picture darkened.
+        // Rounded platform pill badge (NDS / GBA) in the top-left of the tile.
+        const char* platBadge = g.platform == GBA ? "GBA" : "NDS";
+        const uint32_t badgeBg = g.platform == GBA ? 0xE659289E : 0xE6184C9E;
+        const uint32_t badgeText = g.platform == GBA ? 0xFFEAD6FF : 0xFFD6EAFF;
+        const int bScale = std::max(1, s - 1);
+        const int bW = Canvas::TextWidth(platBadge, bScale) + 6 * bScale;
+        const int bH = 9 * bScale;
+        c.FillRound(x + 3 * s, y + 3 * s, bW, bH, 2 * bScale, badgeBg);
+        c.Text(x + 3 * s + 3 * bScale, y + 3 * s + bScale, platBadge, bScale, badgeText);
+
+        // COMING SOON banner over darkened art.
         if (g.comingSoon)
         {
-            for (int py = 0; py < tile; py++)
-                for (int px = 0; px < tile; px++)
-                {
-                    uint32_t& p = c.px[(size_t)(y + py) * c.w + x + px];
-                    p = 0xFF000000u | ((p >> 1) & 0x7F7F7F);
-                }
+            c.FillBlend(x, y, tile, tile, 0x9906080E);
             const std::string soon = "COMING SOON";
             const int bs = Canvas::TextWidth(soon, s) + 8 * s <= tile ? s : std::max(1, s - 1);
-            c.Fill(x, y + tile / 2 - 8 * bs, tile, 16 * bs, th.band);
-            c.Text(x + (tile - Canvas::TextWidth(soon, bs)) / 2, y + tile / 2 - 4 * bs, soon, bs, th.title);
+            c.FillRound(x + 2 * s, y + tile / 2 - 7 * bs, tile - 4 * s, 14 * bs, 3 * bs, 0xEE151924);
+            c.OutlineRound(x + 2 * s, y + tile / 2 - 7 * bs, tile - 4 * s, 14 * bs, 3 * bs, 1, th.frame);
+            c.Text(x + (tile - Canvas::TextWidth(soon, bs)) / 2, y + tile / 2 - 3 * bs, soon, bs, th.title);
         }
-        // The name (shortened: POKEMON is the same for all) and the save.
+
+        // Card border and Switch-style double selection ring.
+        if (sel)
+        {
+            const int fw = th.frameW * s;
+            c.OutlineRound(x - fw - s, y - fw - s, tile + 2 * (fw + s), cardH + 2 * (fw + s), cardRad + fw + s, s, (th.frame & 0x00FFFFFF) | 0x55000000u);
+            c.OutlineRound(x - fw, y - fw, tile + 2 * fw, cardH + 2 * fw, cardRad + fw, fw, th.frame);
+        }
+        else
+        {
+            c.OutlineRound(x, y, tile, cardH, cardRad, 1, 0xFF2A3348);
+        }
+
+        // Game title and rounded status pill inside the lower footer of the card.
         std::string name = g.name;
         if (name.rfind("POKEMON ", 0) == 0) name = name.substr(8);
-        const int ns = Canvas::TextWidth(name, s) <= tile ? s : std::max(1, s - 1);
-        c.Text(x + (tile - Canvas::TextWidth(name, ns)) / 2, y + tile + 3 * s, name, ns, sel ? th.nameSel : th.name);
-        if (sel && th.selBar) c.Fill(x + tile / 4, y + tile + (UiLang::Tall() ? 31 : 19) * s, tile / 2, s, th.selBar);
+        const int ns = Canvas::TextWidth(name, s) <= tile - 4 * s ? s : std::max(1, s - 1);
+        c.Text(x + (tile - Canvas::TextWidth(name, ns)) / 2, y + tile + 2 * s, name, ns, sel ? th.nameSel : th.name);
+
         std::string sub = g.comingSoon ? "COMING SOON" : !g.known ? "NOT PLAYABLE" : g.hasSave ? "SAVE FOUND" : "NEW GAME";
-        if (!g.where.empty() && g.known) sub = (g.hasSave ? "SAVE " : "NEW ") + g.where; // e.g. SAVE IN BLACK2
+        if (!g.where.empty() && g.known) sub = (g.hasSave ? "SAVE " : "NEW ") + g.where;
         const int ss = std::max(1, s * 2 / 3);
-        const uint32_t subColor = !g.known && !g.comingSoon ? th.bad
-                               : g.comingSoon ? th.hint
-                               : g.hasSave ? 0xFF2EB85C   // soft green for existing save
-                               : 0xFFE0A82C;              // warm gold for new game
-        c.Text(x + (tile - Canvas::TextWidth(sub, ss)) / 2, y + tile + (UiLang::Tall() ? 19 : 12) * s, sub, ss, subColor);
+        const uint32_t subColor = !g.known && !g.comingSoon ? 0xFFFF8080
+                                : g.comingSoon ? th.hint
+                                : g.hasSave ? 0xFF4CE080
+                                : 0xFFFFC857;
+        const uint32_t subBg = !g.known && !g.comingSoon ? 0xFF3B1820
+                             : g.comingSoon ? 0xFF1F2533
+                             : g.hasSave ? 0xFF143325
+                             : 0xFF332814;
+        const int subW = Canvas::TextWidth(sub, ss) + 6 * ss;
+        const int subH = 9 * ss;
+        const int subY = y + tile + (UiLang::Tall() ? 18 : 10) * s;
+        c.FillRound(x + (tile - subW) / 2, subY - ss, subW, subH, 2 * ss, subBg);
+        c.Text(x + (tile - Canvas::TextWidth(sub, ss)) / 2, subY, sub, ss, subColor);
     }
-    // More games below the ones shown. (None drawn for above: under the tabs it looked like one
-    // of their underlines, and the cut tiles at the top say it already.)
-    if (scroll + (bottom - top) < v.height - grid.gap) c.Fill(c.w / 2 - 8 * s, bottom - 2 * s, 16 * s, s, th.hint);
+
+    // Scroll indicator pill when more games lie below.
+    if (scroll + (bottom - top) < v.height - grid.gap)
+        c.FillRound(c.w / 2 - 10 * s, bottom - 2 * s, 20 * s, s + 1, std::max(1, s / 2), th.frame);
+
+    // Bottom control dock bar.
+    const int dockH = 16 * s;
+    c.FillGradV(0, c.h - dockH, c.w, dockH, 0xFF141824, 0xFF0E111A, 0);
+    c.Fill(0, c.h - dockH, c.w, std::max(1, s / 2), 0xFF262F45);
     const std::string hint = !note.empty() ? note : !hintText.empty() ? hintText : "A: PLAY   Y: SETTINGS   X: RANDOM   L / R: TABS   +: QUIT";
-    int hintScale=s;
-        while(hintScale>1 && Canvas::TextWidth(hint,hintScale)>c.w-8)--hintScale;
-    c.Text((c.w - Canvas::TextWidth(hint, hintScale)) / 2, c.h - 12 * s, hint, hintScale, th.hint);
+    int hintScale = s;
+    while (hintScale > 1 && Canvas::TextWidth(hint, hintScale) > c.w - 16 * s) --hintScale;
+    const uint32_t dockTextCol = !note.empty() ? th.title : th.hint;
+    if (!note.empty())
+    {
+        const int nw = Canvas::TextWidth(hint, hintScale) + 8 * s;
+        c.FillRound((c.w - nw) / 2, c.h - 13 * s, nw, 10 * s, 2 * s, (th.frame & 0x00FFFFFF) | 0x44000000u);
+    }
+    c.Text((c.w - Canvas::TextWidth(hint, hintScale)) / 2, c.h - 11 * s, hint, hintScale, dockTextCol);
 }
 
 // The settings page (Y on the Switch's list, H or a controller's Y on a PC's): the pause menu's
@@ -1373,9 +1466,12 @@ struct SettingsPage
 #else
         const int ts = std::max(1, (s * 2 + 1) / 3); // the text's scale: 2 at 720 lines, 3 at 1080
 #endif
-        c.Fill(0, 0, c.w, c.h, th.bg);
-        c.Fill(0, 0, c.w, (c.h > c.w ? 43 : 22) * s, th.band);
-        c.Fill(0, (c.h > c.w ? 43 : 22) * s, c.w, th.bandLineH * s, th.bandLine);
+        const int bandH = (c.h > c.w ? 43 : 22) * s;
+        c.FillGradV(0, 0, c.w, c.h, th.bg, 0xFF07090E, 0);
+        if (th.background)
+            if (const uint32_t* bgPx = th.background->Fitted(c.w, c.h)) std::copy(bgPx, bgPx + (size_t)c.w * c.h, c.px.begin());
+        c.FillGradV(0, 0, c.w, bandH, 0xFF191F2D, th.band, 0);
+        c.Fill(0, bandH, c.w, th.bandLineH * s, th.bandLine);
         const std::string title = group < 0 ? "SETTINGS" : std::string("SETTINGS: ") + UiLang::Tr(SettingsGroups()[group].name);
         int titleScale=s+1;
         while(titleScale>1 && Canvas::TextWidth(title,titleScale)>c.w-8)--titleScale;
@@ -1416,6 +1512,35 @@ struct SettingsPage
         }
         scroll = std::max(0, std::min(scroll, (int)out.size() - fit));
         rows.clear();
+
+        // Draw rounded setting cards behind each visible item group before drawing text.
+        const int cardRad = std::max(2, 3 * ts);
+        for (int i = scroll; i < (int)out.size(); )
+        {
+            const int y0 = top + (i - scroll) * lineH;
+            if (y0 + lineH > bottom) break;
+            const int it = out[i].item;
+            if (it < 0) { i++; continue; }
+            int j = i;
+            while (j < (int)out.size() && out[j].item == it && top + (j - scroll + 1) * lineH <= bottom) j++;
+            const int cardY = y0 - 2 * ts;
+            const int cardH = (j - i) * lineH + ts;
+            const bool sel = it == selected;
+            if (sel)
+            {
+                c.ShadowRound(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, ts, ts);
+                c.FillGradV(x - 6 * ts, cardY, width + 12 * ts, cardH, 0xFF222B3E, 0xFF192030, cardRad);
+                c.OutlineRound(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, std::max(1, ts / 2), th.frame);
+                c.FillRound(x - 4 * ts, cardY + 2 * ts, std::max(2, ts), cardH - 4 * ts, std::max(1, ts / 2), th.frame);
+            }
+            else
+            {
+                c.FillRound(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, 0xB8141926);
+                c.OutlineRound(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, 1, 0xFF222A3D);
+            }
+            i = j;
+        }
+
         int y = top;
         for (int i = scroll; i < (int)out.size() && y + lineH <= bottom; i++, y += lineH)
         {
@@ -1424,7 +1549,6 @@ struct SettingsPage
             const bool sel = l.item == selected && l.item >= 0;
             if (l.name)
             {
-                if (sel) c.Fill(x - 4 * ts, y - 2 * ts, width + 8 * ts, lineH, th.tile);
                 const bool info = !items[l.item].key;
                 c.Text(x, y, l.text, ts, info ? th.hint : sel ? th.nameSel : th.subSel);
                 if (!l.value.empty())
@@ -1437,11 +1561,14 @@ struct SettingsPage
             else if (!l.text.empty())
                 c.TextRaw(x + 2 * 6 * ts, y, l.text, ts, sel ? th.name : th.sub);
         }
-        if (scroll > 0) c.Fill(c.w / 2 - 8 * s, top - 4 * s, 16 * s, s, th.hint);
-        if (scroll + fit < (int)out.size()) c.Fill(c.w / 2 - 8 * s, bottom + s, 16 * s, s, th.hint);
+        if (scroll > 0) c.FillRound(c.w / 2 - 10 * s, top - 4 * s, 20 * s, s + 1, std::max(1, s / 2), th.frame);
+        if (scroll + fit < (int)out.size()) c.FillRound(c.w / 2 - 10 * s, bottom + s, 20 * s, s + 1, std::max(1, s / 2), th.frame);
+        const int dockH = 16 * s;
+        c.FillGradV(0, c.h - dockH, c.w, dockH, 0xFF141824, 0xFF0E111A, 0);
+        c.Fill(0, c.h - dockH, c.w, std::max(1, s / 2), 0xFF262F45);
         int hintScale=s;
-        while(hintScale>1 && Canvas::TextWidth(hint,hintScale)>c.w-8)--hintScale;
-    c.Text((c.w - Canvas::TextWidth(hint, hintScale)) / 2, c.h - 12 * s, hint, hintScale, th.pokemon ? 0xFFDBE9FAu : th.hint);
+        while(hintScale>1 && Canvas::TextWidth(hint,hintScale)>c.w-16*s)--hintScale;
+        c.Text((c.w - Canvas::TextWidth(hint, hintScale)) / 2, c.h - 11 * s, hint, hintScale, th.pokemon ? 0xFFDBE9FAu : th.hint);
     }
 };
 

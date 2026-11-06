@@ -76,11 +76,21 @@ void ShowMessage(const std::string& text)
     consoleExit(nullptr);
 }
 
-// The program's romfs (the Black games' function tables), mounted once.
+// The program's romfs (the Black games' function tables), mounted on demand and unmounted before
+// self-update swaps the running .nro on sdmc:/.
+static bool g_romfsMounted = false;
 bool RomfsReady()
 {
-    static const bool ready = R_SUCCEEDED(romfsInit());
-    return ready;
+    if (!g_romfsMounted) g_romfsMounted = R_SUCCEEDED(romfsInit());
+    return g_romfsMounted;
+}
+void RomfsClose()
+{
+    if (g_romfsMounted)
+    {
+        romfsExit();
+        g_romfsMounted = false;
+    }
 }
 
 // Whether this build plays a game: SoulSilver and HeartGold need the program's own tables, the
@@ -287,7 +297,9 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
 #ifdef SSR_ALL_GAMES
         if (key && !strcmp(key, "!forwarders") && !installIcons)
         {
-            page.items[page.selected].values[0].second = "INSTALLING...";
+            for (auto* list : { &page.items, &page.all })
+                for (Launcher::Setting& st : *list)
+                    if (st.key && !strcmp(st.key, "!forwarders") && !st.values.empty()) st.values[0].second = "INSTALLING...";
             installIcons = true;
         }
 #ifdef SSR_UPDATER
@@ -295,8 +307,10 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
         // (a second thread here stops the program).
         if (key && !strcmp(key, "!updates") && !updateWork)
         {
-            page.items[page.selected].values[0].second =
-                Updater::Get().state == Updater::State::Available ? "DOWNLOADING..." : "CHECKING...";
+            const char* label = Updater::Get().state == Updater::State::Available ? "DOWNLOADING..." : "CHECKING...";
+            for (auto* list : { &page.items, &page.all })
+                for (Launcher::Setting& st : *list)
+                    if (st.key && !strcmp(st.key, "!updates") && !st.values.empty()) st.values[0].second = label;
             updateWork = true;
         }
 #endif
@@ -310,17 +324,23 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
         // (Set during the last pass, which then showed INSTALLING... on the screen.)
         if (installIcons)
         {
-            page.items[page.selected].values[0].second = InstallHomeIcons(games);
+            const std::string res = InstallHomeIcons(games);
+            for (auto* list : { &page.items, &page.all })
+                for (Launcher::Setting& st : *list)
+                    if (st.key && !strcmp(st.key, "!forwarders") && !st.values.empty()) st.values[0].second = res;
             installIcons = false;
         }
 #ifdef SSR_UPDATER
         if (updateWork)
         {
+            if (Updater::Get().state == Updater::State::Available) RomfsClose();
             const std::string url = Updater::Choose();
             if (!url.empty()) note = "NEW VERSION: GITHUB.COM/IAMCARRON/NOSPLITNX/RELEASES";
             const Updater::Status u = Updater::Get();
-            if (page.selected >= 0 && page.selected < (int)page.items.size() && !page.items[page.selected].values.empty())
-                page.items[page.selected].values[0].second = u.text;
+            for (auto* list : { &page.items, &page.all })
+                for (Launcher::Setting& st : *list)
+                    if (st.key && !strcmp(st.key, "!updates") && !st.values.empty()) st.values[0].second = u.text;
+            if (!guide && u.state == Updater::State::Failed) note = u.text;
             updateSeen = u.serial;
             updateWork = false;
             if (u.state == Updater::State::Installed && Updater::RestartPending()) break;
@@ -401,7 +421,11 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             if (hit == 0)
             {
                 updateMenu.open = false;
-                if (!Updater::Choose().empty()) note = "NEW VERSION: GITHUB.COM/IAMCARRON/NOSPLITNX/RELEASES";
+                note = "DOWNLOADING...";
+                for (auto* list : { &page.items, &page.all })
+                    for (Launcher::Setting& st : *list)
+                        if (st.key && !strcmp(st.key, "!updates") && !st.values.empty()) st.values[0].second = "DOWNLOADING...";
+                updateWork = true;
             }
             else if (hit == 1) updateMenu.open = false;
             if (down & HidNpadButton_Plus) break;
@@ -570,14 +594,20 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                             Updater::PopupNote(Updater::Get().canInstall));
 #endif
         {
-            // The title band's buttons, as pc_launcher.cpp draws them (the chosen one framed).
+            // The title band's buttons rendered as sleek Horizon-style rounded pills.
             const int s = std::max(1, canvas.h / 240);
             const Launcher::Theme& th = theme;
             auto button = [&](int x, const char* text, bool on) {
-                if (on) canvas.Fill(x - 3 * s, 4 * s, Canvas::TextWidth(text, s) + 5 * s, 13 * s, th.frame);
-                canvas.Text(x, 7 * s, text, s, on ? th.title : th.hint);
+                const int bw = Canvas::TextWidth(text, s) + 8 * s;
+                const int bh = 11 * s;
+                const int by = 5 * s;
+                const uint32_t bgCol = on ? th.frame : 0xFF22293A;
+                const uint32_t borderCol = on ? th.title : 0xFF333D54;
+                canvas.FillRound(x - 4 * s, by, bw, bh, 3 * s, bgCol);
+                canvas.OutlineRound(x - 4 * s, by, bw, bh, 3 * s, std::max(1, s / 2), borderCol);
+                canvas.Text(x, 6 * s, text, s, on ? th.title : th.hint);
             };
-            if (guide && !keysOpen) button(8 * s, "< BACK (B)", false);
+            if (guide && !keysOpen) button(12 * s, "< BACK (B)", false);
             else if (!guide) button(canvas.w - 8 * s - Canvas::TextWidth("SETTINGS (Y)", s), "SETTINGS (Y)", onSettings);
         }
         u32 stride;
@@ -690,13 +720,13 @@ std::vector<Launcher::Game> FindGames(const std::string& dir, bool& ownFolder)
             if (x.platform == Launcher::DS) x.hasSave = stat(SavePath(x).c_str(), &st) == 0;
     };
     MoveSavesIn(dir);
+#ifndef SSR_ALL_GAMES
     if (Launcher::ReadGame(dir + "/rom.nds", dir, g))
     {
         games = { g };
         savesIn(games);
         return games;
     }
-#ifndef SSR_ALL_GAMES
     // (A one-game program: its own folder only, as always.)
     Launcher::ScanFolder(dir, games, false);
 #else
@@ -778,7 +808,12 @@ bool Start(int& argc, char**& argv)
     }
     mkdir(dir.c_str(), 0777);
     chdir(dir.c_str());
-    if (argc > 0 && argv[0]) g_self = argv[0];
+    if (argc > 0 && argv[0] && argv[0][0])
+    {
+        g_self = argv[0];
+        if (g_self.find('/') == std::string::npos) g_self = dir + "/" + g_self;
+    }
+    if (g_self.empty()) g_self = dir + "/nosplitnx.nro";
     // A test run (testrun.h) from test.txt, if there is one to do: its log goes to its folder.
     std::vector<std::string> testArgs;
     std::string testNotes;
@@ -885,7 +920,7 @@ bool Start(int& argc, char**& argv)
         fprintf(stderr, "[switch] --game %s: %s\n", direct.c_str(), games[chosen].rom.c_str());
         g_canChange = true;
     }
-    else if (games.size() > 1)
+    else if (!games.empty())
     {
         // The list starts on the game played last.
         const std::string lastPath = dir + "/last-game.txt";

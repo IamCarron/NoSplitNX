@@ -54,6 +54,178 @@ struct Canvas
                 px[(size_t)yy * w + xx] = argb;
     }
 
+    static inline void BlendPixel(uint32_t& dst, uint32_t src)
+    {
+        const uint32_t sa = src >> 24;
+        if (sa == 0) return;
+        if (sa == 255 || (dst >> 24) == 0)
+        {
+            dst = src;
+            return;
+        }
+        const uint32_t ia = 255 - sa;
+        const uint32_t r = (((src >> 16) & 0xFF) * sa + ((dst >> 16) & 0xFF) * ia) / 255;
+        const uint32_t g = (((src >> 8) & 0xFF) * sa + ((dst >> 8) & 0xFF) * ia) / 255;
+        const uint32_t b = ((src & 0xFF) * sa + (dst & 0xFF) * ia) / 255;
+        const uint32_t da = dst >> 24;
+        const uint32_t outA = da == 255 ? 255 : std::min<uint32_t>(255, sa + (da * ia) / 255);
+        dst = (outA << 24) | (r << 16) | (g << 8) | b;
+    }
+
+    void FillBlend(int x, int y, int rw, int rh, uint32_t argb)
+    {
+        if ((argb >> 24) == 255) { Fill(x, y, rw, rh, argb); return; }
+        if ((argb >> 24) == 0) return;
+        int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
+        int x1 = x + rw > w ? w : x + rw, y1 = y + rh > h ? h : y + rh;
+        if (x1 <= x0 || y1 <= y0) return;
+        if (x0 < x0d) x0d = x0;
+        if (y0 < y0d) y0d = y0;
+        if (x1 > x1d) x1d = x1;
+        if (y1 > y1d) y1d = y1;
+        for (int yy = y0; yy < y1; yy++)
+        {
+            uint32_t* row = &px[(size_t)yy * w];
+            for (int xx = x0; xx < x1; xx++) BlendPixel(row[xx], argb);
+        }
+    }
+
+    static inline void RoundedSpan(int rw, int rh, int radius, int dy, int& dx0, int& dx1)
+    {
+        dx0 = 0;
+        dx1 = rw;
+        if (radius <= 0 || rw <= 0 || rh <= 0) return;
+        const int r = std::min({ radius, rw / 2, rh / 2 });
+        int cy = -1;
+        if (dy < r) cy = r - 1 - dy;
+        else if (dy >= rh - r) cy = dy - (rh - r);
+        if (cy >= 0)
+        {
+            int inset = r;
+            while (inset > 0 && (r - inset) * (r - inset) + cy * cy <= r * r) inset--;
+            dx0 = inset;
+            dx1 = rw - inset;
+        }
+    }
+
+    void FillRound(int x, int y, int rw, int rh, int radius, uint32_t argb)
+    {
+        if (radius <= 0) { FillBlend(x, y, rw, rh, argb); return; }
+        if ((argb >> 24) == 0 || rw <= 0 || rh <= 0) return;
+        int y0 = std::max(0, y), y1 = std::min(h, y + rh);
+        int x0 = std::max(0, x), x1 = std::min(w, x + rw);
+        if (x1 <= x0 || y1 <= y0) return;
+        if (x0 < x0d) x0d = x0;
+        if (y0 < y0d) y0d = y0;
+        if (x1 > x1d) x1d = x1;
+        if (y1 > y1d) y1d = y1;
+        const bool opaque = (argb >> 24) == 255;
+        for (int yy = y0; yy < y1; yy++)
+        {
+            int dx0 = 0, dx1 = rw;
+            RoundedSpan(rw, rh, radius, yy - y, dx0, dx1);
+            const int sx0 = std::max(0, x + dx0), sx1 = std::min(w, x + dx1);
+            uint32_t* row = &px[(size_t)yy * w];
+            if (opaque)
+                for (int xx = sx0; xx < sx1; xx++) row[xx] = argb;
+            else
+                for (int xx = sx0; xx < sx1; xx++) BlendPixel(row[xx], argb);
+        }
+    }
+
+    void FillGradV(int x, int y, int rw, int rh, int radius, uint32_t topArgb, uint32_t botArgb)
+    {
+        if (rw <= 0 || rh <= 0) return;
+        int y0 = std::max(0, y), y1 = std::min(h, y + rh);
+        int x0 = std::max(0, x), x1 = std::min(w, x + rw);
+        if (x1 <= x0 || y1 <= y0) return;
+        if (x0 < x0d) x0d = x0;
+        if (y0 < y0d) y0d = y0;
+        if (x1 > x1d) x1d = x1;
+        if (y1 > y1d) y1d = y1;
+        const int span = std::max(1, rh - 1);
+        for (int yy = y0; yy < y1; yy++)
+        {
+            const int dy = yy - y;
+            const int inv = span - dy;
+            const uint32_t a = (((topArgb >> 24) & 0xFF) * inv + ((botArgb >> 24) & 0xFF) * dy) / span;
+            const uint32_t r = (((topArgb >> 16) & 0xFF) * inv + ((botArgb >> 16) & 0xFF) * dy) / span;
+            const uint32_t g = (((topArgb >> 8) & 0xFF) * inv + ((botArgb >> 8) & 0xFF) * dy) / span;
+            const uint32_t b = ((topArgb & 0xFF) * inv + (botArgb & 0xFF) * dy) / span;
+            const uint32_t col = (a << 24) | (r << 16) | (g << 8) | b;
+            int dx0 = 0, dx1 = rw;
+            if (radius > 0) RoundedSpan(rw, rh, radius, dy, dx0, dx1);
+            const int sx0 = std::max(0, x + dx0), sx1 = std::min(w, x + dx1);
+            uint32_t* row = &px[(size_t)yy * w];
+            if (a == 255)
+                for (int xx = sx0; xx < sx1; xx++) row[xx] = col;
+            else if (a > 0)
+                for (int xx = sx0; xx < sx1; xx++) BlendPixel(row[xx], col);
+        }
+    }
+
+    void OutlineRound(int x, int y, int rw, int rh, int radius, int t, uint32_t argb)
+    {
+        if (t <= 0 || rw <= 0 || rh <= 0 || (argb >> 24) == 0) return;
+        int y0 = std::max(0, y), y1 = std::min(h, y + rh);
+        int x0 = std::max(0, x), x1 = std::min(w, x + rw);
+        if (x1 <= x0 || y1 <= y0) return;
+        if (x0 < x0d) x0d = x0;
+        if (y0 < y0d) y0d = y0;
+        if (x1 > x1d) x1d = x1;
+        if (y1 > y1d) y1d = y1;
+        const bool opaque = (argb >> 24) == 255;
+        const int irw = rw - 2 * t, irh = rh - 2 * t, ir = std::max(0, radius - t);
+        for (int yy = y0; yy < y1; yy++)
+        {
+            const int dy = yy - y;
+            int ox0 = 0, ox1 = rw;
+            RoundedSpan(rw, rh, radius, dy, ox0, ox1);
+            uint32_t* row = &px[(size_t)yy * w];
+            if (dy < t || dy >= rh - t || irw <= 0 || irh <= 0)
+            {
+                const int sx0 = std::max(0, x + ox0), sx1 = std::min(w, x + ox1);
+                if (opaque) for (int xx = sx0; xx < sx1; xx++) row[xx] = argb;
+                else for (int xx = sx0; xx < sx1; xx++) BlendPixel(row[xx], argb);
+            }
+            else
+            {
+                int ix0 = 0, ix1 = irw;
+                RoundedSpan(irw, irh, ir, dy - t, ix0, ix1);
+                ix0 += t;
+                ix1 += t;
+                const int lx0 = std::max(0, x + ox0), lx1 = std::min(w, x + ix0);
+                const int rx0 = std::max(0, x + ix1), rx1 = std::min(w, x + ox1);
+                if (opaque)
+                {
+                    for (int xx = lx0; xx < lx1; xx++) row[xx] = argb;
+                    for (int xx = rx0; xx < rx1; xx++) row[xx] = argb;
+                }
+                else
+                {
+                    for (int xx = lx0; xx < lx1; xx++) BlendPixel(row[xx], argb);
+                    for (int xx = rx0; xx < rx1; xx++) BlendPixel(row[xx], argb);
+                }
+            }
+        }
+    }
+
+    void ShadowRound(int x, int y, int rw, int rh, int radius, int spread, uint32_t maxAlpha = 88)
+    {
+        for (int s = spread; s >= 1; s--)
+        {
+            const uint32_t a = maxAlpha * (uint32_t)(spread - s + 1) / (uint32_t)(spread * 2);
+            if (a > 0) OutlineRound(x - s, y - s, rw + 2 * s, rh + 2 * s, radius + s, 1, a << 24);
+        }
+    }
+
+    void Pill(int x, int y, int rw, int rh, uint32_t fillArgb, uint32_t borderArgb = 0, int borderT = 1)
+    {
+        const int r = rh / 2;
+        FillRound(x, y, rw, rh, r, fillArgb);
+        if (borderArgb >> 24) OutlineRound(x, y, rw, rh, r, borderT, borderArgb);
+    }
+
     // 5x7 glyphs, one row per byte, bit 4 is the leftmost pixel.
     static const uint8_t* Glyph(char c)
     {
@@ -233,12 +405,19 @@ struct Menu
             const int r = f((int)(a >> 16 & 0xFF)), g = f((int)(a >> 8 & 0xFF)), b = f((int)(a & 0xFF));
             return 0xFF000000u | (uint32_t)std::clamp(r, 0, 255) << 16 | (uint32_t)std::clamp(g, 0, 255) << 8 | (uint32_t)std::clamp(b, 0, 255);
         };
-        const uint32_t boxCol = shade(Accent, [](int v) { return v * 30 / 100; });
-        const uint32_t noteBox = shade(Accent, [](int v) { return v * 22 / 100; });
-        const uint32_t textCol = shade(Accent, [](int v) { return 180 + v * 17 / 100; });
-        const uint32_t hintCol = shade(Accent, [](int v) { return 110 + v * 35 / 100; });
+        const uint32_t boxTop = shade(Accent, [](int v) { return 18 + v * 16 / 100; });
+        const uint32_t boxBot = shade(Accent, [](int v) { return 12 + v * 11 / 100; });
+        const uint32_t headerCol = shade(Accent, [](int v) { return 24 + v * 22 / 100; });
+        const uint32_t rowCardCol = shade(Accent, [](int v) { return 22 + v * 18 / 100; });
+        const uint32_t noteBox = shade(Accent, [](int v) { return 14 + v * 14 / 100; });
+        const uint32_t borderCol = shade(Accent, [](int v) { return 55 + v * 45 / 100; });
+        const uint32_t selTop = shade(Accent, [](int v) { return std::min(254, v + (255 - v) * 14 / 100); });
+        const uint32_t selBot = shade(Accent, [](int v) { return v * 85 / 100; });
+        const uint32_t selBorder = shade(Accent, [](int v) { return std::min(254, v + (255 - v) * 38 / 100); });
+        const uint32_t textCol = shade(Accent, [](int v) { return 195 + v * 15 / 100; });
+        const uint32_t hintCol = shade(Accent, [](int v) { return 130 + v * 32 / 100; });
         const uint32_t barOffSel = shade(Accent, [](int v) { return v + (255 - v) * 3 / 10; });
-        const uint32_t barOff = shade(Accent, [](int v) { return v / 2; });
+        const uint32_t barOff = shade(Accent, [](int v) { return 35 + v * 35 / 100; });
         int scale = std::min(c.w, c.h) / 240;
         if (scale < 1) scale = 1;
         int lineH = (UiLang::Tall() ? 16 : 11) * scale;
@@ -282,19 +461,41 @@ struct Menu
         drawnLineH = lineH;
         drawnFirstY = by + (hasTitle ? lineH : 0) + 5 * scale - 2 * scale;
 
-        c.Fill(0, 0, c.w, c.h, 0xA0000000);
-        c.Fill(bx - scale, by - scale, boxW + 2 * scale, boxH + 2 * scale, 0xFF2A2E38);
-        c.Fill(bx, by, boxW, boxH, boxCol);
-        if (hasTitle) c.Text(bx + (boxW - Canvas::TextWidth(title, scale)) / 2, by + 3 * scale, title, scale, 0xFFFFD75E);
+        if (!c.px.empty() && (c.px[0] >> 24) != 0)
+            c.FillBlend(0, 0, c.w, c.h, 0xB006080E);
+        else
+            c.Fill(0, 0, c.w, c.h, 0xA806080E);
+
+        const int rad = std::max(2, 4 * scale);
+        c.ShadowRound(bx, by, boxW, boxH, rad, 2 * scale, 2 * scale);
+        c.FillGradV(bx, by, boxW, boxH, boxTop, boxBot, rad);
+        if (hasTitle)
+        {
+            const int hdrH = lineH + 2 * scale;
+            c.FillRound(bx + scale, by + scale, boxW - 2 * scale, hdrH, std::max(1, rad - scale), headerCol);
+            c.Fill(bx + 6 * scale, by + hdrH, boxW - 12 * scale, std::max(1, scale / 2), Accent);
+            c.Text(bx + (boxW - Canvas::TextWidth(title, scale)) / 2, by + 3 * scale, title, scale, 0xFFFFE074);
+        }
+        c.OutlineRound(bx, by, boxW, boxH, rad, std::max(1, scale / 2), borderCol);
 
         int y = by + (hasTitle ? lineH : 0) + 5 * scale;
         // (Marks at the box's right edge where rows are scrolled out of view, above or below.)
         if (scroll > 0) c.Text(bx + boxW - 8 * scale, y - lineH + 2 * scale, "+", scale, hintCol);
         if (scroll + shown < (int)items.size()) c.Text(bx + boxW - 8 * scale, y + shown * lineH - 2 * scale, "+", scale, hintCol);
+        const int rowRad = std::max(1, 2 * scale);
         for (int i = scroll; i < scroll + shown; i++)
         {
             bool sel = i == selected;
-            if (sel) c.Fill(bx + 2 * scale, y - 2 * scale, boxW - 4 * scale, lineH, Accent);
+            if (sel)
+            {
+                c.FillGradV(bx + 2 * scale, y - 2 * scale, boxW - 4 * scale, lineH, selTop, selBot, rowRad);
+                c.OutlineRound(bx + 2 * scale, y - 2 * scale, boxW - 4 * scale, lineH, rowRad, std::max(1, scale / 2), selBorder);
+                c.FillRound(bx + 3 * scale, y - scale, std::max(1, scale), lineH - 2 * scale, std::max(1, scale / 2), 0xFFE8F4FF);
+            }
+            else if (((i - scroll) & 1) == 1)
+            {
+                c.FillRound(bx + 3 * scale, y - 2 * scale, boxW - 6 * scale, lineH - scale, rowRad, rowCardCol);
+            }
             uint32_t col = sel ? 0xFFFFFFFF : textCol;
             c.Text(bx + 6 * scale, y, items[i].label, scale, col);
             if (!items[i].value.empty())
@@ -309,18 +510,21 @@ struct Menu
                     barStep = 5 * scale;
                     barX = vx - 4 * scale - 10 * barStep;
                     for (int k = 0; k < 10; k++)
-                        c.Fill(barX + k * barStep, y, 4 * scale, 7 * scale,
-                               k < items[i].slider ? (sel ? 0xFFFFFFFF : textCol) : (sel ? barOffSel : barOff));
+                        c.FillRound(barX + k * barStep, y, 4 * scale, 7 * scale, std::max(1, scale / 2),
+                                    k < items[i].slider ? (sel ? 0xFFFFFFFF : textCol) : (sel ? barOffSel : barOff));
                 }
             }
             y += lineH;
         }
+        // Subtle separator above the footer hint.
+        c.Fill(bx + 6 * scale, y + scale, boxW - 12 * scale, std::max(1, scale / 2), borderCol);
         c.Text(bx + (boxW - Canvas::TextWidth(hint, scale)) / 2, y + 4 * scale, hint, scale, hintCol);
         if (!noteLines.empty())
         {
             const int ny = by + boxH + 3 * scale;
-            c.Fill(bx - scale, ny - scale, boxW + 2 * scale, noteH + 2 * scale, 0xFF2A2E38);
-            c.Fill(bx, ny, boxW, noteH, noteBox);
+            c.ShadowRound(bx, ny, boxW, noteH, rad, 2 * scale, 2 * scale);
+            c.FillGradV(bx, ny, boxW, noteH, noteBox, boxBot, rad);
+            c.OutlineRound(bx, ny, boxW, noteH, rad, std::max(1, scale / 2), borderCol);
             for (size_t i = 0; i < noteLines.size(); i++)
                 c.TextRaw(bx + 6 * scale, ny + 4 * scale + (int)i * UiLang::LineUnits() * scale, noteLines[i], scale, textCol);
         }

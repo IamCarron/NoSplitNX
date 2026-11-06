@@ -8004,15 +8004,24 @@ int main(int argc, char** argv)
             int sc = outH / 240 < 1 ? 1 : outH / 240;
             const std::string text = std::to_string(shownFps) + " FPS";
             const int tw = Canvas::TextWidth(text, sc) + 8 * sc;
-            canvas.Fill(outW - cornerInset - tw, cornerY, tw, 13 * sc, 0xC0000000);
-            canvas.Text(outW - cornerInset - tw + 4 * sc, cornerY + 3 * sc, text, sc, 0xFFFFFFFF);
-            cornerY += 13 * sc;
+            const int fx = outW - cornerInset - tw - 4 * sc;
+            const int fy = cornerY + 3 * sc;
+            const uint32_t fpsCol = shownFps >= 55 ? 0xFF5CE68C : shownFps >= 40 ? 0xFFFFD166 : 0xFFFF6B6B;
+            canvas.FillRound(fx, fy, tw, 13 * sc, 3 * sc, 0xCC0D111A);
+            canvas.OutlineRound(fx, fy, tw, 13 * sc, 3 * sc, 1, 0xFF283248);
+            canvas.Text(fx + 4 * sc, fy + 3 * sc, text, sc, fpsCol);
+            cornerY += 16 * sc;
             overlayUsed = true;
         }
         if (speed > 1)
         {
             int sc = outH / 240 < 1 ? 1 : outH / 240;
-            canvas.Text(outW - cornerInset - Canvas::TextWidth(">>", sc) - 4 * sc, cornerY + 4 * sc, ">>", sc, 0xFFFFFFFF);
+            const int fw = Canvas::TextWidth(">>", sc) + 8 * sc;
+            const int fx = outW - cornerInset - fw - 4 * sc;
+            const int fy = cornerY + 3 * sc;
+            canvas.FillRound(fx, fy, fw, 13 * sc, 3 * sc, 0xCC0D111A);
+            canvas.OutlineRound(fx, fy, fw, 13 * sc, 3 * sc, 1, 0xFF283248);
+            canvas.Text(fx + 4 * sc, fy + 3 * sc, ">>", sc, 0xFFFFD166);
             overlayUsed = true;
         }
 #if defined(__ANDROID__) && !defined(SSR_PC_LAUNCHER)
@@ -8041,11 +8050,8 @@ int main(int argc, char** argv)
             const int tsc = std::max(1, outH / 360);
             const int padPx = 3 * tsc;
             // Backing container card for running shoes
-            canvas.Fill(ox - padPx, oy - padPx, ow + 2 * padPx, oh + 2 * padPx, 0xE0181A20);
-            canvas.Fill(ox - padPx - 1, oy - padPx - 1, ow + 2 * padPx + 2, 1, 0xFF2A2E38);
-            canvas.Fill(ox - padPx - 1, oy + oh + padPx, ow + 2 * padPx + 2, 1, 0xFF2A2E38);
-            canvas.Fill(ox - padPx - 1, oy - padPx - 1, 1, oh + 2 * padPx + 2, 0xFF2A2E38);
-            canvas.Fill(ox + ow + padPx, oy - padPx - 1, 1, oh + 2 * padPx + 2, 0xFF2A2E38);
+            canvas.FillRound(ox - padPx, oy - padPx, ow + 2 * padPx, oh + 2 * padPx, 3 * tsc, 0xE6141824);
+            canvas.OutlineRound(ox - padPx, oy - padPx, ow + 2 * padPx, oh + 2 * padPx, 3 * tsc, 1, 0xFF2E3850);
 
             for (int py = 0; py < oh; py++)
             {
@@ -8060,8 +8066,9 @@ int main(int argc, char** argv)
                 : Controls::InputName(cfg.controls.Pad(Controls::Y, cfg.byLabel), Controls::StyleOf(pads.controllers.empty() ? nullptr : pads.controllers[0])))
                 + ": RUN " + (shoesOn ? "ON" : "OFF");
             const int tw = Canvas::TextWidth(label, tsc);
-            const uint32_t statusCol = shoesOn ? 0xFF2EB85C : 0xFFE0A82C;
-            canvas.Fill(ox + (ow - tw) / 2 - 4 * tsc, oy + oh + 4 * tsc, tw + 8 * tsc, 12 * tsc, 0xE014161C);
+            const uint32_t statusCol = shoesOn ? 0xFF4CE080 : 0xFFFFC857;
+            canvas.FillRound(ox + (ow - tw) / 2 - 4 * tsc, oy + oh + 4 * tsc, tw + 8 * tsc, 12 * tsc, 3 * tsc, 0xE6141824);
+            canvas.OutlineRound(ox + (ow - tw) / 2 - 4 * tsc, oy + oh + 4 * tsc, tw + 8 * tsc, 12 * tsc, 3 * tsc, 1, 0xFF2E3850);
             canvas.Text(ox + (ow - tw) / 2, oy + oh + 6 * tsc, label, tsc, statusCol);
             overlayUsed = true;
         }
@@ -8090,29 +8097,31 @@ int main(int argc, char** argv)
                     const float ly = body->dy + (srcY[i] - body->sy) * body->scale;
                     const int ox = (int)(view.originX + lx * view.unit);
                     const int oy = (int)(view.originY + ly * view.unit) - ch / 2;
-                    canvas.Fill(ox - 1, oy - 1, cw + 2, ch + 2, 0xFF000000);
-                    canvas.Fill(ox, oy, cw, ch, 0xE0181818);
-                    canvas.Text(ox + pad, oy + 2 * sc, n, sc, 0xFFFFD75E);
+                    canvas.FillRound(ox, oy, cw, ch, 2 * sc, 0xE6141824);
+                    canvas.OutlineRound(ox, oy, cw, ch, 2 * sc, 1, 0xFF2E3850);
+                    canvas.Text(ox + pad, oy + 2 * sc, n, sc, 0xFFFFE074);
                 }
             }
             const std::string hint = btn(Controls::Y) + " SEARCH   " + btn(Controls::X) + " SWITCH   " +
                                      btn(Controls::A) + " CHECK";
             const int tw = Canvas::TextWidth(hint, sc) + 8 * sc;
             const int ty = outH - 15 * sc;
-            canvas.Fill((outW - tw) / 2, ty, tw, 13 * sc, 0xC0000000);
+            canvas.FillRound((outW - tw) / 2, ty, tw, 13 * sc, 3 * sc, 0xD80D111A);
+            canvas.OutlineRound((outW - tw) / 2, ty, tw, 13 * sc, 3 * sc, 1, 0xFF283248);
             canvas.Text((outW - tw) / 2 + 4 * sc, ty + 3 * sc, hint, sc, 0xFFFFFFFF);
             overlayUsed = true;
         }
         if (frame < toastUntil)
         {
             int sc = outH / 240 < 1 ? 1 : outH / 240;
-            const int tw = Canvas::TextWidth(toast, sc) + 8 * sc;
-            const int tx = 0, ty = 0;
+            const int tw = Canvas::TextWidth(toast, sc) + 10 * sc;
+            const int tx = 4 * sc, ty = 3 * sc;
             // Fading out over its last second.
             const uint32_t left = toastUntil - frame;
             const uint32_t fade = left >= 60 ? 255 : left * 255 / 60;
-            canvas.Fill(tx, ty, tw, 13 * sc, ((0xC0 * fade / 255) << 24));
-            canvas.Text(tx + 4 * sc, ty + 3 * sc, toast, sc, (fade << 24) | 0xFFFFFF);
+            canvas.FillRound(tx, ty, tw, 13 * sc, 3 * sc, ((0xD8 * fade / 255) << 24) | 0x0D111Au);
+            canvas.OutlineRound(tx, ty, tw, 13 * sc, 3 * sc, 1, ((0xFF * fade / 255) << 24) | 0x2E3B56u);
+            canvas.Text(tx + 5 * sc, ty + 3 * sc, toast, sc, (fade << 24) | 0xFFFFFF);
             overlayUsed = true;
         }
         if (menu.open)

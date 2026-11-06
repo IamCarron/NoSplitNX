@@ -673,7 +673,9 @@ void RunInstall()
 #ifdef __SWITCH__
     {
         // The .nro and the files beside it put in place as on a PC: the old ones kept in
-        // update/previous, and all put back if one cannot be replaced.
+        // update/previous, and all put back if one cannot be replaced. Unmount romfs first so
+        // Horizon OS does not refuse to rename the open .nro file on the SD card.
+        romfsExit();
         const std::string unpacked = up + "/new";
         fs::remove_all(fs::u8path(unpacked), ec);
         fs::create_directories(fs::u8path(unpacked), ec);
@@ -683,6 +685,7 @@ void RunInstall()
         {
             fprintf(stderr, "[update] %s\n", error.c_str());
             fs::remove_all(fs::u8path(unpacked), ec);
+            romfsInit();
             Set(State::Failed, "CANNOT UNPACK: NOTHING CHANGED");
             return;
         }
@@ -690,6 +693,7 @@ void RunInstall()
         {
             fprintf(stderr, "[update] %s\n", error.c_str());
             fs::remove_all(fs::u8path(unpacked), ec);
+            romfsInit();
             Set(State::Failed, "CANNOT REPLACE: NOTHING CHANGED");
             return;
         }
@@ -877,7 +881,7 @@ bool FindRelease(const std::string& json, const std::string& asset, const std::s
     bool found = false;
     for (const Json& rel : root.items)
     {
-        if (rel.type != Json::Object || rel.True("draft") || rel.True("prerelease")) continue;
+        if (rel.type != Json::Object || rel.True("draft")) continue;
         const Json* assets = rel.Get("assets");
         if (!assets || assets->type != Json::Array) continue;
         Release r;
@@ -1018,7 +1022,6 @@ void Restart()
     // The loader starts the next .nro in this same process. Sockets left open mean that start
     // never comes (a black screen).
     Achievements::HttpStop(true);
-    socketExit();
     const std::string cmd = path.find(' ') == std::string::npos ? path : "\"" + path + "\"";
     const Result rc = envSetNextLoad(path.c_str(), cmd.c_str());
     if (R_FAILED(rc)) fprintf(stderr, "[update] envSetNextLoad: 0x%x\n", (unsigned)rc);

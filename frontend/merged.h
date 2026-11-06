@@ -350,11 +350,12 @@ inline void MergedPrepareEdgeWindows(Scene& scene, const ScreenImage* screens)
 inline int MergedEdgeColumn(const ScreenImage& top, int sy, int side)
 {
     const int x = side ? 255 : 0, dir = side ? -1 : 1;
-    if (!top.flags || LayerClass(top.flags[sy * 256 + x]) != LAYER_3D) return x;
+    if (!top.flags || !top.pixels || LayerClass(top.flags[sy * 256 + x]) != LAYER_3D) return x;
     const uint8_t flag = top.flags[sy * 256 + x + dir];
     if (LayerClass(flag) == LAYER_3D) return x;
+    const uint32_t col = top.pixels[sy * 256 + x + dir] & 0xFFFFFF;
     for (int k = 2; k < 9; k++)
-        if (top.flags[sy * 256 + x + dir * k] != flag) return x;
+        if (top.flags[sy * 256 + x + dir * k] != flag || ((top.pixels[sy * 256 + x + dir * k] ^ col) & 0xFFFFFF)) return x;
     return x + dir;
 }
 

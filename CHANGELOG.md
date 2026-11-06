@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+- **Nintendo Switch UI redesign & self-updater fix**: modern Horizon-inspired launcher, settings cards, and in-game pause menu with rounded cards, vertical gradients, soft shadows, status pills, non-overlapping header clock/mode badges, and colour-coded FPS/toast pills. Fixed the Nintendo Switch self-updater (`CHECK FOR UPDATES`) to support HTTPS on Horizon OS, pre-release beta tags, `SHA256SUMS.txt` verification, and clean `romfs` unmounting when replacing `nosplitnx.nro`.
+
 - **Switch performance and dual-screen optimisation**: skip phantom 3D world rendering and multi-megabyte CPU frame copies while in 2D menus or dual-screen scenes (Bag, Party, Summary, Pokédex, spread layouts), clamp wide rendering to 720p maximum in handheld mode, and enable adaptive detail scaling by default on Switch.
 
 - **ROM hack compatibility and save isolation**: ROM hacks with custom internal IDs or modified region codes (such as Blaze Black, Volt White, Renegade Platinum, or custom difficulty hacks) are supported with 3-letter prefix fallbacks and companion `.code` override files. Hack titles are preserved in the launcher and saves are automatically isolated to `<rom_stem>.sav`, preventing hack ROMs from clashing with or overwriting vanilla game saves.
