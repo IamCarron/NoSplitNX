@@ -1449,7 +1449,20 @@ struct SettingsPage
             for (const std::string& l : lines) if (fprintf(f, "%s\n", l.c_str()) < 0) ok = false;
             ok = fclose(f) == 0 && ok;
             std::error_code ec;
-            if (ok) std::filesystem::rename(tmp, path, ec);
+            if (ok)
+            {
+                std::remove(path.c_str());
+                std::filesystem::rename(tmp, path, ec);
+                if (ec)
+                {
+                    if (FILE* f2 = fopen(path.c_str(), "w"))
+                    {
+                        for (const std::string& l : lines) fprintf(f2, "%s\n", l.c_str());
+                        fclose(f2);
+                        ec.clear();
+                    }
+                }
+            }
             if (!ok || ec) fprintf(stderr, "[launcher] cannot save settings: %s\n", path.c_str());
         }
         return s.key;

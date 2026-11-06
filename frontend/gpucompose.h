@@ -258,6 +258,7 @@ private:
     void DrawWide(const Scene& scene, const ScreenImage screens[2], int outW, int outH, const MergedView& v, bool smooth,
         const WideImage& wide)
     {
+        if (!wide.pixels || wide.w <= 0 || wide.h <= 0) return;
         SDL_Texture* tex = Make(WideTex, wide.w, wide.h);
         if (!tex) return;
         SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
@@ -269,6 +270,7 @@ private:
             const uint32_t* px = wide.placed ? wide.pixels
                 : MergedFillWideHoles(wide, (int)std::floor(v.originX * wide.w / outW),
                       (int)std::ceil((v.originX + 256 * v.unit) * wide.w / outW), WideFilled);
+            if (!px) return;
             SDL_UpdateTexture(tex, nullptr, px, wide.w * 4);
             WideUploadMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
             WideUploads++;
@@ -294,8 +296,9 @@ private:
             SDL_RenderFillRect(R, nullptr);
         }
 
+        if (scene.items.empty() || scene.items[0].screen < 0 || scene.items[0].screen > 1) return;
         const ScreenImage& top = screens[scene.items[0].screen];
-        if (!top.flags) return;
+        if (!top.flags || !top.pixels) return;
         const int left = (int)v.originX, right = (int)(v.originX + 256 * v.unit);
         const int y0 = (int)v.originY, h = (int)(192 * v.unit + 0.5f);
         // Rows of the top screen that are only black backdrop (a door's wipe): black across the view.

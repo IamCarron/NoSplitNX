@@ -165,10 +165,14 @@ private:
     }
 };
 
-// Queue feedback must also be able to START stretching. Applying it only once stretching
-// is active leaves a full-speed stream unable to recover from a short or empty queue.
-inline double AudioQueueSlowdown(double frameSlowdown, int queuedSamples)
+// Queue feedback must also be able to START stretching when starving or lagging.
+// When un-stretched and the queue is healthy, keep audio clean and bit-identical.
+inline double AudioQueueSlowdown(double frameSlowdown, int queuedSamples, bool isStretching = false)
 {
     constexpr double target = 4800.0; // 100 ms at 48 kHz
-    return frameSlowdown * (1.0 + 0.5 * (target - std::max(0, queuedSamples)) / target);
+    if (queuedSamples > 4800)
+        return frameSlowdown * std::max(0.75, 1.0 + 0.5 * (target - (double)queuedSamples) / target);
+    if (!isStretching && frameSlowdown < 1.06 && queuedSamples >= 1024)
+        return frameSlowdown;
+    return frameSlowdown * (1.0 + 0.5 * (target - std::max(0.0, (double)queuedSamples)) / target);
 }

@@ -2062,12 +2062,12 @@ int main(int argc, char** argv)
     cfg.autoDetail = true; // lower lines dynamically when busy, keeping frames on time
 #ifdef SSR_DEKO3D
     // Black, Black 2 and White 2 (a function table) with the world drawn by the graphics chip:
-    // Default to native 720p resolution and 60 fps interpolation on Switch, with autoDetail enabled
-    // so that heavy particle scenes dynamically scale detail if needed to prevent frame drops.
+    // On the Switch, 384 lines gives sharp graphics while maintaining smooth 60 Hz gameplay
+    // without frame drops during loading screens, intros, or weather.
     if (!opt.funcs.empty())
     {
-        cfg.wideLines = 720;
-        cfg.fps60 = true;
+        cfg.wideLines = 384;
+        cfg.fps60 = false;
         cfg.autoDetail = true;
     }
 #endif
@@ -5292,6 +5292,7 @@ int main(int argc, char** argv)
     // world are not drawn (rc_frame_hidden, rc_wide_render_skip), so it goes faster and shows
     // more frames. SSR_FF_FULL=1 draws them all, for comparing.
     static const bool ffFull = getenv("SSR_FF_FULL") != nullptr;
+    bool skipWide = false;
     auto runFrames = [&]() {
         const double t0 = perfNow();
         int filled = 0;
@@ -5299,7 +5300,7 @@ int main(int argc, char** argv)
         {
             // (The widescreen world drawn during a frame is shown after the next one.)
             rc_frame_hidden = !ffFull && emuSpeed > 1 && i < emuSpeed - 1;
-            rc_wide_render_skip = !ffFull && emuSpeed > 1 && i < emuSpeed - 2;
+            rc_wide_render_skip = (!ffFull && emuSpeed > 1 && i < emuSpeed - 2) || skipWide;
             rc_frame++;
             if (funcWatchOn) funcWatch.NextFrame();
             nds->RunFrame();
@@ -6849,6 +6850,10 @@ int main(int argc, char** argv)
             melonDS::Wide.Width = ww;
             melonDS::Wide.Height = wh;
             wideFrames = wantWide ? wideFrames + 1 : 0;
+            // When the current scene is a 2D menu or dual-screen spread, the 3D wide picture is
+            // not shown on screen: skip rendering it (rc_wide_render_skip) so the GPU is not
+            // wasting time on a discarded picture, while keeping Wide.Owner valid.
+            skipWide = !wantWide || (!scene.wide && !scene.edgeFill);
         }
         // Filled in after the frame has run: the renderer hands over its picture then.
         WideImage wideImage;
@@ -7894,7 +7899,7 @@ int main(int argc, char** argv)
                 if (dt < 0.25) audioSlow += (std::min(dt / frameTime, 4.0) - audioSlow) * 0.03;
             }
             audioTick = t;
-            const double slowdown = speed == 1 ? AudioQueueSlowdown(audioSlow, queued) : 1.0;
+            const double slowdown = speed == 1 ? AudioQueueSlowdown(audioSlow, queued, audioStretch.Stretching()) : 1.0;
             audioOut.clear();
             audioStretch.Process(audioBuf.data(), got, slowdown, audioOut);
             // VOLUME: scaled here, after the game's own mixing (silence at OFF, still queued, so

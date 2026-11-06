@@ -314,12 +314,13 @@ public:
     {
         Slot& s = Slots[slot];
         const u32 size = (u32)w * h * 4;
-        if (s.Mem && s.Cap < size)
+        if (s.Mem && s.Size != size)
         {
-            // (This slot is not the one on show, nor the one before: GPU3D_Wide.cpp.)
+            dkQueueWaitIdle(Queue);
             dkMemBlockDestroy(s.Mem);
             s.Mem = nullptr;
             s.Cap = 0;
+            s.ImageW = s.ImageH = 0;
         }
         if (!s.Mem)
         {
@@ -647,6 +648,7 @@ private:
     bool MakeTargets(int w, int h)
     {
         dkQueueWaitIdle(Queue);
+        FreeTargets();
         const u32 render = DkImageFlags_UsageRender | (Sh->Compress ? DkImageFlags_HwCompression : 0);
         if (!Image(ColorImage, ColorMem, ColorCap, DkImageFormat_RGBA8_Unorm, w, h, render) ||
             !Image(AttrImage, AttrMem, AttrCap, DkImageFormat_RG32_Uint, w, h, render) ||

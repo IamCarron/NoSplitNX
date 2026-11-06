@@ -361,8 +361,9 @@ inline int MergedEdgeColumn(const ScreenImage& top, int sy, int side)
 
 inline EdgeContinuation MergedEdgeContinuation(const Scene& scene, const ScreenImage& top, int sy, int side)
 {
-    const int sx = MergedEdgeColumn(top, sy, side);
     const EdgeContinuation none = { 0, 0, 16 };
+    if (!top.flags || !top.pixels || sy < 0 || sy >= 192 || scene.items.empty()) return none;
+    const int sx = MergedEdgeColumn(top, sy, side);
     // (Nor where the piece leaves the screen out: that part is drawn elsewhere.)
     if (scene.items[0].Skips(sx, sy) || scene.edgeWindow[side][sy]) return none;
     const uint8_t cls = LayerClass(top.flags[sy * 256 + sx]);
@@ -838,6 +839,7 @@ inline bool MergedWideCovers(const WideImage& wide, const MergedView& v, int out
 inline const uint32_t* MergedFillWideHoles(const WideImage& wide, int screenX0, int screenX1, std::vector<uint32_t>& px)
 {
     const int w = wide.w, h = wide.h;
+    if (w <= 0 || h <= 0 || !wide.pixels) return nullptr;
     screenX0 = std::clamp(screenX0, 0, w);
     screenX1 = std::clamp(screenX1, 0, w);
     bool holes = false;

@@ -3,6 +3,11 @@
 
 ## Unreleased
 
+- **Nintendo Switch stability, audio and launcher theme fixes**:
+  - Fixed launcher accent colors (`COLOUR` / `list_colour`) failing to persist on Nintendo Switch FAT32 filesystems and immediately updating launcher cards, tabs, and lines in real-time.
+  - Fixed 30 FPS slowdown and audio stuttering on loading screens, intros, and 2D menus in Pokémon White and Black by skipping unrendered 3D passes (`skipWide`), setting Gen 5 Switch defaults to 384 lines with auto-detail, and preventing audio stretching loops when the queue is healthy.
+  - Fixed fatal crash when exiting houses/buildings into the overworld in Pokémon White by restoring clean deko3D target recreation (`FreeTargets()`) upon dimension changes, waiting for GPU idle before destroying frame memory, and adding boundary checks to wide hole fills.
+
 - **Nintendo Switch UI redesign & self-updater fix**: modern Horizon-inspired launcher, settings cards, and in-game pause menu with rounded cards, vertical gradients, soft shadows, status pills, non-overlapping header clock/mode badges, and colour-coded FPS/toast pills. Fixed the Nintendo Switch self-updater (`CHECK FOR UPDATES`) to support HTTPS on Horizon OS, pre-release beta tags, `SHA256SUMS.txt` verification, and clean `romfs` unmounting when replacing `nosplitnx.nro`.
 
 - **Switch performance and dual-screen optimisation**: skip phantom 3D world rendering and multi-megabyte CPU frame copies while in 2D menus or dual-screen scenes (Bag, Party, Summary, Pokédex, spread layouts), clamp wide rendering to 720p maximum in handheld mode, and enable adaptive detail scaling by default on Switch.

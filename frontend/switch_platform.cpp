@@ -283,7 +283,11 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
     Launcher::LoadLook(cfgPath, listDir, theme, background);
     auto change = [&](int d) {
         const char* key = page.Change(d);
-        if (key && !strncmp(key, "list_", 5)) Launcher::LoadLook(cfgPath, listDir, theme, background);
+        if (key && !strncmp(key, "list_", 5))
+        {
+            theme = Launcher::ThemeNamed(page.Stored("list_colour"));
+            Launcher::LoadLook(cfgPath, listDir, theme, background);
+        }
         if (key && !strcmp(key, "!keys"))
         {
             ctl.Load(cfgPath);
