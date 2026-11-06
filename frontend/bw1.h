@@ -93,7 +93,7 @@ public:
 
     void Adjust(Scene& sc, float viewWidth, const ScreenImage* screens)
     {
-        if (!on) return;
+        if (!on || !Fw) return;
         // (The player's choice of screen, and the C-Gear's question answered unseen, stay.)
         if (!strcmp(sc.name, "manual") || !strcmp(sc.name, "continue")) return;
         const bool wideView = viewWidth >= 300;
@@ -198,7 +198,7 @@ public:
                         if (e.screen != 1 && !(e.screen == -1 && e.border)) keep.push_back(e);
                     sc.items = keep;
                     if (buttons == BUTTONS_STRIP && !target)
-                        BattleStrip(sc, viewRight, screens[1].pixels, moves);
+                        BattleStrip(sc, viewRight, screens[0].pixels, screens[1].pixels, moves);
                     else
                     {
                         // The same pieces as the corner panel (pickSceneBw2's: the four moves,
@@ -207,8 +207,21 @@ public:
                         Element c = moves ? Crop(1, 0, 30, 256, 98) : target ? Crop(1, 0, 32, 256, 103)
                             : Crop(1, 0, 78, 256, 114);
                         c.scale = 43.0f / c.sh;
+                        if (command && screens[0].pixels)
+                        {
+                            int textEnd = 150;
+                            for (int y = 152; y < 184; y++)
+                                for (int x = 150; x < 235; x++)
+                                {
+                                    const uint32_t px = screens[0].pixels[y * 256 + x];
+                                    if (((px >> 16) & 0xFF) > 200 && ((px >> 8) & 0xFF) > 200 && (px & 0xFF) > 200)
+                                        textEnd = std::max(textEnd, x);
+                                }
+                            const float maxW = std::max(84.0f, viewRight - 2.0f - (textEnd + 6.0f));
+                            c.scale = std::min(c.scale, maxW / c.sw);
+                        }
                         c.dx = viewRight - 2 - c.sw * c.scale;
-                        c.dy = 147;
+                        c.dy = 190 - c.sh * c.scale;
                         c.border = true;
                         c.borderRadius = 3.0f;
                         c.borderColor = 0x2A2E38;
@@ -320,7 +333,8 @@ private:
     // so the cut takes their middle: the label, the move's type and PP) and framed; the one the
     // game's cursor (magenta brackets, 0xFB0092, at its corners) is on gets a magenta frame. The
     // D-pad moves the cursor as it looks: the cells are where the buttons are on the DS.
-    static void BattleStrip(Scene& sc, float viewRight, const uint32_t* px, bool moves)
+public:
+    static void BattleStrip(Scene& sc, float viewRight, const uint32_t* topPx, const uint32_t* px, bool moves)
     {
         struct Cell { int sx, sy, sw, sh; int hit[4]; float dx, dy, scale; }; // hit: the button's area
         // Lined up with the message box (rows 147-189 of the top screen, a band across it):
@@ -333,13 +347,26 @@ private:
         if (!moves)
         {
             // Touch-screen pieces (x, y, w, h) and the buttons' areas (x0, y0, x1, y1): FIGHT's
-            // middle (its label) above BAG, RUN and POKEMON.
-            const float sc1 = (height - gap) / (23 + 36), cw = 68 * sc1;
+            // middle (its label) above BAG, RUN and POKEMON. If a translated prompt on the top
+            // screen extends past x 150 (e.g. Spanish "¿Qué debería hacer Oshawott?"), scale the
+            // strip so it stays to the right of the text.
+            int textEnd = 150;
+            if (topPx)
+                for (int y = 152; y < 184; y++)
+                    for (int x = 150; x < 235; x++)
+                    {
+                        const uint32_t c = topPx[y * 256 + x];
+                        if (((c >> 16) & 0xFF) > 200 && ((c >> 8) & 0xFF) > 200 && (c & 0xFF) > 200)
+                            textEnd = std::max(textEnd, x);
+                    }
+            const float maxW = std::max(84.0f, right - (textEnd + 6));
+            const float sc1 = std::min((height - gap) / (23 + 36), (maxW - 2 * gap) / 204.0f);
+            const float cw = 68 * sc1, totalH = (23 + 36) * sc1 + gap;
             width = 3 * cw + 2 * gap;
-            const float left = right - width, rowB = bottom - 36 * sc1;
-            cells.push_back({ 23, 77, 210, 23, { 16, 40, 240, 128 }, left, top, sc1 });                 // FIGHT
-            cells.push_back({ 6, 146, 68, 36, { 0, 128, 84, 192 }, left, rowB, sc1 });                 // BAG
-            cells.push_back({ 94, 152, 68, 36, { 84, 140, 172, 192 }, left + cw + gap, rowB, sc1 });   // RUN
+            const float left = right - width, rowT = top + (height - totalH) / 2.0f, rowB = rowT + 23 * sc1 + gap;
+            cells.push_back({ 23, 77, 210, 23, { 16, 40, 240, 128 }, left, rowT, sc1 });                 // FIGHT
+            cells.push_back({ 6, 146, 68, 36, { 0, 128, 84, 192 }, left, rowB, sc1 });                   // BAG
+            cells.push_back({ 94, 152, 68, 36, { 84, 140, 172, 192 }, left + cw + gap, rowB, sc1 });     // RUN
             cells.push_back({ 182, 146, 68, 36, { 172, 128, 256, 192 }, left + 2 * (cw + gap), rowB, sc1 }); // POKEMON
         }
         else

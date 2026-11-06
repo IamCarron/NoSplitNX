@@ -1150,7 +1150,7 @@ struct AutoFocus
             "Bag", "PartyMenu", "NamingScreen", "Pokegear", "GearConfigure", "GearMap", "GearPhone", "GearRadio",
             "TownMap", "PCBox", "EasyChat", "VoltorbFlip", "Pokedex", "ScratchOffCards", "AlphPuzzle",
             "TrainerCard", "TrainerCardSignature", "BugContestSwapMon", "WirelessTradeSelectMon", "OptionsMenu",
-            "MainMenu", "CheckSave", "DeleteSave",
+            "MainMenu", "CheckSave", "DeleteSave", "ApricornBox", "PalPad", "BerryPots",
         };
         for (unsigned i = 0; i < rc_num_apps; i++)
             for (const char* n : names)
@@ -1621,6 +1621,7 @@ struct Settings
             size_t eq = line.find('=');
             if (eq == std::string::npos) return;
             std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+            while (!v.empty() && (v.back() == '\r' || v.back() == '\n')) v.pop_back();
             if (controls.Apply(k, v)) return;
             // "view" replaced the older "layout" key when the merged view became the default.
             if (k == "view") layout = v;
@@ -1769,12 +1770,17 @@ static bool WriteSnapshot(NDS& nds, const std::string& path, uint32_t frame)
 }
 
 // Snapshot file: 4-byte frame number, then the core's savestate.
-static bool ReadSnapshot(NDS& nds, const std::string& path, uint32_t* frame)
+// If `touched` is given, it is set when the console's state was already partly replaced before
+// a failure (truncated or corrupt file), so the caller knows not to keep running from it.
+static bool ReadSnapshot(NDS& nds, const std::string& path, uint32_t* frame, bool* touched = nullptr)
 {
+    if (touched) *touched = false;
     std::vector<uint8_t> blob = ReadFile(path);
     if (blob.size() <= 4) return false;
     Savestate st(blob.data() + 4, (u32)blob.size() - 4, false);
-    if (st.Error || !nds.DoSavestate(&st)) return false;
+    if (st.Error) return false;
+    if (touched) *touched = true;
+    if (!nds.DoSavestate(&st)) return false;
     if (frame) memcpy(frame, blob.data(), 4);
     rc_reset();
     return true;
@@ -1860,6 +1866,23 @@ int main(int argc, char** argv)
     }
 
     std::vector<uint8_t> sav = ReadFile(opt.save);
+    if (sav.empty() && !opt.noSave)
+    {
+        // If the save file exists and is non-empty on disk, refusing to start is safer than
+        // booting with an empty buffer that would overwrite it on the first in-game save.
+        FILE* sf = fopen(opt.save.c_str(), "rb");
+        if (sf)
+        {
+            fseek(sf, 0, SEEK_END);
+            long sz = ftell(sf);
+            fclose(sf);
+            if (sz > 0)
+            {
+                fprintf(stderr, "cannot read save file (%ld bytes): %s\n", sz, opt.save.c_str());
+                return 1;
+            }
+        }
+    }
     fprintf(stderr, "ROM %s: %zu bytes; save %s: %zu bytes\n", opt.rom.c_str(), rom.size(), opt.save.c_str(), sav.size());
     // (RETROACHIEVEMENTS from the settings file now: the console is made differently with it on.)
     if (!opt.headless && !opt.lockstep && Achievements::Available())
@@ -2458,12 +2481,14 @@ int main(int argc, char** argv)
     int menuReturn = 0;
     unsigned lastMenuishFrame = 0;
     // SoulSilver and HeartGold: the Running Shoes button. The game has it on the touch screen
-    // beside its menu (x 182-255, y 89-130), but greys it out while the X menu is open, and the
+    // beside its menu (x 182-255, y 89-130, open on the right where it meets the screen's edge:
+    // closed with a mirrored copy of its left border, 4 pixels wide), but greys it out while the
+    // X menu is open, and the
     // single-screen view shows the touch screen only then. So its picture is kept from the last
     // frame it was seen (shoesPix, shoesOn: running on) and drawn next to the X menu, where Y or
     // a touch on it toggles it: the menu is closed (B), the button touched, and the menu opened
     // again (X), one step after another (shoesStep, from shoesStepAt).
-    static const int SHOES_X = 182, SHOES_Y = 89, SHOES_W = 74, SHOES_H = 42;
+    static const int SHOES_X = 182, SHOES_Y = 89, SHOES_SRC_W = 74, SHOES_BORDER = 4, SHOES_W = SHOES_SRC_W + SHOES_BORDER, SHOES_H = 42;
     std::vector<uint32_t> shoesPix(SHOES_W * SHOES_H);
     bool shoesSeen = false, shoesOn = false;
     int shoesStep = 0;
@@ -2731,21 +2756,19 @@ int main(int argc, char** argv)
             // buttons: the buttons take the whole band, the message (the question they answer)
             // left out. Both Pokemon and both HP boxes stay in sight.
             const bool narrow = viewWidth < 300;
-            // The combat buttons need at least ~108 pixels for their labels (FIGHT, BAG, RUN, POKEMON / moves).
-            // On a 16:9 widescreen view (viewWidth ~341), the message box gets all remaining width (~229px).
-            // We scale the full 256-wide message box to fit that space so that no text is cut off or covered.
-            const float minPanelW = narrow ? viewWidth : 108.0f;
-            const float availBoxW = narrow ? 0.0f : std::max(0.0f, viewWidth - minPanelW - 4.0f);
-            const float boxScale = narrow ? 1.0f : std::min(1.0f, availBoxW / 256.0f);
-            const float actualBoxW = narrow ? 0.0f : 256.0f * boxScale;
-            if (!narrow)
-            {
-                Element msgBox = { 0, 0, 144, 256, 48, viewL, bandY + (bandH - 48.0f * boxScale) / 2.0f, boxScale, 0, 255, false };
-                sc.items.push_back(msgBox);
-            }
-            const float panelX = narrow ? viewL : viewL + actualBoxW + 2.0f, panelY = bandY, panelR = viewR, panelB = bandY + bandH;
+            // ("¿Qué debería hacer ...?" and "Was soll ... tun?" run ~30 px wider than "What will ... do?".)
+            const bool translated = BaseGameCode(gameCode) != gameCode;
+            const int boxW = narrow ? 0 : std::min(translated ? 186 : 156, (int)(viewWidth * (translated ? 0.56f : 0.5f))), edgeW = 6;
+            const float panelX = viewL + (narrow ? 0 : boxW + edgeW), panelY = bandY, panelR = viewR, panelB = bandY + bandH;
             const float panelW = panelR - panelX, panelH = panelB - panelY, pad = 3, gap = 4;
             sc.items.push_back(FillRect(panelX, panelY, (int)std::ceil(panelW) + 1, (int)panelH, 0x202020));
+            if (!narrow)
+            {
+                sc.items.push_back({ 0, 0, 144, boxW, 48, viewL, bandY, 1.0f, 0, 255, false });
+                Element boxEdge = { 0, 0, 144, edgeW, 48, viewL + boxW, bandY, 1.0f, 0, 255, false };
+                boxEdge.flipX = true;
+                sc.items.push_back(boxEdge);
+            }
             // Each button's outline is drawn around the item listed here for it (in the order
             // of battleSel).
             std::vector<size_t> outlined;
@@ -2926,27 +2949,6 @@ int main(int argc, char** argv)
         // with black bars beside it); wideView still decides where menus and buttons go, which
         // needs the room.
         const bool worldWide = viewWidth > 256.5f;
-        // Indoor maps (player's room, buildings) render a 3D scene that does not reach the bottom
-        // or sides of the DS screen: the widescreen canvas then has empty black areas instead of
-        // the extended terrain. Detect this from the previous frame's wide picture by sampling the
-        // bottom-centre strip; if all pixels there are transparent, the room is indoors and the
-        // view should not be widened (soft bars from the DS screen's edges show instead).
-        auto isIndoorScene = [&]() -> bool {
-            if (!worldWide || !melonDS::Wide.Front || melonDS::Wide.FrontW <= 0 || melonDS::Wide.FrontH <= 0)
-                return false;
-            const int fw = melonDS::Wide.FrontW, fh = melonDS::Wide.FrontH;
-            const int startX = fw / 2 - 20, endX = fw / 2 + 20;
-            const int startY = fh - 5;
-            int empty = 0, total = 0;
-            for (int fy = startY; fy < fh; fy++)
-                for (int fx = startX; fx < endX; fx++)
-                {
-                    total++;
-                    if (!(melonDS::Wide.Front[(size_t)fy * fw + fx] >> 24)) empty++;
-                }
-            // All sampled pixels transparent at the bottom centre → no terrain → indoors.
-            return total > 0 && empty == total;
-        };
         // A panel of touch-screen controls in the lower right corner of the view, below the
         // player's HP box (whose numbers end at y 132), over the empty right part of the
         // message box, keeping the game's own arrangement so that the D-pad moves the
@@ -3285,55 +3287,42 @@ int main(int argc, char** argv)
             // panel would cover: it always has the panel, in the message box's band below them.
             int style = bw1.on || !wideView || !screens ? 0 : cfg.battleButtons;
             if (wideView && screens && !bw1.on && kind == 2) style = 2;
-            float panelLeft = 0;
+            float cmdScale = 0.44f;
+            if (command && !bw1.on && wideView && screens && screens[0].pixels)
+            {
+                // Longer prompts in Spanish/German ("¿Qué debería hacer Oshawott?") extend further
+                // across the message box: shrink the command panel slightly so it stays to the
+                // right of the prompt without moving or cropping the top screen.
+                int textEnd = 150;
+                const uint32_t* tpx = screens[0].pixels;
+                for (int y = 152; y < 184; y++)
+                    for (int x = 150; x < 224; x++)
+                    {
+                        const uint32_t c = tpx[y * 256 + x];
+                        if (((c >> 16) & 0xFF) > 210 && ((c >> 8) & 0xFF) > 210 && (c & 0xFF) > 210)
+                            textEnd = std::max(textEnd, x);
+                    }
+                const float maxW = viewRight - 6.0f - (textEnd + 6.0f);
+                if (maxW < 256.0f * cmdScale)
+                    cmdScale = std::max(0.34f, maxW / 256.0f);
+            }
             if ((moves || command || target) && style == 2)
             {
                 // PANEL: the corner panel's piece as tall as the message box (rows 147-189),
                 // against the view's right edge.
                 Element c = moves ? Crop(1, 0, 30, 256, 98) : target ? Crop(1, 0, 22, 256, 110) : Crop(1, 0, 78, 256, 114);
-                c.scale = 43.0f / c.sh;
+                c.scale = command ? std::min(43.0f / c.sh, cmdScale) : 43.0f / c.sh;
                 c.dx = viewRight - 2 - c.sw * c.scale;
-                c.dy = 147;
+                c.dy = 190 - c.sh * c.scale;
                 c.border = true;
-                panelLeft = c.dx - 2;
                 sc.items.push_back(c);
             }
             else if (moves)
-            {
-                const float w = 256 * 0.5f;
-                panelLeft = (wideView ? 128 + viewWidth / 2 : 256.0f) - w - 4;
                 cornerPanel(Crop(1, 0, 30, 256, 98), 0.5f);   // the four moves, two by two (49 high)
-            }
             else if (command)
-            {
-                const float w = 256 * 0.44f;
-                panelLeft = (wideView ? 128 + viewWidth / 2 : 256.0f) - w - 4;
-                cornerPanel(Crop(1, 0, 78, 256, 114), 0.44f); // FIGHT above BAG, RUN and POKEMON (50 high)
-            }
+                cornerPanel(Crop(1, 0, 78, 256, 114), cmdScale); // FIGHT above BAG, RUN and POKEMON
             else if (target)
-            {
-                const float w = 256 * 0.45f;
-                panelLeft = (wideView ? 128 + viewWidth / 2 : 256.0f) - w - 4;
                 cornerPanel(Crop(1, 0, 22, 256, 110), 0.45f); // the targets (50 high)
-            }
-            if (wideView && (moves || command || target) && panelLeft > viewLeft && !sc.items.empty())
-            {
-                // The message box occupies rows 144-191 on the top screen. On a wide view, the
-                // combat panel sits at the right edge, so the message box is rescaled to fit the
-                // space to the left of the panel without being covered by it. No hole is punched
-                // in the DS screen: doing so reveals the wide arena through the bottom strip and
-                // cuts any Pokemon sprite whose lower body overlaps rows 144-191 (GitHub visual
-                // defect: Oshawott's body was halved by the hole in a first-turn single battle).
-                // The rescaled message box is drawn on top of the top screen, covering the
-                // original position, so no arena gap appears and sprites stay intact.
-                const float availBoxW = panelLeft - 2 - viewLeft;
-                const float boxScale = std::min(1.0f, availBoxW / 256.0f);
-                Element msgBox = Crop(0, 0, 144, 256, 48);
-                msgBox.dx = viewLeft;
-                msgBox.dy = 192 - 48.0f * boxScale;
-                msgBox.scale = boxScale;
-                sc.items.push_back(msgBox);
-            }
         }
         else if (funcWatch.Ran(bw2.save, 8) || (funcWatch.Ran(bw2.saveWrite, 8) && !strcmp(lastKnownBw2.name, "save")))
         {
@@ -3346,11 +3335,9 @@ int main(int argc, char** argv)
             // else for more than a second: the layout stays, rather than the two screens side
             // by side popping up for that time, as they did.)
             only("save", 0);
-            const bool indoor = isIndoorScene();
-            sc.wide = !indoor && worldWide;
-            if (!indoor) sc.weatherObj = weatherParticles();
-            if (indoor) sc.softBars = true;
-            if (sc.wide) sc.items[0].drop = LAYER_BG1; // the strip pointing at the other screen (as in the X menu)
+            sc.wide = worldWide;
+            sc.weatherObj = weatherParticles();
+            if (worldWide) sc.items[0].drop = LAYER_BG1; // the strip pointing at the other screen (as in the X menu)
             SaveScreenPieces(sc, wideView, viewRight, screens);
         }
         else if (funcWatch.Ran(bw2.fieldMenu, 8)) // (it skips a few frames while the menu opens)
@@ -3359,14 +3346,12 @@ int main(int argc, char** argv)
             // own grid of two columns, so that the D-pad moves the highlight where it looks
             // like it should.
             only("start-menu", 0);
-            const bool indoor = isIndoorScene();
-            sc.wide = !indoor && worldWide;
-            if (!indoor) sc.weatherObj = weatherParticles();
-            if (indoor) sc.softBars = true;
+            sc.wide = worldWide;
+            sc.weatherObj = weatherParticles();
             // The strip along the bottom of the top screen (BG1, with an arrow down) only says
             // to look at the other screen; without it the overworld shows there instead (only where
             // the world is widened: a 4:3 view has nothing under it, and showed a black band).
-            if (sc.wide) sc.items[0].drop = LAYER_BG1;
+            if (worldWide) sc.items[0].drop = LAYER_BG1;
             // The touch screen holds up to six buttons, two to a row, in a fixed grid: 126 x 44
             // pixels each, rows 48 apart from y = 22. A slot is used when its button's left
             // edge (a light frame) is there; the menu fills the slots row by row.
@@ -3409,17 +3394,8 @@ int main(int argc, char** argv)
         else if (funcWatch.Ran(bw2.field, 16))
         {
             only("top", 0);
-            if (isIndoorScene())
-            {
-                // Indoor room: keep the 4:3 DS view and fill the bars beside it with colours
-                // from the picture's edges, so that walls and ceilings do not look cut off.
-                sc.softBars = true;
-            }
-            else
-            {
-                sc.wide = worldWide;
-                sc.weatherObj = weatherParticles();
-            }
+            sc.wide = worldWide;
+            sc.weatherObj = weatherParticles();
         }
         else if (funcWatch.Ran(bw2.bag, 2))
             sc = BagScene(viewWidth, screens);
@@ -3736,18 +3712,30 @@ int main(int argc, char** argv)
             const uint32_t* lpx = screens[1].pixels;
             const bool moveDetails = (lpx[5 * 256 + 140] & 0xFFFFFF) == frame &&
                 (lpx[6 * 256 + 200] & 0xFFFFFF) == frame && (lpx[161 * 256 + 140] & 0xFFFFFF) == frame;
-            if (moveDetails)
+            // Learning a fifth move: the new move sits in the fifth slot below the four
+            // (y 144-168) and the details panel on the right starts below the page tabs
+            // (y 22-186) instead of at y 5.
+            const bool learning = !moveDetails && (lpx[22 * 256 + 150] & 0xFFFFFF) == frame &&
+                (lpx[22 * 256 + 250] & 0xFFFFFF) == frame;
+            if (moveDetails || learning)
                 lower.sw = 130; // the list and its right edge, not the details beside it
+            if (learning)
+            {
+                lower.sh = 176;
+                lower.cutX = 256;
+                lower.cutY = 192;
+                lower.keyRing = 0;
+            }
             const float pad = 4, gap = 6, margin = 6, h = 189;
             const int cardW = upper.sw;
             const float card = cardW + 2 * pad;
-            const int rowCards = moveDetails ? 3 : 2;
+            const int rowCards = (moveDetails || learning) ? 3 : 2;
             const float rowW = side.sw + rowCards * card + rowCards * gap;
             const float rowScale = std::min((192 - 2 * margin) / h, (viewWidth - 2 * margin) / rowW);
             const float gridW = card + gap + card;
             const float gridH = h + gap + h;
             const float gridScale = std::min((192 - 2 * margin) / gridH, (viewWidth - 2 * margin) / gridW);
-            const bool grid = moveDetails && gridScale > rowScale;
+            const bool grid = (moveDetails || learning) && gridScale > rowScale;
             const float scale = grid ? gridScale : rowScale;
             const float spanW = grid ? gridW : rowW;
             const float spanH = grid ? gridH : h;
@@ -3879,7 +3867,7 @@ int main(int argc, char** argv)
                     }
                 }
             }
-            if (moveDetails)
+            if (moveDetails || learning)
             {
                 x = detailsX;
                 y = row2;
@@ -3889,7 +3877,7 @@ int main(int argc, char** argv)
                 back.borderColor = frame;
                 back.borderRadius = 3;
                 sc.items.push_back(back);
-                Element details = Crop(1, 128, 5, 128, 158);
+                Element details = learning ? Crop(1, 128, 22, 128, 165) : Crop(1, 128, 5, 128, 158);
                 details.scale = scale;
                 details.dx = x + (pad + (cardW - details.sw - 2) / 2.0f) * scale;
                 details.dy = y + (h - details.sh) / 2.0f * scale;
@@ -5067,6 +5055,10 @@ int main(int argc, char** argv)
     auto saveQuick = [&]() {
         say(WriteSnapshot(*nds, quickState, frame) ? "STATE SAVED" : "SAVE STATE FAILED");
     };
+    auto resetGame = [&]() {
+        nds->Reset(); nds->SetupDirectBoot("game.nds"); nds->Start();
+        rc_reset(); Achievements::Reset(); SetClock(*nds, false);
+    };
     auto loadQuickNow = [&]() {
         // LOAD STATE: back where the state was made, the in-game save kept as it is. A state
         // carries the save as it was then, which would otherwise replace the newer one on the
@@ -5074,8 +5066,16 @@ int main(int argc, char** argv)
         std::vector<u8> keep;
         if (const u8* cur = nds->GetNDSSave(); cur && nds->GetNDSSaveLength())
             keep.assign(cur, cur + nds->GetNDSSaveLength());
-        if (!ReadSnapshot(*nds, quickState, nullptr))
+        bool touched = false;
+        if (!ReadSnapshot(*nds, quickState, nullptr, &touched))
         {
+            if (touched)
+            {
+                resetGame();
+                if (!keep.empty()) nds->SetNDSSave(keep.data(), (u32)keep.size());
+                say("CORRUPT STATE, GAME RESET");
+                return;
+            }
             say("NO STATE TO LOAD");
             return;
         }
@@ -5087,10 +5087,6 @@ int main(int argc, char** argv)
     auto loadQuick = [&]() {
         menu.open = true;
         goPage(PAGE_LOAD_CONFIRM, M_BACK);
-    };
-    auto resetGame = [&]() {
-        nds->Reset(); nds->SetupDirectBoot("game.nds"); nds->Start();
-        rc_reset(); Achievements::Reset(); SetClock(*nds, false);
     };
 #if defined(__ANDROID__) && !defined(SSR_PC_LAUNCHER)
     bool updateSaid = false;
@@ -5143,6 +5139,7 @@ int main(int argc, char** argv)
     bool prevComboMenu = false;
     bool ctrlStart = false, touchStart = false, prevCtrlStart = false; // see cfg.startMenu
     bool swallowMenuButtons = false; // keeps the buttons that closed the menu from reaching the game
+    uint32_t kbKeysHeld = 0;         // DS buttons held on the keyboard this frame
     const double frameTime = 1.0 / 59.8261;
     uint64_t perfFreq = opt.headless ? 1 : SDL_GetPerformanceFrequency();
     uint64_t nextTick = opt.headless ? 0 : SDL_GetPerformanceCounter();
@@ -5232,6 +5229,7 @@ int main(int argc, char** argv)
         // widescreen picture stay as they are through the next frame, and the copies (4 MB at
         // 720 lines) took 1.5 ms of the time between two frames' emulation.
         std::vector<uint32_t> screenPixels[2], plainPixels[2];
+        uint64_t widePixelsSerial = 0;
         bool keepLater = false;
         void KeepLater()
         {
@@ -5261,7 +5259,11 @@ int main(int argc, char** argv)
         {
             if (wide.pixels && wide.w > 0 && wide.h > 0 && wide.pixels != widePixels.data())
             {
-                widePixels.assign(wide.pixels, wide.pixels + (size_t)wide.w * wide.h);
+                if (!wide.serial || wide.serial != widePixelsSerial || widePixels.size() != (size_t)wide.w * wide.h)
+                {
+                    widePixels.assign(wide.pixels, wide.pixels + (size_t)wide.w * wide.h);
+                    widePixelsSerial = wide.serial;
+                }
                 wide.pixels = widePixels.data();
             }
         }
@@ -5290,7 +5292,6 @@ int main(int argc, char** argv)
     // world are not drawn (rc_frame_hidden, rc_wide_render_skip), so it goes faster and shows
     // more frames. SSR_FF_FULL=1 draws them all, for comparing.
     static const bool ffFull = getenv("SSR_FF_FULL") != nullptr;
-    bool skipWide = false;
     auto runFrames = [&]() {
         const double t0 = perfNow();
         int filled = 0;
@@ -5298,7 +5299,7 @@ int main(int argc, char** argv)
         {
             // (The widescreen world drawn during a frame is shown after the next one.)
             rc_frame_hidden = !ffFull && emuSpeed > 1 && i < emuSpeed - 1;
-            rc_wide_render_skip = (!ffFull && emuSpeed > 1 && i < emuSpeed - 2) || skipWide;
+            rc_wide_render_skip = !ffFull && emuSpeed > 1 && i < emuSpeed - 2;
             rc_frame++;
             if (funcWatchOn) funcWatch.NextFrame();
             nds->RunFrame();
@@ -5423,19 +5424,37 @@ int main(int argc, char** argv)
         }
     };
     auto presentFrame = [&](DrawJob& j, bool pace) {
-        // The screen is the clock (syncToDisplay). The work of this frame has already been
-        // done; wait here, just before the next refresh, and hand the picture over then.
-        // Waiting after Present on the DS's 59.8 a second instead is what walked past a
-        // 59.94 Hz screen. Present itself then blocks only for the last couple of milliseconds
-        // and returns on the refresh, which is when the next frame's work starts.
-        if (pace && syncToDisplay)
+        // The work of this frame has already been done; wait here, just before the next
+        // refresh or tick, and hand the picture over then. Waiting after Present instead
+        // measured the gap between two frames' work ends, so a fast frame handed over its
+        // picture early and a slow one late, and with syncToDisplay walked past a 59.94 Hz
+        // screen. Present itself then blocks only for the last couple of milliseconds (or
+        // returns at once without vsync), right on the deadline.
+        if (pace)
         {
             const uint64_t now = SDL_GetPerformanceCounter();
             if (now < nextTick)
             {
                 const double left = (double)(nextTick - now) / perfFreq;
-                if (left > 0.0008) std::this_thread::sleep_for(std::chrono::duration<double>(left - 0.0006));
-                while (SDL_GetPerformanceCounter() < nextTick) {}
+                // (With the pipeline and no vsync the start of the next emulation does not
+                // depend on this to the microsecond: only the sleep, leaving the core to the
+                // widescreen thread.)
+                if (pipelined && !syncToDisplay) std::this_thread::sleep_for(std::chrono::duration<double>(left));
+                else
+                {
+                    if (left > 0.0008) std::this_thread::sleep_for(std::chrono::duration<double>(left - 0.0006));
+                    while (SDL_GetPerformanceCounter() < nextTick) {}
+                }
+            }
+            else if (!syncToDisplay)
+            {
+                // Never faster than the DS (59.8 frames a second). A frame that ran late may
+                // take up to a quarter of a frame back from the next one, so that frames a
+                // little late and a little early in turn still average out to full speed, but a
+                // longer stall is not won back: up to 250 ms used to be, as frames run back to
+                // back, and the game and its music sped up for a moment after every stall.
+                const uint64_t carry = (uint64_t)(frameTime * perfFreq / 4);
+                if (now - nextTick > carry) nextTick = now - carry;
             }
         }
         // How evenly the frames are handed to the screen, for the timing lines: gaps between
@@ -5500,31 +5519,6 @@ int main(int argc, char** argv)
             return;
         }
         nextTick += (uint64_t)(frameTime * perfFreq);
-        uint64_t now = SDL_GetPerformanceCounter();
-        if (now < nextTick)
-        {
-            // Sleep for most of the wait and spin for the last part of a millisecond:
-            // frames then start within a few microseconds of an even 16.7 ms apart.
-            double left = (double)(nextTick - now) / perfFreq;
-            // (With the pipeline the start of the next emulation does not depend on this
-            // to the microsecond: only the sleep, leaving the core to the widescreen thread.)
-            if (pipelined) std::this_thread::sleep_for(std::chrono::duration<double>(left));
-            else
-            {
-                if (left > 0.0008) std::this_thread::sleep_for(std::chrono::duration<double>(left - 0.0006));
-                while (SDL_GetPerformanceCounter() < nextTick) {}
-            }
-        }
-        else
-        {
-            // Never faster than the DS (59.8 frames a second). A frame that ran late may take
-            // up to a quarter of a frame back from the next one, so that frames a little late
-            // and a little early in turn still average out to full speed, but a longer stall
-            // is not won back: up to 250 ms used to be, as frames run back to back, and the
-            // game and its music sped up for a moment after every stall.
-            const uint64_t carry = (uint64_t)(frameTime * perfFreq / 4);
-            if (now - nextTick > carry) nextTick = now - carry;
-        }
         perfMark(5);
     };
     auto drawFrame = [&](DrawJob& j, bool pace = true) {
@@ -5942,9 +5936,10 @@ int main(int argc, char** argv)
             ctrlStart = ps.btn[PAD_START]; // (a controller's, before the on-screen buttons join in)
 
             const Uint8* kb = SDL_GetKeyboardState(nullptr);
+            kbKeysHeld = KeyboardKeys(cfg.controls);
             if (!menu.open)
             {
-                keys |= KeyboardKeys(cfg.controls);
+                if (!swallowMenuButtons) keys |= kbKeysHeld;
                 // (The touch cursor's keys, unless CONTROLS gave one of them to something.)
                 auto keyFree = [&](int s) { return kb[s] && cfg.controls.ActionOfKey(s) < 0; };
                 if (keyFree(SDL_SCANCODE_J)) curDX -= 1;
@@ -6595,7 +6590,7 @@ int main(int argc, char** argv)
             if (hit >= 0) buildMenu();
         }
 
-        bool anyHeld = false;
+        bool anyHeld = kbKeysHeld != 0;
         for (int i = 0; i < PAD_COUNT; i++) anyHeld |= ps.btn[i];
         if (swallowMenuButtons && !anyHeld) swallowMenuButtons = false;
 
@@ -6731,36 +6726,55 @@ int main(int argc, char** argv)
             {
                 // Drawn by the graphics chip, which shares its time with SDL's drawing of each
                 // frame: the measure is its own time on the widescreen pictures per frame, over
-                // the last 30 frames (a game drawing its world every other frame needs half). In
-                // a battle (its world drawn every frame) a 720-line picture took 15 ms of the
-                // 16.7, and the frames ran at 17-18 ms; over 11 ms a frame, a tenth fewer lines,
-                // down to 360; back up a tenth at a time while the picture would still take
-                // under 9.5 ms a frame, after 2 seconds.
+                // the last 15 frames, or 3 frames where the emulation waited > 1.5 ms for the
+                // widescreen worker. SDL composition + present takes ~6 ms on the Switch, so
+                // keeping widescreen GPU work under 9.5 ms per frame leaves headroom to meet
+                // the 16.67 ms VSync deadline without dropping to 30/37/40 FPS.
                 static uint64_t lastBusy = 0, window = 0;
                 static int windowFrames = 0;
                 const uint64_t busy = melonDS::WideGpuBusyNs.load();
                 window += busy >= lastBusy ? busy - lastBusy : 0;
                 lastBusy = busy;
-                // (Fast forward has a fixed lower detail, below; its frames say nothing of
-                // normal play.)
-                if (speed > 1) window = windowFrames = 0;
-                else if (++windowFrames >= 30)
+                const uint64_t ns = SsrStats().WaitWideNs.load();
+                const uint64_t waited = ns >= lastWideNs ? ns - lastWideNs : ns;
+                lastWideNs = ns;
+                const int floorLines = std::min(360, cfg.wideLines);
+                if (speed > 1)
                 {
-                    const double perFrame = window / 1e6 / windowFrames;
-                    window = 0;
-                    windowFrames = 0;
-                    const int floorLines = std::min(360, cfg.wideLines);
-                    if (perFrame > 11.0 && adaptLines > floorLines)
+                    window = windowFrames = 0;
+                    slowFrames = 0;
+                }
+                else
+                {
+                    if (waited > 1500000)
                     {
-                        adaptLines = std::max(floorLines, adaptLines * 9 / 10);
                         calmFrames = 0;
+                        if (++slowFrames >= 3 && adaptLines > floorLines)
+                        {
+                            adaptLines = std::max(floorLines, adaptLines * 9 / 10);
+                            slowFrames = 0;
+                            window = windowFrames = 0;
+                        }
                     }
-                    else if (adaptLines < cfg.wideLines && (calmFrames += 30) >= 120)
+                    else
+                        slowFrames = 0;
+                    if (++windowFrames >= 15)
                     {
-                        const int up = std::min(cfg.wideLines, adaptLines + std::max(8, cfg.wideLines / 10));
-                        const double scale = (double)up / adaptLines;
-                        if (perFrame * scale * scale < 9.5) adaptLines = up;
-                        calmFrames = 0;
+                        const double perFrame = window / 1e6 / windowFrames;
+                        window = 0;
+                        windowFrames = 0;
+                        if (perFrame > 9.5 && adaptLines > floorLines)
+                        {
+                            adaptLines = std::max(floorLines, adaptLines * 9 / 10);
+                            calmFrames = 0;
+                        }
+                        else if (adaptLines < cfg.wideLines && waited < 300000 && (calmFrames += 15) >= 120)
+                        {
+                            const int up = std::min(cfg.wideLines, adaptLines + std::max(16, cfg.wideLines / 10));
+                            const double scale = (double)up / adaptLines;
+                            if (perFrame * scale * scale < 7.8) adaptLines = up;
+                            calmFrames = 0;
+                        }
                     }
                 }
             }
@@ -6804,6 +6818,13 @@ int main(int argc, char** argv)
             {
                 ww = ww * WideLinesNow / wh;
                 wh = WideLinesNow;
+#ifdef SSR_DEKO3D
+                // Keep width a multiple of 8 and height a multiple of 16 so deko3D's direct
+                // pitch-linear rendering ((W * 4) % 32 == 0 && H % 16 == 0) stays active at
+                // every adaptive resolution without an extra full-screen image-to-buffer copy.
+                wh = std::max(192, (wh + 8) & ~15);
+                ww = std::max(256, (ww + 4) & ~7);
+#endif
             }
             // Black 2: the renderer keeps going for 5 seconds after a wide layout and through a
             // whole battle (its party and Bag pages are not wide), so that coming back to the
@@ -6828,10 +6849,6 @@ int main(int argc, char** argv)
             melonDS::Wide.Width = ww;
             melonDS::Wide.Height = wh;
             wideFrames = wantWide ? wideFrames + 1 : 0;
-            // When the current scene is a 2D menu or dual-screen spread, the 3D wide picture is
-            // not shown on screen: skip rendering it (rc_wide_render_skip) so the GPU is not
-            // wasting time on a discarded picture, while keeping Wide.Owner valid.
-            skipWide = !wantWide || (!scene.wide && !scene.edgeFill);
         }
         // Filled in after the frame has run: the renderer hands over its picture then.
         WideImage wideImage;
@@ -6848,6 +6865,7 @@ int main(int argc, char** argv)
                     world.pixels = melonDS::Wide.Front;
                     world.w = melonDS::Wide.FrontW;
                     world.h = melonDS::Wide.FrontH;
+                    world.serial = melonDS::Wide.FrontSerial;
                 }
                 const float vw = MergedMakeView(outW, outH).width;
                 const int tu = topUnitOf();
@@ -6888,6 +6906,7 @@ int main(int argc, char** argv)
                 wideImage.pixels = melonDS::Wide.Front;
                 wideImage.w = melonDS::Wide.FrontW;
                 wideImage.h = melonDS::Wide.FrontH;
+                wideImage.serial = melonDS::Wide.FrontSerial;
                 // Fades: the game darkens or whitens its screen with the master brightness
                 // register, or with a brightness effect on the 3D layer.
                 const auto& unit = wideUnit;
@@ -6940,7 +6959,7 @@ int main(int argc, char** argv)
                         fprintf(stderr, "[touch] %d,%d: picture %.0f,%.0f, scene %s: %s %d,%d\n", mouseX, mouseY, bx, by,
                                 scene.name, touching ? "touch screen" : "nothing", touching ? touchX : -1, touching ? touchY : -1);
                 }
-                else if (LayoutTouch(rects[1], mouseX, mouseY, touchX, touchY)) touching = true;
+                else if (LayoutTouch(layout, rects, mouseX, mouseY, touchX, touchY)) touching = true;
             }
             wasMouseDown = !opt.headless && mouseNow;
             if (curDX != 0 || curDY != 0 || curPress)
@@ -7098,7 +7117,13 @@ int main(int argc, char** argv)
             if (tb && fieldActive() && !menuOpenNow && nearC(186, 100, 0xBA6910) && nearC(186, 120, 0xBA6910) && nearC(230, 93, 0xEBAA59))
             {
                 for (int y = 0; y < SHOES_H; y++)
-                    for (int x = 0; x < SHOES_W; x++) shoesPix[y * SHOES_W + x] = tb[(SHOES_Y + y) * 256 + SHOES_X + x] | 0xFF000000u;
+                {
+                    for (int x = 0; x < SHOES_SRC_W; x++)
+                        shoesPix[y * SHOES_W + x] = tb[(SHOES_Y + y) * 256 + SHOES_X + x] | 0xFF000000u;
+                    for (int x = 0; x < SHOES_BORDER; x++)
+                        shoesPix[y * SHOES_W + SHOES_SRC_W + x] =
+                            tb[(SHOES_Y + y) * 256 + SHOES_X + (SHOES_BORDER - 1 - x)] | 0xFF000000u;
+                }
                 if (!shoesSeen) fprintf(stderr, "[shoes] frame %u: the Running Shoes button seen\n", frame);
                 shoesSeen = true;
                 shoesOn = nearC(200, 120, 0xBA6910); // (off: the shoes grey on the orange)
@@ -7503,7 +7528,7 @@ int main(int argc, char** argv)
             { g_dexPages[0], nullptr },
             { g_dexPages[1], nullptr },
         };
-        bool appBottom = false;
+        bool appBottom = sectionActive("OVY_40"); // Vs. Recorder: its controls and menus are on the touch screen
         for (const RcApp* app : focus.bottomApps)
             if (appActive(app->name)) appBottom = true;
         {

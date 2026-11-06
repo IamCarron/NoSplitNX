@@ -14,56 +14,66 @@ int main()
     for (int x = 8; x < 248; x++) top[191 * 256 + x] = 0xFF00E000;
     ScreenImage screens[2] = { { top.data(), nullptr }, { bottom.data(), nullptr } };
     for (int width : { 1024, 1280, 1920, 2560 })
-        for (bool message : { false, true })
-        {
-            std::fill(bottom.begin(), bottom.end(), blue);
-            if (message)
+        for (bool isTm : { false, true })
+            for (bool message : { false, true })
             {
-                for (int y = 2; y < 44; y++)
-                    for (int x = 2; x < 254; x++) bottom[y * 256 + x] = white;
-                for (int y = 8; y < 18; y++)
-                    for (int x = 8; x < 90; x++) bottom[y * 256 + x] = ink;
-            }
-            const MergedView view = MergedMakeView(width, 768);
-            const Scene sc = BagScene(view.width, screens);
-            // An item chosen: both screens side by side, as on the DS, over the Bag's blue.
-            assert(sc.items.size() == 3);
-            const Element& top = sc.items[1];
-            const Element& touch = sc.items[2];
-            assert(top.screen == 0 && touch.screen == 1);
-            assert(top.sw == 256 && top.sh == 192 && touch.sw == 256 && touch.sh == 192);
-            assert(top.scale == touch.scale && top.scale <= 1);
-            assert(top.dx + 256 * top.scale <= touch.dx + 0.01f); // No overlap.
-            assert(top.dx >= 128 - view.width / 2 - 0.01f); // Inside the window.
-            assert(touch.dx + 256 * touch.scale <= 128 + view.width / 2 + 0.01f);
-
-            std::vector<uint32_t> cpu;
-            MergedCompose(sc, screens, width, 768, cpu, false, nullptr);
-            SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, width, 768, 32, SDL_PIXELFORMAT_ARGB8888);
-            assert(surface);
-            SDL_Renderer* renderer = SDL_CreateSoftwareRenderer(surface);
-            assert(renderer);
-            {
-                GpuCompositor compositor(renderer);
-                compositor.Draw(sc, screens, width, 768, false, nullptr);
-                SDL_RenderPresent(renderer);
+                std::fill(top.begin(), top.end(), blue);
+                for (int y = 40; y < 50; y++)
+                    for (int x = 16; x < 96; x++) top[y * 256 + x] = white;
+                if (isTm)
+                {
+                    for (int y = 160; y < 176; y++)
+                        for (int x = 16; x < 160; x++) top[y * 256 + x] = white;
+                }
+                std::fill(bottom.begin(), bottom.end(), blue);
                 if (message)
                 {
-                    // The touch screen's message is shown whole by both composition paths.
-                    const int x = (int)(view.originX + (touch.dx + 30 * touch.scale) * view.unit);
-                    const int y = (int)(view.originY + (touch.dy + 12 * touch.scale) * view.unit);
-                    assert((cpu[y * width + x] & 0xFFFFFF) == (ink & 0xFFFFFF));
-                    const auto* row = reinterpret_cast<const uint32_t*>(
-                        static_cast<const uint8_t*>(surface->pixels) + y * surface->pitch);
-                    assert((row[x] & 0xFFFFFF) == (ink & 0xFFFFFF));
+                    for (int y = 2; y < 44; y++)
+                        for (int x = 2; x < 254; x++) bottom[y * 256 + x] = white;
+                    for (int y = 8; y < 18; y++)
+                        for (int x = 8; x < 90; x++) bottom[y * 256 + x] = ink;
                 }
+                const MergedView view = MergedMakeView(width, 768);
+                const Scene sc = BagScene(view.width, screens);
+                const Element& list = sc.items[0];
+                const Element& card = sc.items.back();
+                assert(list.screen == 1 && list.sw == 256 && list.sh == 192);
+                assert(card.screen == 0 && card.sw == 240 && card.sh == (isTm ? 164 : 122));
+                assert(card.border);
+                assert(card.dx >= 128 - view.width / 2 - 0.01f);
+                assert(card.dx + card.sw * card.scale <= list.dx + 112.0f + 0.01f); // Never covers the item list.
+                if (message)
+                    assert(card.dy >= 46.0f); // Leaves the top message box uncovered.
+                else
+                    assert(card.dy + card.sh * card.scale <= 168.0f + 0.01f); // Above the bottom pocket bar.
+
+                std::vector<uint32_t> cpu;
+                MergedCompose(sc, screens, width, 768, cpu, false, nullptr);
+                SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, width, 768, 32, SDL_PIXELFORMAT_ARGB8888);
+                assert(surface);
+                SDL_Renderer* renderer = SDL_CreateSoftwareRenderer(surface);
+                assert(renderer);
+                {
+                    GpuCompositor compositor(renderer);
+                    compositor.Draw(sc, screens, width, 768, false, nullptr);
+                    SDL_RenderPresent(renderer);
+                    if (message)
+                    {
+                        // The touch screen's message is shown whole by both composition paths.
+                        const int x = (int)(view.originX + (list.dx + 30) * view.unit);
+                        const int y = (int)(view.originY + (list.dy + 12) * view.unit);
+                        assert((cpu[y * width + x] & 0xFFFFFF) == (ink & 0xFFFFFF));
+                        const auto* row = reinterpret_cast<const uint32_t*>(
+                            static_cast<const uint8_t*>(surface->pixels) + y * surface->pitch);
+                        assert((row[x] & 0xFFFFFF) == (ink & 0xFFFFFF));
+                    }
+                }
+                SDL_DestroyRenderer(renderer);
+                SDL_FreeSurface(surface);
             }
-            SDL_DestroyRenderer(renderer);
-            SDL_FreeSurface(surface);
-        }
-    // Empty pockets and missing screen images must not create a description card.
+    // Empty pockets and missing screen images keep the single-screen Bag list without a card.
     std::fill(top.begin(), top.end(), blue);
-    assert(BagScene(341.33f, screens).items.size() == 1);
+    assert(BagScene(341.33f, screens).items.back().screen != 0);
     assert(BagScene(341.33f, nullptr).items.size() == 1);
 
     // Battle questions: the question at full size, both answers in the message bar,
@@ -87,5 +97,5 @@ int main()
         }
     }
     SDL_Quit();
-    puts("Gen 5 layouts: side-by-side Bag, battle questions and compositors passed.");
+    puts("Gen 5 layouts: single-screen Bag, battle questions and compositors passed.");
 }

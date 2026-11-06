@@ -495,6 +495,7 @@ void WideGpuBuild(const GPU& gpu, Polygon* const* list, u32 count, int W, int H,
 
     const bool texturing = dispCnt & 1;
     const bool blendEnabled = dispCnt & (1 << 3);
+    const bool dsRes = W == 256 && H == 192;
     const float sx = W / (256.0f * 16), sy = H / (192.0f * 16);
 
     // Decoded textures (see WideGpuAtlas): only with the texture memory's versions to tell what
@@ -571,8 +572,12 @@ void WideGpuBuild(const GPU& gpu, Polygon* const* list, u32 count, int W, int H,
         {
             const Vertex* vtx = poly->Vertices[i];
             WideGpuVertex& o = v[i];
-            o.X = vtx->HiresPosition[0] * sx;
-            o.Y = vtx->HiresPosition[1] * sy;
+            // At the DS's own resolution the vertices sit on whole pixels, as the software
+            // renderer's (FinalPosition) do, plus half a pixel: the graphics chip samples at
+            // pixel centres, the DS at pixel corners. Without this edges and textures sit up
+            // to a pixel off from the software renderer's.
+            o.X = dsRes ? (float)(vtx->HiresPosition[0] >> 4) + 0.5f : vtx->HiresPosition[0] * sx;
+            o.Y = dsRes ? (float)(vtx->HiresPosition[1] >> 4) + 0.5f : vtx->HiresPosition[1] * sy;
             o.W = poly->FinalW[i] > 0 ? (float)poly->FinalW[i] : 1.0f;
             o.Z = (float)poly->FinalZ[i];
             o.R = (float)(vtx->FinalColor[0] >> 3);

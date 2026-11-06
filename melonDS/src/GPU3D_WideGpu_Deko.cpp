@@ -314,18 +314,20 @@ public:
     {
         Slot& s = Slots[slot];
         const u32 size = (u32)w * h * 4;
-        if (s.Mem && s.Size != size)
+        if (s.Mem && s.Cap < size)
         {
             // (This slot is not the one on show, nor the one before: GPU3D_Wide.cpp.)
             dkMemBlockDestroy(s.Mem);
             s.Mem = nullptr;
+            s.Cap = 0;
         }
         if (!s.Mem)
         {
             s.Mem = Block(size, DkMemBlockFlags_CpuCached | DkMemBlockFlags_GpuCached);
-            s.Size = s.Mem ? size : 0;
+            s.Cap = s.Mem ? size : 0;
             s.ImageW = s.ImageH = 0;
         }
+        s.Size = s.Mem ? size : 0;
         return s.Mem ? (u32*)dkMemBlockGetCpuAddr(s.Mem) : nullptr;
     }
 
@@ -599,7 +601,7 @@ public:
 private:
     static DkMemBlock Block(u32 size, u32 flags) { return MakeBlock(size, flags); }
 
-    bool Image(DkImage& image, DkMemBlock& mem, DkImageFormat format, int w, int h, u32 flags)
+    bool Image(DkImage& image, DkMemBlock& mem, u32& cap, DkImageFormat format, int w, int h, u32 flags)
     {
         DkImageLayoutMaker lm;
         dkImageLayoutMakerDefaults(&lm, Sh->Device);
@@ -609,7 +611,18 @@ private:
         lm.dimensions[1] = (u32)h;
         DkImageLayout layout;
         dkImageLayoutInitialize(&layout, &lm);
-        mem = Block((u32)dkImageLayoutGetSize(&layout) + dkImageLayoutGetAlignment(&layout), DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image);
+        const u32 need = (u32)dkImageLayoutGetSize(&layout) + dkImageLayoutGetAlignment(&layout);
+        if (mem && cap < need)
+        {
+            dkMemBlockDestroy(mem);
+            mem = nullptr;
+            cap = 0;
+        }
+        if (!mem)
+        {
+            mem = Block(need, DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image);
+            cap = mem ? need : 0;
+        }
         if (!mem) return false;
         dkImageInitialize(&image, &layout, mem, 0);
         return true;
@@ -627,18 +640,18 @@ private:
             if (*m) dkMemBlockDestroy(*m);
             *m = nullptr;
         }
+        ColorCap = AttrCap = DepthCap = FinalCap = 0;
         W = H = 0;
     }
 
     bool MakeTargets(int w, int h)
     {
         dkQueueWaitIdle(Queue);
-        FreeTargets();
         const u32 render = DkImageFlags_UsageRender | (Sh->Compress ? DkImageFlags_HwCompression : 0);
-        if (!Image(ColorImage, ColorMem, DkImageFormat_RGBA8_Unorm, w, h, render) ||
-            !Image(AttrImage, AttrMem, DkImageFormat_RG32_Uint, w, h, render) ||
-            !Image(DepthImage, DepthMem, Sh->Depth24 ? DkImageFormat_Z24S8 : DkImageFormat_ZF32_X24S8, w, h, render) ||
-            !Image(FinalImage, FinalMem, DkImageFormat_BGRA8_Unorm, w, h, DkImageFlags_UsageRender | DkImageFlags_Usage2DEngine))
+        if (!Image(ColorImage, ColorMem, ColorCap, DkImageFormat_RGBA8_Unorm, w, h, render) ||
+            !Image(AttrImage, AttrMem, AttrCap, DkImageFormat_RG32_Uint, w, h, render) ||
+            !Image(DepthImage, DepthMem, DepthCap, Sh->Depth24 ? DkImageFormat_Z24S8 : DkImageFormat_ZF32_X24S8, w, h, render) ||
+            !Image(FinalImage, FinalMem, FinalCap, DkImageFormat_BGRA8_Unorm, w, h, DkImageFlags_UsageRender | DkImageFlags_Usage2DEngine))
         {
             fprintf(stderr, "[widegpu] deko3D images of %dx%d could not be had\n", w, h);
             FreeTargets();
@@ -654,7 +667,6 @@ private:
         memcpy(Data + OffImageDesc + ImgColor * sizeof(desc[0]), desc, sizeof(desc));
         W = w;
         H = h;
-        fprintf(stderr, "[widegpu] deko3D targets %dx%d\n", w, h);
         return true;
     }
 
@@ -662,11 +674,12 @@ private:
     u64 TexVersion = 0;
     DkMemBlock CmdMem = nullptr, DataMem = nullptr;
     DkMemBlock ColorMem = nullptr, AttrMem = nullptr, DepthMem = nullptr, FinalMem = nullptr;
+    u32 ColorCap = 0, AttrCap = 0, DepthCap = 0, FinalCap = 0;
     // The pictures (see Target).
     struct Slot
     {
         DkMemBlock Mem = nullptr;
-        u32 Size = 0;
+        u32 Size = 0, Cap = 0;
         DkImage Image;            // its memory as a pitch-linear render target (SSR_WIDEGPU_DIRECT)
         int ImageW = 0, ImageH = 0;
     };
@@ -685,7 +698,7 @@ private:
         lm.pitchStride = (u32)W * 4;
         DkImageLayout layout;
         dkImageLayoutInitialize(&layout, &lm);
-        if (dkImageLayoutGetSize(&layout) > s.Size) return false;
+        if (dkImageLayoutGetSize(&layout) > s.Cap) return false;
         dkImageInitialize(&s.Image, &layout, s.Mem, 0);
         s.ImageW = W;
         s.ImageH = H;

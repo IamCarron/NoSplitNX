@@ -198,6 +198,7 @@ struct WideImage
     // the first piece, which is not drawn.
     bool placed = false;
     int baseX = 0;
+    uint64_t serial = 0; // non-zero when unchanged serial means identical pixels
 };
 
 struct ScreenImage
@@ -343,9 +344,23 @@ inline void MergedPrepareEdgeWindows(Scene& scene, const ScreenImage* screens)
     }
 }
 
+// The column whose colour goes on beside the screen: the outermost one, or the next in when the
+// outermost is the 3D world alone and the 2D layer is flat from there (a background scrolled by
+// one pixel, as in the Fly animation's sky). The same choice as the one in GPU2D_Soft.cpp.
+inline int MergedEdgeColumn(const ScreenImage& top, int sy, int side)
+{
+    const int x = side ? 255 : 0, dir = side ? -1 : 1;
+    if (!top.flags || LayerClass(top.flags[sy * 256 + x]) != LAYER_3D) return x;
+    const uint8_t flag = top.flags[sy * 256 + x + dir];
+    if (LayerClass(flag) == LAYER_3D) return x;
+    for (int k = 2; k < 9; k++)
+        if (top.flags[sy * 256 + x + dir * k] != flag) return x;
+    return x + dir;
+}
+
 inline EdgeContinuation MergedEdgeContinuation(const Scene& scene, const ScreenImage& top, int sy, int side)
 {
-    const int sx = side ? 255 : 0;
+    const int sx = MergedEdgeColumn(top, sy, side);
     const EdgeContinuation none = { 0, 0, 16 };
     // (Nor where the piece leaves the screen out: that part is drawn elsewhere.)
     if (scene.items[0].Skips(sx, sy) || scene.edgeWindow[side][sy]) return none;
@@ -394,6 +409,18 @@ inline EdgeContinuation MergedEdgeContinuation(const Scene& scene, const ScreenI
     // Not mixed with the 3D world: as the screen shows it (with any fade or brightening).
     if (evb == 0) return finished;
     return { top.edge[sy * 2 + side] & 0xFFFFFF, eva, evb };
+}
+
+// Whether row sy of the top screen is nothing but black backdrop across its whole width: the 3D
+// layer is switched off there, as a door's wipe does while it opens or closes. The widescreen
+// world, which knows nothing of that, would show through the whole row (the 4:3 middle appeared
+// at once while the sides were still being wiped), so the row is black across the view.
+inline bool MergedBlankRow(const ScreenImage& top, int sy)
+{
+    if (!top.flags || !top.pixels || sy < 0 || sy >= 192) return false;
+    for (int x = 0; x < 256; x++)
+        if (LayerClass(top.flags[sy * 256 + x]) != LAYER_BACKDROP || (top.pixels[sy * 256 + x] & 0xFFFFFF)) return false;
+    return true;
 }
 
 // Whether the weather's particles are repeated beside the top screen in row sy (see
@@ -489,48 +516,79 @@ inline Scene BattleChoiceScene(float viewWidth)
     return sc;
 }
 
-// Black and Black 2's Bag: the touch screen alone while browsing the pockets; once an item is
-// chosen (its card on the top screen), both screens side by side.
+// Black and Black 2's Bag: single-screen layout with the item list against the right edge,
+// the bottom pocket bar extended across the full widescreen width, and the item description
+// card on the left (dynamically sized for normal items vs TMs, and shifted below the dialogue
+// box when an item is selected).
 inline Scene BagScene(float viewWidth, const ScreenImage* screens)
 {
     const float viewLeft = 128 - viewWidth / 2, viewRight = 128 + viewWidth / 2;
-    int text = 0;
+    int text = 0, tmStats = 0;
     if (screens && screens[0].pixels)
+    {
         for (int y = 28; y < 152; y += 2)
             for (int x = 8; x < 248; x += 2)
             {
                 const uint32_t c = screens[0].pixels[y * 256 + x];
                 text += ((c >> 16) & 0xFF) > 200 && ((c >> 8) & 0xFF) > 200 && (c & 0xFF) > 200;
             }
+        for (int y = 154; y < 192; y++)
+            for (int x = 8; x < 248; x += 2)
+            {
+                const uint32_t c = screens[0].pixels[y * 256 + x];
+                tmStats += ((c >> 16) & 0xFF) > 180 || ((c >> 8) & 0xFF) > 180;
+            }
+    }
     Scene sc;
     sc.name = "bag";
-    // The bottom screen holds the pocket tabs (top ~24 rows), the item list (most of the screen,
-    // right ~140 columns) and the pocket controls / item info panel (left ~116 columns). The top
-    // screen shows the item's description card when an item is highlighted or selected.
+    Element list = FullScreen(1);
+    list.dx = viewRight - 256;
+    sc.items = { list };
+    if (list.dx > viewLeft && screens && screens[1].pixels)
+    {
+        // Extend the bottom pocket bar (rows 168..191) to the left edge of the widescreen view.
+        Element barExt = Crop(1, 0, 168, 2, 24);
+        barExt.dx = viewLeft;
+        barExt.dy = 168;
+        barExt.stretchX = (list.dx - viewLeft + 1.0f) / 2.0f;
+        barExt.crisp = true;
+        sc.items.push_back(barExt);
+    }
     if (text >= 12)
     {
-        // An item chosen: both screens side by side, as the DS shows them (the card on the
-        // top screen, the message and the choices on the touch screen), so that neither covers
-        // the other; the rest of the view in the card's own blue.
-        const float k = std::min(1.0f, viewWidth / 512);
-        Element top = Crop(0, 0, 0, 256, 192), touch = Crop(1, 0, 0, 256, 192);
-        top.scale = touch.scale = k;
-        top.dx = 128 - 256 * k;
-        touch.dx = 128;
-        top.dy = touch.dy = 96 - 96 * k;
-        top.crisp = touch.crisp = k == 1.0f;
-        sc.name = "bag";
-        sc.items = { top, touch };
-        const uint32_t blue = screens && screens[0].pixels ? screens[0].pixels[100 * 256 + 4] & 0xFFFFFF : 0x103070;
-        sc.items.insert(sc.items.begin(), FillRect(viewLeft - 1, -1, (int)std::ceil(viewWidth) + 3, 194, blue));
-        return sc;
-    }
-    else
-    {
-        // No card: show the full bottom screen at the right edge.
-        Element list = FullScreen(1);
-        list.dx = viewRight - 256;
-        sc.items = { list };
+        const auto white = [&](int x, int y) {
+            if (!screens || !screens[1].pixels) return false;
+            const uint32_t c = screens[1].pixels[y * 256 + x];
+            return ((c >> 16) & 0xFF) > 230 && ((c >> 8) & 0xFF) > 230 && (c & 0xFF) > 230;
+        };
+        const bool message = white(5, 24) && white(250, 24);
+        if (!message && screens && screens[1].pixels)
+        {
+            // Hide the decorative Bag emblem on the unused left side of the touch screen so it
+            // does not peek out from behind or below the item card.
+            const uint32_t blue = screens[1].pixels[2 * 256 + 2] & 0xFFFFFF;
+            sc.items.push_back(FillRect(list.dx, 0, 112, 168, blue));
+        }
+        // Normal items end their description box at row 150 (122px tall); TMs/HMs include move
+        // stats down to row 192 (164px tall).
+        const int cardH = tmStats >= 8 ? 164 : 122;
+        Element card = Crop(0, 8, 28, 240, cardH);
+        const float left = viewRight - 256 + 112 - viewLeft;
+        if (message)
+        {
+            card.dy = 48.0f;
+            card.scale = std::min({ 0.85f, (left - 6) / card.sw, (164.0f - card.dy) / card.sh });
+        }
+        else
+        {
+            card.scale = std::min({ 0.85f, (left - 6) / card.sw, 160.0f / card.sh });
+            card.dy = (168.0f - card.sh * card.scale) / 2.0f;
+        }
+        card.dx = viewLeft + 3;
+        card.border = true;
+        card.borderRadius = 3.0f;
+        card.borderColor = 0x2A2E38;
+        sc.items.push_back(card);
     }
     sc.bgScreen = 1;
     sc.bgX = 2;
@@ -1048,12 +1106,16 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
                     int sy = (int)((y - v.originY) / v.unit);
                     if (sy >= 0 && sy < 192)
                     {
+                        if (MergedBlankRow(top, sy)) std::fill(dst, dst + outW, 0xFF000000);
                         const int left = (int)v.originX, right = (int)(v.originX + 256 * v.unit);
                         for (int side = 0; side < 2; side++)
                         {
                             const EdgeContinuation c = MergedEdgeContinuation(scene, top, sy, side);
                             if (c.none()) continue;
-                            const int xa = side ? std::max(right, 0) : 0, xb = side ? outW : std::min(left, outW);
+                            // (Continued from the next column in, the outermost column, the 3D world
+                            // alone, is covered too: no slit at the screen's edge.)
+                            const int cover = MergedEdgeColumn(top, sy, side) != (side ? 255 : 0) ? (int)std::ceil(v.unit) : 0;
+                            const int xa = side ? std::max(right - cover, 0) : 0, xb = side ? outW : std::min(left + cover, outW);
                             if (c.pattern)
                             {
                                 for (int x = xa; x < xb; x++)
@@ -1232,7 +1294,14 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
                             MergedWideCovers(*wide, v, outW, outH, srcX, srcY))
                             continue;
                         uint32_t c = src.pixels[si];
-                        if (MergedKeyed(el, c & 0xFFFFFF)) continue;
+                        // (As in the nearest-pixel path and the GPU compose.)
+                        if (el.dropSpriteCorner > 0 && src.flags && LayerClass(src.flags[si]) == LAYER_OBJ &&
+                            std::min(srcX - el.sx, el.sx + el.sw - 1 - srcX) < el.dropSpriteCorner &&
+                            std::min(srcY - el.sy, el.sy + el.sh - 1 - srcY) < el.dropSpriteCorner)
+                            continue;
+                        if (MergedKeyed(el, c & 0xFFFFFF) &&
+                            (!el.keyRing || std::min({ srcX - el.sx, el.sx + el.sw - 1 - srcX, srcY - el.sy, el.sy + el.sh - 1 - srcY }) < el.keyRing))
+                            continue;
                         acc[0] += ((c >> 16) & 0xFF) * wt[k];
                         acc[1] += ((c >> 8) & 0xFF) * wt[k];
                         acc[2] += (c & 0xFF) * wt[k];
