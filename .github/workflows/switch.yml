@@ -88,22 +88,23 @@ jobs:
       - name: Generate Release Notes
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          cat << 'EOF' > build-sd/RELEASE_NOTES.md
-          # NoSplitNX v1.0.0-beta.3
+          cat << EOF > build-sd/RELEASE_NOTES.md
+          # NoSplitNX ${{ github.ref_name }}
 
-          This release addresses critical issues reported in Beta 2, fixing theme color persistence in the launcher, frame pacing and audio stutter during intro and loading screens, and a fatal crash when transitioning between interiors and the overworld in Gen 5 games.
+          This release fixes the overworld loading freeze/hang in Pokémon Black and White, resolves the crash when exiting buildings/houses, restores smooth 60 FPS pacing and clear audio, and ensures launcher theme settings persist cleanly on Nintendo Switch.
 
           ### Fixes & Improvements
 
-          - **Launcher Theme Persistence**: Settings and accent color (`COLOUR`) changes now save reliably on FAT32 filesystems on Switch SD cards, updating the UI immediately without requiring a restart.
-          - **Intro & Loading Frame Pacing**: Fixed 30 FPS drops and robotic audio stutter during title, intro, and 2D loading scenes in Pokémon Black and White by skipping unnecessary 3D widescreen rendering passes and tuning audio queue feedback.
-          - **Overworld Transition Crash**: Resolved a crash when exiting houses/buildings into the overworld in Pokémon Black and White by safely releasing and recreating deko3D texture targets (`FreeTargets()`) upon dimension changes and waiting for GPU idle.
-          - **In-Console Updater**: Fully functional update path via `SETTINGS (Y)` -> `CHECK FOR UPDATES`, supporting direct downloads and hot-reloads between beta versions while preserving saves, settings, and ROMs.
+          - **Overworld Loading & Pipeline Stability**: Fixed a freeze when loading saves or entering the overworld by keeping 3D pipeline flow intact across scene transitions.
+          - **Building & House Exit Crash**: Aligned edge continuation textures to 32 bytes (8x192) and retained deko3D target allocations, preventing Tegra X1 stride faults when exiting interiors.
+          - **60 FPS Pacing & Audio**: Restored default 60 FPS 3D interpolation and 720p adaptive rendering on Nintendo Switch for Gen 5 games, eliminating frame drops and audio stutter.
+          - **Launcher Theme Persistence**: Setting and theme color changes save immediately on Switch FAT32 SD cards and update in real-time.
+          - **In-Console Updater**: Fully functional update path via \`SETTINGS (Y)\` -> \`CHECK FOR UPDATES\`.
 
           ### Installation & Updating
 
-          - **From console:** If you are already running Beta 1 or Beta 2, open `SETTINGS (Y)` -> `CHECK FOR UPDATES` and press `A` to install.
-          - **Manual install:** Extract `nosplitnx-switch.zip` to the root of your microSD card (`sdmc:/switch/nosplitnx/nosplitnx.nro`) and place your ROMs in `sdmc:/switch/nosplitnx/roms/`.
+          - **From console:** Open \`SETTINGS (Y)\` -> \`CHECK FOR UPDATES\` and press \`A\` to install.
+          - **Manual install:** Extract \`nosplitnx-switch.zip\` to the root of your microSD card (\`sdmc:/switch/nosplitnx/nosplitnx.nro\`) and place your ROMs in \`sdmc:/switch/nosplitnx/roms/\`.
           EOF
           echo "" >> build-sd/RELEASE_NOTES.md
           echo "### Checksums (\`SHA256SUMS.txt\`)" >> build-sd/RELEASE_NOTES.md

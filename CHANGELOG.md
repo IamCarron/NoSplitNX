@@ -4,6 +4,15 @@
 ## Unreleased
 
 
+## v1.0.0-beta.4 — Fix overworld entry, 60fps pacing and edge texture alignment
+
+- **Gen 5 overworld loading and stability fixes**:
+  - Fixed a freeze/hang when loading a save or entering the overworld in Pokémon Black and White by restoring proper 3D rendering pipeline flow and preventing render skips on transition scenes.
+  - Retained deko3D target memory blocks across dimension changes, eliminating allocation faults on Tegra X1 when transitioning between interior maps and the overworld.
+  - Aligned the screen edge continuation texture to 32 bytes (8x192), resolving the Tegra X1 hardware stride crash when exiting buildings and houses.
+  - Restored full 60 FPS interpolation and 720p adaptive rendering defaults for Gen 5 games on Switch, keeping intro audio smooth and eliminating frame pacing stutter.
+  - Fixed launcher accent colors (`COLOUR` / `list_colour`) failing to persist on Nintendo Switch FAT32 filesystems.
+
 ## v1.0.0-beta.3 — Switch stability, audio and launcher theme fixes
 
 - **Nintendo Switch stability, audio and launcher theme fixes**:
