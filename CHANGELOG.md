@@ -4,6 +4,14 @@
 ## Unreleased
 
 
+## v1.0.0-beta.6 — Fix door transition crash and Tegra X1 texture alignment
+
+- **Door exit and map transition stability**:
+  - Fixed a crash on Nintendo Switch when walking through doors or transitioning between interiors and the overworld by aligning narrow side bar textures (`NarrowTex`) to 8x192 with a 32-byte stride (matching Tegra X1 hardware requirements).
+  - Added strict null pointer and bounds checking for screen images and background pixels in `GpuCompositor::Draw` during transition wipes.
+  - Added vertex count validation and null vertex protections in `GPU3D_Wide::ExtendToEdges` to prevent stack corruption and invalid memory accesses during outdoor map entry.
+  - Ensured GPU queue completion (`dkQueueWaitIdle`) before destroying slot target memory upon dimension changes in deko3D.
+
 ## v1.0.0-beta.5 — Safe 60 FPS interpolation toggle and bounds validation
 
 - **Safe 60 FPS interpolation toggle and bounds checking**:

@@ -91,14 +91,15 @@ jobs:
           cat << EOF > build-sd/RELEASE_NOTES.md
           # NoSplitNX ${{ github.ref_name }}
 
-          This release fixes a crash when toggling 60 FPS interpolation mid-game or during dialogues, clarifies frame interpolation vs FPS limiting, and includes all stability fixes from previous betas.
+          This release fixes a crash on Nintendo Switch when exiting through doors or transitions into the overworld, ensures full Tegra X1 texture alignment, fixes the mid-dialogue 60 FPS toggle crash, and preserves all stability improvements.
 
           ### Fixes & Improvements
 
-          - **Safe 60 FPS Toggle & Bounds Checks**: Fixed a fatal crash / segmentation fault when toggling 60 FPS in the pause menu mid-dialogue or during static scenes. In-between frame queues (\`InterpPending\`, \`InterpDeferred\`) are now cleanly reset upon state change, and polygon vector lookups in the wide replay pipeline include strict bounds validation.
-          - **3D Frame Interpolation vs Limiting**: Clarified that the "60 FPS" option performs DS 3D polygon interpolation (generating intermediate frames so 3D camera and geometry move at 60 FPS instead of the DS native 30 FPS). It is not an FPS limiter or cap; DS hardware logic and audio always target ~59.82 Hz.
-          - **Overworld Loading & Pipeline Stability**: Fixed a freeze when loading saves or entering the overworld by keeping 3D pipeline flow intact across scene transitions.
-          - **Building & House Exit Crash**: Aligned edge continuation textures to 32 bytes (8x192) and retained deko3D target allocations, preventing Tegra X1 stride faults when exiting interiors.
+          - **Door Exit & Overworld Transition Crash**: Fixed a hardware stride crash on Nintendo Switch when walking through doors or transitioning into the overworld by aligning narrow side bar textures (\`NarrowTex\`) to 8x192 with a 32-byte stride (matching Tegra X1 requirements).
+          - **Transition Safety & Null Guards**: Added strict null pointer and bounds validation for screen textures, background pixels, and hole-filling buffers in \`GpuCompositor\` and \`MergedFillWideHoles\`.
+          - **Polygon Vertex Protections**: Added vertex count limits and null checks in \`ExtendToEdges\` to prevent stack corruption and segmentation faults during outdoor map entry.
+          - **Safe 60 FPS Toggle**: Fixed crash when toggling 60 FPS in the pause menu mid-dialogue or during static scenes. In-between frame queues (\`InterpPending\`, \`InterpDeferred\`) are safely cleared.
+          - **3D Frame Interpolation vs Limiting**: Clarified that the "60 FPS" option performs DS 3D polygon interpolation (generating intermediate frames so 3D camera and geometry move at 60 FPS instead of the DS native 30 FPS).
           - **Launcher Theme Persistence**: Setting and theme color changes save immediately on Switch FAT32 SD cards and update in real-time.
           - **In-Console Updater**: Fully functional update path via \`SETTINGS (Y)\` -> \`CHECK FOR UPDATES\`.
 

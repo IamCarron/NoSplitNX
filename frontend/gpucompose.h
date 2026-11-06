@@ -23,7 +23,8 @@ public:
     void Draw(const Scene& scene, const ScreenImage screens[2], int outW, int outH, bool smooth, const WideImage* wide)
     {
         uint32_t bg = 0;
-        if (scene.bgScreen >= 0) bg = screens[scene.bgScreen].pixels[scene.bgY * 256 + scene.bgX] & 0xFFFFFF;
+        if (scene.bgScreen >= 0 && scene.bgScreen < 2 && screens[scene.bgScreen].pixels)
+            bg = screens[scene.bgScreen].pixels[std::clamp(scene.bgY, 0, 191) * 256 + std::clamp(scene.bgX, 0, 255)] & 0xFFFFFF;
         const bool useWide = scene.wide && !scene.narrow && wide && wide->pixels && wide->w > 0 && wide->h > 0;
         const MergedView v = MergedMakeView(outW, outH);
 
@@ -32,8 +33,9 @@ public:
         SDL_RenderClear(R);
 
         if (useWide) DrawWide(scene, screens, outW, outH, v, smooth, *wide);
-        else if (scene.edgeFill && !scene.items.empty() && scene.items[0].screen >= 0) DrawEdgeFill(screens[scene.items[0].screen], outW, v);
-        else if ((scene.softBars || (scene.wide && scene.narrow)) && !scene.items.empty() && scene.items[0].screen >= 0 && v.originX > 0)
+        else if (scene.edgeFill && !scene.items.empty() && scene.items[0].screen >= 0 && scene.items[0].screen < 2 && screens[scene.items[0].screen].pixels)
+            DrawEdgeFill(screens[scene.items[0].screen], outW, v);
+        else if ((scene.softBars || (scene.wide && scene.narrow)) && !scene.items.empty() && scene.items[0].screen >= 0 && scene.items[0].screen < 2 && screens[scene.items[0].screen].pixels && v.originX > 0)
             DrawNarrowBars(screens[scene.items[0].screen], outW, outH, v, scene.wide && scene.narrow);
 
         int slot = 0;
@@ -107,6 +109,7 @@ public:
                 }
                 continue;
             }
+            if (el.screen >= 2 || !screens[el.screen].pixels) continue;
             const ScreenImage& src = screens[el.screen];
 
             const bool nearest = el.crisp || !smooth;
@@ -458,19 +461,23 @@ private:
     // The bars beside a 4:3 picture on a wide view (MergedNarrowBars): a colour per row.
     void DrawNarrowBars(const ScreenImage& top, int outW, int outH, const MergedView& v, bool calm)
     {
+        if (!top.pixels) return;
         uint32_t bars[2][192];
         MergedNarrowBars(top, bars[0], bars[1], calm);
         const int left = (int)v.originX, right = (int)(v.originX + 256 * v.unit);
         const float y0 = v.originY, h = 192 * v.unit;
         for (int side = 0; side < 2; side++)
         {
-            SDL_Texture* t = Make(NarrowTex[side], 1, 192);
+            SDL_Texture* t = Make(NarrowTex[side], 8, 192);
             if (!t) continue;
             SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
             SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
-            SDL_UpdateTexture(t, nullptr, bars[side], 4);
+            for (int y = 0; y < 192; y++)
+                std::fill(&NarrowBuf[y * 8], &NarrowBuf[y * 8] + 8, bars[side][y]);
+            SDL_UpdateTexture(t, nullptr, NarrowBuf, 8 * 4);
+            const SDL_Rect src = { 0, 0, 1, 192 };
             const SDL_FRect dst = side == 0 ? SDL_FRect { 0, y0, (float)left, h } : SDL_FRect { (float)right, y0, (float)(outW - right), h };
-            if (dst.w > 0) SDL_RenderCopyF(R, t, nullptr, &dst);
+            if (dst.w > 0) SDL_RenderCopyF(R, t, &src, &dst);
         }
         (void)outH;
     }
@@ -479,6 +486,7 @@ private:
     // darkening outwards (see Scene::edgeFill). The darkening is baked into a 16-pixel-wide texture per side.
     void DrawEdgeFill(const ScreenImage& top, int outW, const MergedView& v)
     {
+        if (!top.pixels) return;
         const int left = (int)v.originX, right = (int)(v.originX + 256 * v.unit);
         if (left <= 0) return;
         const int y0 = (int)v.originY, h = (int)(192 * v.unit + 0.5f);
@@ -525,6 +533,7 @@ private:
     std::vector<uint32_t> Buf, WideFilled;
     uint32_t Edge[16 * 192];
     uint32_t EdgeIn[8 * 192]; // the screen's own outermost column, where a row is continued from the next one in
+    uint32_t NarrowBuf[8 * 192]; // 32-byte stride aligned buffer for side bars
     uint32_t Weather[256 * 192];
     SDL_BlendMode EdgeMode = SDL_BLENDMODE_INVALID;
     bool EdgeCustomFailed = false;

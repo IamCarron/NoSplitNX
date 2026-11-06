@@ -464,9 +464,9 @@ inline bool MergedParticleWeather(const ScreenImage& top)
 // (Tiled backgrounds, such as the sea beside a bridge, are scenery, not snapshots.)
 inline bool MergedEdgesArePicture(const Scene& scene, const ScreenImage screens[2])
 {
-    if (scene.items.empty() || scene.items[0].screen < 0) return false;
+    if (scene.items.empty() || scene.items[0].screen < 0 || scene.items[0].screen >= 2) return false;
     const ScreenImage& top = screens[scene.items[0].screen];
-    if (!top.flags || !top.edgeBlend || !top.edgeFlat) return false;
+    if (!top.flags || !top.edgeBlend || !top.edgeFlat || !top.pixels) return false;
     for (int side = 0; side < 2; side++)
     {
         int rows = 0;
@@ -842,6 +842,7 @@ inline const uint32_t* MergedFillWideHoles(const WideImage& wide, int screenX0, 
     if (w <= 0 || h <= 0 || !wide.pixels) return nullptr;
     screenX0 = std::clamp(screenX0, 0, w);
     screenX1 = std::clamp(screenX1, 0, w);
+    if (screenX0 >= screenX1) return wide.pixels;
     bool holes = false;
     for (int y = 0; y < h && !holes; y++)
     {

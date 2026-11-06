@@ -1024,12 +1024,13 @@ struct WideAccess
         for (u32 i = 0; i < count; i++)
         {
             const Polygon* poly = list[i];
-            if (!poly || poly->Degenerate || poly->Type != 0 || poly->NumVertices < 3) continue;
+            if (!poly || poly->Degenerate || poly->Type != 0 || poly->NumVertices < 3 || poly->NumVertices > 10) continue;
             Box& b = boxes[i];
             b.x0 = b.y0 = b.w0 = INT32_MAX;
             b.x1 = b.y1 = b.w1 = INT32_MIN;
             for (u32 v = 0; v < poly->NumVertices; v++)
             {
+                if (!poly->Vertices[v]) continue;
                 const s32* p = poly->Vertices[v]->HiresPosition;
                 b.x0 = std::min(b.x0, p[0]); b.x1 = std::max(b.x1, p[0]);
                 b.y0 = std::min(b.y0, p[1]); b.y1 = std::max(b.y1, p[1]);
@@ -1040,6 +1041,7 @@ struct WideAccess
             b.tr = b.br = INT32_MIN;
             for (u32 v = 0; v < poly->NumVertices; v++)
             {
+                if (!poly->Vertices[v]) continue;
                 const s32* p = poly->Vertices[v]->HiresPosition;
                 if (p[1] == b.y0) { b.tl = std::min(b.tl, p[0]); b.tr = std::max(b.tr, p[0]); }
                 if (p[1] == b.y1) { b.bl = std::min(b.bl, p[0]); b.br = std::max(b.br, p[0]); }
@@ -1104,9 +1106,11 @@ struct WideAccess
             auto sharesCorner = [&](u32 j) {
                 const Polygon* p = list[i];
                 const Polygon* q = list[j];
-                for (u32 u = 0; u < p->NumVertices; u++)
-                    for (u32 v = 0; v < q->NumVertices; v++)
+                if (!p || !q) return false;
+                for (u32 u = 0; u < p->NumVertices && u < 10; u++)
+                    for (u32 v = 0; v < q->NumVertices && v < 10; v++)
                     {
+                        if (!p->Vertices[u] || !q->Vertices[v]) continue;
                         if (p->Vertices[u] == q->Vertices[v]) return true;
                         // (The same place counts too, the game having made separate corners
                         // for its neighbours, but not on the view's edges, where the clipping
@@ -1210,6 +1214,7 @@ struct WideAccess
     // the polygon having been continued in the last frames (HeldPrev).
     static const char* Continue(Polygon* poly, int side, s32 nearX, s32 limit, s32 edge, bool layer, int mode)
     {
+        if (!poly || poly->NumVertices < 3 || poly->NumVertices > 10) return "invalid-vertices";
         const u32 n = poly->NumVertices;
         // A layer of the distance whose end the DS screen shows part of really ends there, the
         // game having cut it off nowhere: one of its end's corners past the screen's edge and the
@@ -1230,10 +1235,12 @@ struct WideAccess
             return side == 1 ? x <= nearX && x < limit + inside : x >= nearX && x > limit - inside;
         };
         auto beyond = [&](u32 v) {
+            if (!poly->Vertices[v]) return false;
             const s32 x = poly->Vertices[v]->HiresPosition[0];
             return side == 1 ? x <= nearX && x < limit : x >= nearX && x > limit;
         };
         auto deepInside = [&](u32 v) {
+            if (!poly->Vertices[v]) return false;
             const s32 x = poly->Vertices[v]->HiresPosition[0];
             return side == 1 ? x <= nearX && x >= limit + inside : x >= nearX && x <= limit - inside;
         };
@@ -1247,6 +1254,7 @@ struct WideAccess
         for (u32 v = 0; v < n; v++)
         {
             const Vertex* p = poly->Vertices[v];
+            if (!p) return "null-vertex";
             const float invW = poly->FinalW[v] > 0 ? 1.0f / (float)poly->FinalW[v] : 1.0f;
             c[v] = { p->HiresPosition[0], p->HiresPosition[1], poly->FinalZ[v], invW,
                 p->TexCoords[0] * invW, p->TexCoords[1] * invW,
@@ -1384,6 +1392,7 @@ struct WideAccess
             const bool out = isOut(c[v].x);
             if (!out) continue;
             Vertex* p = poly->Vertices[v];
+            if (!p) continue;
             p->HiresPosition[0] = edge;
             if (!carry) continue;
             p->HiresPosition[1] = m[v].y;

@@ -316,7 +316,7 @@ public:
         const u32 size = (u32)w * h * 4;
         if (s.Mem && s.Cap < size)
         {
-            // (This slot is not the one on show, nor the one before: GPU3D_Wide.cpp.)
+            dkQueueWaitIdle(Queue);
             dkMemBlockDestroy(s.Mem);
             s.Mem = nullptr;
             s.Cap = 0;
