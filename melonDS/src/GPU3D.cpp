@@ -2540,7 +2540,7 @@ void GPU3D::BuildInterpolatedFrame() noexcept
     InterpPending = false;
     const bool deferred = InterpDeferred;
     InterpDeferred = false;
-    if (!deferred && (RawCurrent.empty() || RawPrevious.empty())) return;
+    if (!InterpolationEnabled || (!deferred && (RawCurrent.empty() || RawPrevious.empty()))) return;
 
     if (InterpVertexRAM.empty())
     {
@@ -2716,7 +2716,7 @@ void GPU3D::VBlank() noexcept
 void GPU3D::VCount215(GPU& gpu) noexcept
 {
     SsrProf::Scope prof(SsrProf::Render3D); // ssrecomp
-    if (InterpDeferred)
+    if (InterpDeferred && InterpolationEnabled)
     {
         // ssrecomp: the in-between frame of the frame flushed at VBlank (see VBlank).
         SsrProf::Scope prof(SsrProf::Interp);
@@ -2726,7 +2726,7 @@ void GPU3D::VCount215(GPU& gpu) noexcept
     // rendering a frame is about to bring up to date. (Not one drawn by the graphics chip
     // through GPU3D_WideGpu.h: its data was copied when it was sent.)
     WideWaitForTextures();
-    if (InterpPending)
+    if (InterpPending && InterpolationEnabled)
     {
         // ssrecomp: draw the in-between frame now; the real one follows on the next display frame.
         std::array<Polygon*,2048> realList = RenderPolygonRAM;

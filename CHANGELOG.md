@@ -4,6 +4,13 @@
 ## Unreleased
 
 
+## v1.0.0-beta.5 — Safe 60 FPS interpolation toggle and bounds validation
+
+- **Safe 60 FPS interpolation toggle and bounds checking**:
+  - Fixed a segmentation fault / crash when toggling 60 FPS from the pause menu mid-dialogue or during scenes without 3D camera movement by resetting pending and deferred interpolated frames (`InterpPending`, `InterpDeferred`, `InterpShowReal`) on toggle.
+  - Added strict vector bounds checks for polygon strip indices, partner mappings, and previous raw polygon lookups in `GPU3D_Wide::Replay()`.
+  - Guarded `BuildInterpolatedFrame()` and `VCount215()` in `GPU3D.cpp` against uninitialized or stale polygon pointers when interpolation is disabled.
+
 ## v1.0.0-beta.4 — Fix overworld entry, 60fps pacing and edge texture alignment
 
 - **Gen 5 overworld loading and stability fixes**:

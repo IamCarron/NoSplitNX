@@ -91,13 +91,14 @@ jobs:
           cat << EOF > build-sd/RELEASE_NOTES.md
           # NoSplitNX ${{ github.ref_name }}
 
-          This release fixes the overworld loading freeze/hang in Pokémon Black and White, resolves the crash when exiting buildings/houses, restores smooth 60 FPS pacing and clear audio, and ensures launcher theme settings persist cleanly on Nintendo Switch.
+          This release fixes a crash when toggling 60 FPS interpolation mid-game or during dialogues, clarifies frame interpolation vs FPS limiting, and includes all stability fixes from previous betas.
 
           ### Fixes & Improvements
 
+          - **Safe 60 FPS Toggle & Bounds Checks**: Fixed a fatal crash / segmentation fault when toggling 60 FPS in the pause menu mid-dialogue or during static scenes. In-between frame queues (\`InterpPending\`, \`InterpDeferred\`) are now cleanly reset upon state change, and polygon vector lookups in the wide replay pipeline include strict bounds validation.
+          - **3D Frame Interpolation vs Limiting**: Clarified that the "60 FPS" option performs DS 3D polygon interpolation (generating intermediate frames so 3D camera and geometry move at 60 FPS instead of the DS native 30 FPS). It is not an FPS limiter or cap; DS hardware logic and audio always target ~59.82 Hz.
           - **Overworld Loading & Pipeline Stability**: Fixed a freeze when loading saves or entering the overworld by keeping 3D pipeline flow intact across scene transitions.
           - **Building & House Exit Crash**: Aligned edge continuation textures to 32 bytes (8x192) and retained deko3D target allocations, preventing Tegra X1 stride faults when exiting interiors.
-          - **60 FPS Pacing & Audio**: Restored default 60 FPS 3D interpolation and 720p adaptive rendering on Nintendo Switch for Gen 5 games, eliminating frame drops and audio stutter.
           - **Launcher Theme Persistence**: Setting and theme color changes save immediately on Switch FAT32 SD cards and update in real-time.
           - **In-Console Updater**: Fully functional update path via \`SETTINGS (Y)\` -> \`CHECK FOR UPDATES\`.
 

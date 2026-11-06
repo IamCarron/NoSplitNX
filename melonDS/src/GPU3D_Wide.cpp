@@ -536,10 +536,10 @@ struct WideAccess
             // from the new one, which tore faces apart (seen where a model meets the edge
             // of the picture and some of its polygons no longer pair).
             bool keepStrip = true;
-            if (interpolate)
+            if (interpolate && pr)
             {
-                keepStrip = pr->KeepStrip[ci] != 0;
-                if (pr->Partner[ci] >= 0)
+                keepStrip = ci < pr->KeepStrip.size() && pr->KeepStrip[ci] != 0;
+                if (ci < pr->Partner.size() && pr->Partner[ci] >= 0 && (size_t)pr->Partner[ci] < rawPrev.size())
                 {
                     const RawPolygon* prev = &rawPrev[pr->Partner[ci]];
                     // Texture coordinates that all moved alike by at least the polygon's own size in

@@ -6450,6 +6450,9 @@ int main(int argc, char** argv)
             case M_FPS60:
                 cfg.fps60 = !cfg.fps60;
                 nds->GPU.GPU3D.InterpolationEnabled = cfg.fps60;
+                nds->GPU.GPU3D.InterpPending = false;
+                nds->GPU.GPU3D.InterpDeferred = false;
+                nds->GPU.GPU3D.InterpShowReal = false;
                 break;
 #if !defined(__SWITCH__) && !defined(SSR_PHONE)
             case M_FULLSCREEN:
@@ -7333,7 +7336,14 @@ int main(int argc, char** argv)
 
             emuSpeed = speed;
             // (No in-between frames while fast forwarding: only one frame in several is shown.)
-            nds->GPU.GPU3D.InterpolationEnabled = cfg.fps60 && !opt.lockstep && speed == 1;
+            const bool interpNow = cfg.fps60 && !opt.lockstep && speed == 1;
+            if (nds->GPU.GPU3D.InterpolationEnabled != interpNow)
+            {
+                nds->GPU.GPU3D.InterpolationEnabled = interpNow;
+                nds->GPU.GPU3D.InterpPending = false;
+                nds->GPU.GPU3D.InterpDeferred = false;
+                nds->GPU.GPU3D.InterpShowReal = false;
+            }
             if (ahead)
             {
                 // Room for this frame's picture: at most two waiting to be shown.
