@@ -3,6 +3,9 @@
 
 ## Unreleased
 
+
+## v1.0.0-beta.3 — Switch stability, audio and launcher theme fixes
+
 - **Nintendo Switch stability, audio and launcher theme fixes**:
   - Fixed launcher accent colors (`COLOUR` / `list_colour`) failing to persist on Nintendo Switch FAT32 filesystems and immediately updating launcher cards, tabs, and lines in real-time.
   - Fixed 30 FPS slowdown and audio stuttering on loading screens, intros, and 2D menus in Pokémon White and Black by skipping unrendered 3D passes (`skipWide`), setting Gen 5 Switch defaults to 384 lines with auto-detail, and preventing audio stretching loops when the queue is healthy.
