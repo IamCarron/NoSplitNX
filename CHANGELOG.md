@@ -4,6 +4,28 @@
 ## Unreleased
 
 
+## v1.0.0-beta.2 — Wii U / 3DS Plaza Redesign, Fast-Forward Release Crash Fix & Outdoor Performance
+
+- **Fast-Forward stability & crash resolution on Nintendo Switch**:
+  - **Fixed crash on fast-forward release**: pre-allocated all `deko3D` render targets and slot buffers to full 720p capacity at startup in `Init`, eliminated dynamic `FreeTargets()` destruction of `DkMemBlock` on background worker threads, and restricted pitch-linear rendering strictly to `1280x720` (all reduced/adaptive resolutions render safely through `FinalImage` block-linear copy).
+  - **Debounced resolution transitions**: added `wasFast` transition tracking in `main.cpp` `autoDetail` so releasing fast-forward resets frame statistics instead of falsely degrading resolution.
+  - **Pipeline buffer race condition fix**: executed `nj.KeepLater()` before `emuThread.Kick()` when `emuSpeed > 1` in `ahead` mode, preventing the emulation thread on Core 0 from overwriting framebuffers mid-copy during multi-frame batches.
+  - **Eliminated 3D line drain stall**: added `NeedsScanlineDrain()` (`false` for `WideGpuDSRenderer`), allowing Core 2 to emulate hidden fast-forward frames at full speed without stalling on line 0 waiting for the GPU.
+
+- **Outdoor overworld performance & audio stutter fixes**:
+  - **Identical 3D frame skip**: integrated `RenderFrameIdentical` check into `WideGpuDSRenderer::RenderFrame`, skipping redundant 3D scene rebuilds and GPU submit/fetch passes on duplicate 30 FPS overworld frames.
+  - **Fast-forward low-resolution GPU rendering (`360p`)**: enabled `ffLowRes` during fast-forward for hardware rendering, cutting fragment shading and SDL texture upload overhead by 75% in heavy outdoor areas.
+  - **Adaptive audio stretching in fast-forward**: kept `AudioQueueSlowdown` active when `speed > 1`, preventing SDL audio queue underruns and crackling music when outdoor frame times vary.
+
+- **Nintendo 3DS / DSi / Wii U Plaza UI Redesign & Switch Layout Fixes**:
+  - **Dynamic screen scaling**: carousel cards dynamically scale up to fill the 1280x720 screen without vast empty spaces (cards expand to `348x324` px when 1–3 games are installed).
+  - **Physical molded cartridge cards**: 32x32 ROM icons (including Pokémon Black/White's native checkerboard icon) are framed inside authentic printed sticker frames with white/silver borders, colored console top bands (`NINTENDO DS`, `GAME BOY`, `NINTENDO 3DS`), molded plastic shells, and gold PCB contact teeth.
+  - **Nintendo 3DS / DSi Upper Showcase Screen**: added stereo speaker grilles, 3D floating cartridge showcase, metadata badges, animated sound wave equalizer bars, and responsive `A: Jugar` prompt.
+  - **Wii U / 3DS Plaza ambiance**: animated 3D translucent floating plaza cubes and glowing cyan 3DS corner selection brackets around focused cards.
+  - **Header widget overlap fix**: removed legacy `[Y] AJUSTES` button in `switch_platform.cpp` that overlapped the top-right clock and battery widget.
+  - **In-game pause menu polish**: restored `"NoSplitNX"` dual-screen header emblem and localized footer actions (`"A: Elegir   B: Volver"`).
+
+
 ## v1.0.0-beta.1 — Clean Baseline: Switch Fast-Forward Fix, Indoor Void, Weather Caching & Tico-Style Launcher
 
 - **Fast-forward stability and 3D pipeline synchronisation on Nintendo Switch**:

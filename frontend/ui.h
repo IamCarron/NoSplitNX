@@ -731,8 +731,9 @@ struct Menu
         }
         if (hasTitle)
         {
+            const std::string niceTitle = (title == "NoSplitNX") ? title : ToNiceTitle(UiLang::Tr(title));
             const int titleFontH = std::max(14, 8 * scale);
-            const int titleW = c.ModernTextWidth(title, titleFontH);
+            const int titleW = c.ModernTextWidth(niceTitle, titleFontH);
             boxW = std::max(boxW, titleW + 40 * scale);
         }
         if (boxW > c.w - 8) boxW = c.w - 8;
@@ -748,14 +749,14 @@ struct Menu
         }
         const int noteH = noteLines.empty() ? 0 : (int)noteLines.size() * (noteFontH + 3 * scale) + 8 * scale;
         // (As many rows as fit at the smallest spacing; the rest scroll into view.)
-        const int fit = std::max(1, (c.h - 4 - 6 * scale - (noteH ? noteH + 3 * scale : 0)) / ((UiLang::Tall() ? 14 : 10) * scale) - (hasTitle ? 3 : 2));
+        const int fit = std::max(1, (c.h - 4 - 6 * scale - (noteH ? noteH + 3 * scale : 0)) / ((UiLang::Tall() ? 14 : 10) * scale) - (hasTitle ? 2 : 1));
         const int shown = std::min((int)items.size(), fit);
         if (selected < scroll) scroll = selected;
         if (selected >= scroll + shown) scroll = selected - shown + 1;
         scroll = std::max(0, std::min(scroll, (int)items.size() - shown));
         // (The note's strip sits under the box, so the box leaves room for it: at 800x480 it was cut off.)
         const int availH = c.h - 4 - (noteH ? noteH + 3 * scale : 0);
-        const int rows = shown + (hasTitle ? 3 : 2);
+        const int rows = shown + (hasTitle ? 2 : 1);
         if (lineH * rows + 6 * scale > availH) lineH = std::max(itemFontH + 4 * scale, (availH - 6 * scale) / rows);
         int boxH = lineH * rows + 6 * scale;
         int bx = (c.w - boxW) / 2, by = std::max(2, (c.h - boxH - noteH) / 2);
@@ -781,12 +782,13 @@ struct Menu
         const_cast<Canvas&>(c).FillGlass(bx, by, boxW, boxH, rad, 0xF8151D2C, 0xF80B0F18, 0xFF28364C, 1);
         if (hasTitle)
         {
+            const std::string niceTitle = (title == "NoSplitNX") ? title : ToNiceTitle(UiLang::Tr(title));
             const int hdrH = lineH + 3 * scale;
             c.FillGradV(bx + scale, by + scale, boxW - 2 * scale, hdrH, headerCol + 0x0006080C, headerCol, std::max(1, rad - scale));
             c.Fill(bx + 6 * scale, by + hdrH, boxW - 12 * scale, std::max(1, scale / 2), 0xFF26354A);
             const int sw = 7 * scale, sh = 4 * scale, gap = scale;
             const int titleFontH = std::max(14, 8 * scale);
-            const int titleW = c.ModernTextWidth(title, titleFontH);
+            const int titleW = c.ModernTextWidth(niceTitle, titleFontH);
             const int contentW = sw + 5 * scale + titleW;
             const int startX = bx + (boxW - contentW) / 2;
             const int logoX = startX, logoY = by + scale + (hdrH - (sh * 2 + gap)) / 2;
@@ -794,7 +796,7 @@ struct Menu
             c.FillBlend(logoX + scale, logoY + scale, sw - 2 * scale, sh - 2 * scale, 0x33FFFFFF);
             c.OutlineRound(logoX, logoY + sh + gap, sw, sh, scale, 1, 0xFFFFFFFF);
             c.FillBlend(logoX + scale, logoY + sh + gap + scale, sw - 2 * scale, sh - 2 * scale, 0x66FFFFFF);
-            c.ModernText(startX + sw + 5 * scale, by + scale + (hdrH - titleFontH) / 2, title, titleFontH, 0xFFFFFFFF);
+            c.ModernText(startX + sw + 5 * scale, by + scale + (hdrH - titleFontH) / 2, niceTitle, titleFontH, 0xFFFFFFFF);
         }
 
         int y = by + (hasTitle ? lineH : 0) + 5 * scale;
@@ -845,9 +847,10 @@ struct Menu
         }
         if (!hint.empty()) c.Fill(bx + 6 * scale, y + scale, boxW - 12 * scale, std::max(1, scale / 2), 0xFF26354A);
         const int hintFontH = std::max(11, 5 * scale);
-        const std::string niceHint = ToNiceTitle(hint);
+        const std::string niceHint = ToNiceTitle(UiLang::Tr(hint));
         const int hw = c.ModernTextWidth(niceHint, hintFontH);
-        c.ModernText(bx + (boxW - hw) / 2, y + 4 * scale, niceHint, hintFontH, hintCol);
+        const int footerAreaH = (by + boxH) - (y + scale);
+        c.ModernText(bx + (boxW - hw) / 2, y + scale + std::max(2 * scale, (footerAreaH - hintFontH) / 2), niceHint, hintFontH, hintCol);
         if (!noteLines.empty())
         {
             const int ny = by + boxH + 3 * scale;

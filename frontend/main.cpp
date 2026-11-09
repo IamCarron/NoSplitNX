@@ -6737,6 +6737,7 @@ int main(int argc, char** argv)
                 // the 16.67 ms VSync deadline without dropping to 30/37/40 FPS.
                 static uint64_t lastBusy = 0, window = 0;
                 static int windowFrames = 0;
+                static bool wasFast = false;
                 const uint64_t busy = melonDS::WideGpuBusyNs.load();
                 window += busy >= lastBusy ? busy - lastBusy : 0;
                 lastBusy = busy;
@@ -6744,10 +6745,11 @@ int main(int argc, char** argv)
                 const uint64_t waited = ns >= lastWideNs ? ns - lastWideNs : ns;
                 lastWideNs = ns;
                 const int floorLines = std::min(360, cfg.wideLines);
-                if (speed > 1)
+                if (speed > 1 || wasFast)
                 {
                     window = windowFrames = 0;
                     slowFrames = 0;
+                    wasFast = speed > 1;
                 }
                 else
                 {
@@ -6810,11 +6812,11 @@ int main(int argc, char** argv)
                 }
             }
             WideLinesNow = std::min(adaptLines, cfg.wideLines);
-            // While fast forwarding on CPU rendering, at most 360 lines with FAST FORWARD LOW RES
-            // on. With deko3D hardware rendering (WideGpuCurrent), keep the target resolution
-            // steady so toggling fast-forward or direction debounce never destroys and reallocates
-            // GPU render targets mid-gameplay (intermediate frames are already skipped).
-            if (speed > 1 && !opt.headless && !melonDS::WideGpuCurrent && cfg.ffLowRes)
+            // While fast forwarding, at most 360 lines with FAST FORWARD LOW RES on (4x fewer
+            // pixels than 720p, cutting GPU shading and SDL texture upload time by ~75% so
+            // outdoor overworld fast-forward runs smoothly; deko3D targets are pre-allocated at
+            // 1280x720 so changing WxH never reallocates GPU memory).
+            if (speed > 1 && !opt.headless && cfg.ffLowRes)
                 WideLinesNow = std::min(WideLinesNow, 360);
 #ifdef __SWITCH__
             // In handheld mode the console's screen is 1280x720: drawing more than 720 lines is
@@ -6825,13 +6827,6 @@ int main(int argc, char** argv)
             {
                 ww = ww * WideLinesNow / wh;
                 wh = WideLinesNow;
-#ifdef SSR_DEKO3D
-                // Keep width a multiple of 8 and height a multiple of 16 so deko3D's direct
-                // pitch-linear rendering ((W * 4) % 32 == 0 && H % 16 == 0) stays active at
-                // every adaptive resolution without an extra full-screen image-to-buffer copy.
-                wh = std::max(192, (wh + 8) & ~15);
-                ww = std::max(256, (ww + 4) & ~7);
-#endif
             }
             // Black 2: the renderer keeps going for 5 seconds after a wide layout and through a
             // whole battle (its party and Bag pages are not wide), so that coming back to the
@@ -7354,7 +7349,6 @@ int main(int argc, char** argv)
                 nds->GPU.GPU3D.InterpolationEnabled = interpNow;
                 nds->GPU.GPU3D.InterpPending = false;
                 nds->GPU.GPU3D.InterpDeferred = false;
-                nds->GPU.GPU3D.InterpShowReal = false;
                 nds->GPU.GPU3D.RawCurrent.clear();
                 nds->GPU.GPU3D.RawPrevious.clear();
             }
@@ -7371,11 +7365,26 @@ int main(int argc, char** argv)
                             else presentDue(true);
                         }
                     }
+                // When emuSpeed > 1, runFrames() emulates multiple DS frames in one Kick(),
+                // which swaps both framebuffers and advances the widescreen ring buffer more
+                // than once. Copy the waiting picture's buffers BEFORE kicking emuThread when
+                // fast-forwarding so emuThread never overwrites them mid-copy.
+                if (aheadCount && emuSpeed > 1)
+                {
+                    DrawJob& nj = aheadJobs[(aheadHead + aheadCount - 1) % 3];
+                    nj.KeepLater();
+                    if (nj.battleRender)
+                    {
+                        BattleRender(battleWide, nj.wide, 0);
+                        nj.battleRender = false;
+                        nj.KeepWide();
+                    }
+                }
                 emuThread.Kick();
                 // The newest waiting picture's widened battle picture, from what its frame
                 // grabbed, made now that the next frame runs (and before that grabs again),
                 // into the picture's own memory.
-                if (aheadCount)
+                if (aheadCount && emuSpeed <= 1)
                 {
                     DrawJob& nj = aheadJobs[(aheadHead + aheadCount - 1) % 3];
                     nj.KeepLater();
@@ -7872,7 +7881,7 @@ int main(int argc, char** argv)
                 if (dt < 0.25) audioSlow += (std::min(dt / frameTime, 4.0) - audioSlow) * 0.03;
             }
             audioTick = t;
-            const double slowdown = speed == 1 ? AudioQueueSlowdown(audioSlow, queued) : 1.0;
+            const double slowdown = AudioQueueSlowdown(audioSlow, queued);
             audioOut.clear();
             audioStretch.Process(audioBuf.data(), got, slowdown, audioOut);
             // VOLUME: scaled here, after the game's own mixing (silence at OFF, still queued, so
@@ -8124,7 +8133,7 @@ int main(int argc, char** argv)
             };
             std::string hint = btn(Controls::A) + ": SELECT   " + btn(Controls::B) + ": BACK";
             const int selId = menu.selected >= 0 && menu.selected < (int)menuIds.size() ? menuIds[menu.selected] : -1;
-            static const char* pageTitle[] = { "", "KEYS AND BUTTONS", "SETTINGS", "GRAPHICS", "CONTROLS", "CHEATS", "RETROACHIEVEMENTS", "SOUND", "ACHIEVEMENTS", "ACHIEVEMENT", "SEARCH CHEATS", "CHEAT DETAILS", "DATABASE INFO", "SAVE BACKUPS", "RESTORE SAVE", "LOAD STATE" };
+            static const char* pageTitle[] = { "NoSplitNX", "KEYS AND BUTTONS", "SETTINGS", "GRAPHICS", "CONTROLS", "CHEATS", "RETROACHIEVEMENTS", "SOUND", "ACHIEVEMENTS", "ACHIEVEMENT", "SEARCH CHEATS", "CHEAT DETAILS", "DATABASE INFO", "SAVE BACKUPS", "RESTORE SAVE", "LOAD STATE" };
             if (menuPage == PAGE_KEYS)
             {
                 hint = btn(Controls::A) + ": CHANGE   " + btn(Controls::B) + ": BACK";

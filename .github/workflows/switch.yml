@@ -91,24 +91,25 @@ jobs:
           cat << EOF > build-sd/RELEASE_NOTES.md
           # NoSplitNX ${{ github.ref_name }}
 
-          Clean baseline release of **NoSplitNX** for Nintendo Switch, combining all recent upstream improvements with Switch-specific 3D pipeline stability fixes, fast-forward synchronisation, indoor widescreen handling, texture upload caching, and the redesigned Tico/Horizon OS interface.
+          Nintendo Switch release of **NoSplitNX** with authentic Wii U / Nintendo 3DS / DSi Plaza redesign, resolution scaling, fast-forward stability fixes, and outdoor performance improvements.
 
-          ### Fast-Forward & 3D Pipeline Stability
-          - **Thread-safe polygon list handoff**: Protected `Cur` and `Prev` pointer updates inside `ListHelper::Start`'s mutex, resolving the race condition crash when activating fast-forward.
-          - **deko3D texture atlas reset sync**: Resynchronises `UploadedY` and `UploadedX` when the 2048x2048 texture atlas fills up and resets during fast-forward scene transitions.
-          - **Steady GPU render targets & 720p slot floor**: Keeps `deko3D` render target resolution steady across fast-forward and pre-allocates slot buffers to 720p capacity so zero-copy `Wide.Front` buffers are never destroyed while in use.
-          - **Synchronised fast-forward audio**: Compresses audio batches during fast-forward so sound effects stay aligned without accumulating lag.
+          ### Fast-Forward & Pipeline Stability Fixes
+          - **Eliminated crash on fast-forward release**: Pre-allocated all `deko3D` targets to 720p at startup in `Init`, eliminated runtime `FreeTargets()` destruction of GPU memory blocks, and restricted pitch-linear targets strictly to 1280x720.
+          - **Resolution transition debounce**: Reset frame window counters on fast-forward transitions so releasing fast-forward does not trigger a false resolution drop.
+          - **Frame-ahead race condition fix**: Synchronised `KeepLater()` copies prior to kicking `emuThread` during multi-frame fast-forward batches, preventing frame corruption.
+          - **Hardware 3D line drain elimination**: Added `NeedsScanlineDrain()` to skip line-0 GPU sync stalls during hidden fast-forward frames.
 
-          ### Switch Rendering & Performance Fixes
-          - **Weather & edge upload caching**: Unified weather particle textures into `WeatherTex[0]` and added 64-bit FNV-1a signature caching (`weatherSig`, `edgeSig`, `narrowSig`, `fillSig`) in `GpuCompositor`, avoiding redundant `SDL_UpdateTexture` transfers on unchanged frames.
-          - **Indoor void & room edges**: Expanded `MergedFillWideHoles` across the full widescreen canvas and restored `isIndoorScene()` with soft ambient side bars while keeping `sc.wide` active so `Wide.Owner` never expires indoors.
-          - **Battle cursor**: Automatically clears the right-stick touch crosshair (`cursorShownUntil = 0`) as soon as D-pad or face buttons are pressed in battle.
-          - **Core 1 / Core 2 balancing & GPU pause dimming**: Assigned `ListHelper` to Core 2 and `WideGpuSend` to Core 1, restricted Switch SDL joystick polling to player 1, and offloaded pause-menu backdrop dimming to hardware `SDL_RenderFillRect`.
+          ### Performance & Audio Fixes in Heavy Scenes
+          - **Duplicate 3D frame skip**: Implemented `RenderFrameIdentical` check in `WideGpuDSRenderer`, skipping redundant GPU passes on 30 FPS overworld frames.
+          - **Fast-forward 360p GPU rendering**: Enabled `ffLowRes` on GPU rendering, cutting pixel shading and SDL texture upload overhead by 4x during fast-forward.
+          - **Audio queue slowdown in fast-forward**: Maintained audio stretching across fast-forward to prevent SDL audio buffer starvation and sound stuttering.
 
-          ### Redesigned Tico / Horizon OS Interface
-          - **Glass Hero Showcase Banner**: Full-width frosted glass banner with colour-coded platform pill, serial badge, save status pill, and library counter (`1 / N`).
-          - **Framed Emblem Game Cards**: Recessed glass emblem wells with console-themed radial glow, save status LED indicator, and frosted card footers with game title and serial code.
-          - **Touch Drag Protection**: Scrolling the game list or settings by touch never triggers an accidental selection on release.
+          ### Wii U / Nintendo 3DS / DSi Plaza Redesign
+          - **Dynamic Screen Scaling**: Cards dynamically expand (`348x324` px for 1–3 games) to fill the 1280x720 display without awkward empty voids.
+          - **Physical Cartridge Silhouette & Sticker Frame**: 32x32 ROM icons (including Black/White's native checkerboard icon) are set in authentic silver/white printed sticker frames on molded DS/GBA/3DS cartridge shells with gold PCB pins.
+          - **Nintendo 3DS / DSi Upper Showcase**: Upper screen with stereo speaker grilles, 3D floating cartridge showcase, animated equalizer audio waves, and interactive launch dock.
+          - **Wii U / 3DS Plaza Backdrop**: Animated 3D translucent floating plaza cubes and cyan 3DS corner focus brackets.
+          - **Header Overlap & Menu Polish**: Removed overlapping `[Y] AJUSTES` button on the battery/clock widget, added `NoSplitNX` header emblem, and localized pause menu footer.
 
           ### Installation & Updating
           - **From console:** Open \`SETTINGS (Y)\` -> \`CHECK FOR UPDATES\` and press \`A\` to install.

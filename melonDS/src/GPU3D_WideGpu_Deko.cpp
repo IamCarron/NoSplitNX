@@ -289,6 +289,25 @@ public:
         buffer(Tex16Image, DkImageFormat_R16_Uint, OffTex, 256 * 1024, ImgTex16);
         buffer(Pal16Image, DkImageFormat_R16_Uint, OffPal, 64 * 1024, ImgPal16);
         buffer(AtlasImage, DkImageFormat_R32_Uint, OffAtlas, WideGpuAtlas::Capacity, ImgAtlas);
+
+        // Pre-allocate all slot buffers and render targets once on the main thread at startup
+        // so that dynamic resolution changes (e.g. fast-forward or LOWER DETAIL WHEN BUSY) never
+        // allocate or destroy GPU memory blocks concurrently on background worker threads.
+        const int initW = small ? 256 : 1280, initH = small ? 192 : 720;
+        const int numSlots = small ? 1 : 3;
+        for (int i = 0; i < numSlots; i++)
+            if (!Target(i, initW, initH))
+            {
+                info = "deko3D slot memory could not be had";
+                return false;
+            }
+        if (!MakeTargets(initW, initH))
+        {
+            info = "deko3D render targets could not be had";
+            return false;
+        }
+        if (!small)
+            for (int i = 0; i < numSlots; i++) SlotImage(i);
         return true;
     }
 
@@ -393,13 +412,12 @@ public:
         dkImageViewDefaults(&colorView, &ColorImage);
         dkImageViewDefaults(&attrView, &AttrImage);
         dkImageViewDefaults(&depthView, &DepthImage);
-        // (The final pass's target: the slot's own memory as a pitch-linear image, or an image
-        // of its own whose picture is copied there after. A pitch-linear target needs rows a
-        // multiple of 32 bytes, and a height a multiple of 16 here: at 752x423, the 423 lines
-        // LOWER DETAIL WHEN BUSY comes down to from 720, the console crashed at once; 1280x720
-        // and 1152x648 drew fine, and every size does through the copy.)
-        const bool direct = Sh->Direct && ((u32)W * 4) % DK_IMAGE_LINEAR_STRIDE_ALIGNMENT == 0 && H % 16 == 0 &&
-            SlotImage(slot);
+        // (The final pass's target: the slot's own memory as a pitch-linear image at 1280x720,
+        // or an image of its own whose picture is copied there after. A pitch-linear target on
+        // the Switch GPU is only used at the fixed 1280x720 size so that adaptive resolution
+        // changes never rebind or fault on a pitch-linear render target; every smaller size
+        // goes through FinalImage + dkCmdBufCopyImageToBuffer.)
+        const bool direct = Sh->Direct && !Small && W == 1280 && H == 720 && SlotImage(slot);
         dkImageViewDefaults(&finalView, direct ? &Slots[slot].Image : &FinalImage);
         const DkImageView* targets[2] = { &colorView, &attrView };
         dkCmdBufBindRenderTargets(Cmd, targets, 2, &depthView);
@@ -625,8 +643,21 @@ private:
         }
         if (!mem)
         {
-            mem = Block(need, DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image);
-            cap = mem ? need : 0;
+            // Size the backing block for at least 1280x720 (when !Small) so resolution changes
+            // reuse the existing DkMemBlock in-place without ever destroying/reallocating it.
+            u32 allocSize = need;
+            if (!Small && (w < 1280 || h < 720))
+            {
+                DkImageLayoutMaker maxLm = lm;
+                maxLm.dimensions[0] = (u32)std::max(w, 1280);
+                maxLm.dimensions[1] = (u32)std::max(h, 720);
+                DkImageLayout maxLayout;
+                dkImageLayoutInitialize(&maxLayout, &maxLm);
+                const u32 maxNeed = (u32)dkImageLayoutGetSize(&maxLayout) + dkImageLayoutGetAlignment(&maxLayout);
+                allocSize = std::max(allocSize, maxNeed);
+            }
+            mem = Block(allocSize, DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image);
+            cap = mem ? allocSize : 0;
         }
         if (!mem) return false;
         const DkGpuAddr base = dkMemBlockGetGpuAddr(mem);
@@ -654,7 +685,6 @@ private:
     bool MakeTargets(int w, int h)
     {
         dkQueueWaitIdle(Queue);
-        if (W != w || H != h) FreeTargets();
         const u32 render = DkImageFlags_UsageRender | (Sh->Compress ? DkImageFlags_HwCompression : 0);
         if (!Image(ColorImage, ColorMem, ColorCap, DkImageFormat_RGBA8_Unorm, w, h, render) ||
             !Image(AttrImage, AttrMem, AttrCap, DkImageFormat_RG32_Uint, w, h, render) ||

@@ -189,8 +189,17 @@ void WideGpuDSRenderer::RenderFrame(GPU& gpu)
     }
     WideGpuTexVersion = Version;
 
-    if (Pending) Backend->Fetch(0); // (an earlier picture nobody asked for)
-    Pending = false;
+    if (Pending)
+    {
+        Backend->Fetch(0); // (an earlier picture nobody asked for)
+        Pending = false;
+        Convert();
+    }
+    if (!(textureChanged || texPalChanged) && gpu.GPU3D.RenderFrameIdentical && HaveLines)
+    {
+        Fetched = true;
+        return;
+    }
     Pixels = Backend->Target(0, 256, 192);
     Fetched = false;
     // The list itself is copied (the in-between frame's is lent to RenderPolygonRAM for this
@@ -222,6 +231,7 @@ void WideGpuDSRenderer::Convert()
         const u32 v = Pixels[i];
         Lines[i] = ((v >> 18) & 0x3F) | (((v >> 10) & 0x3F) << 8) | (((v >> 2) & 0x3F) << 16) | (((v >> 27) & 0x1F) << 24);
     }
+    HaveLines = true;
 }
 
 u32* WideGpuDSRenderer::GetLine(int line)

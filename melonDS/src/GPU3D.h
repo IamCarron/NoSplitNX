@@ -401,6 +401,7 @@ public:
     virtual void RenderFrame(GPU& gpu) = 0;
     virtual void RestartFrame(GPU& gpu) {};
     virtual u32* GetLine(int line) = 0;
+    virtual bool NeedsScanlineDrain() const { return true; }
     virtual void Blit(const GPU& gpu) {};
 
     virtual void SetupAccelFrame() {}

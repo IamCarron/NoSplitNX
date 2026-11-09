@@ -897,8 +897,8 @@ void GPU::StartHBlank(u32 line) noexcept
         SsrProf::Scope prof(SsrProf::Draw2D); // ssrecomp
         // ssrecomp: a frame nobody sees (rc_frame_hidden), when the 2D engines draw only for the screen.
         const bool skip2D = rc_frame_hidden && !(GPU2D_A.CaptureCnt & (1u << 31)) && ((GPU2D_A.DispCnt >> 16) & 3) != 3;
-        // (The 3D lines are still taken: the 3D thread counts them out frame after frame.)
-        if (line < 192 && skip2D) GPU3D.GetLine(line);
+        // (The 3D lines are still taken when the software 3D thread counts them out frame after frame.)
+        if (line < 192 && skip2D && GPU3D.GetCurrentRenderer().NeedsScanlineDrain()) GPU3D.GetLine(line);
         if (line < 192 && !skip2D)
         {
             GPU2D_Renderer->DrawScanline(line, &GPU2D_A);

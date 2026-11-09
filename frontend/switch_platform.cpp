@@ -398,9 +398,13 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                 tapY = touchY;
             }
         }
-        const int bandH = 22 * std::max(1, canvas.h / 240);
-        const bool tapSettings = tapY >= 0 && tapY < bandH && tapX > canvas.w * 3 / 4;
-        const bool tapBack = tapY >= 0 && tapY < bandH && tapX < canvas.w / 4;
+        const int s = std::max(1, canvas.h / 240);
+        const int bandH = 22 * s;
+        const int dockY = canvas.h - 18 * s;
+        const bool tapSettings = (tapY >= 0 && tapY < bandH && tapX > canvas.w * 3 / 4) ||
+                                 (tapY >= dockY && tapX >= canvas.w / 4 && tapX < canvas.w / 2);
+        const bool tapBack = (tapY >= 0 && tapY < bandH && tapX < canvas.w / 4) ||
+                             (tapY >= dockY && tapX >= canvas.w / 2);
         // The arrows (or a stick) move through the grid, and keep moving while held.
         const bool up = now & HidNpadButton_AnyUp, dn = now & HidNpadButton_AnyDown;
         const bool lf = now & HidNpadButton_AnyLeft, rt = now & HidNpadButton_AnyRight;
@@ -529,13 +533,8 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             }
             else if (onTabs)
             {
-                // Left and right: the tabs; down (or A): into the tab's games; up: SETTINGS.
+                // Left and right: the tabs; down (or A): into the tab's games.
                 if (dir == 1 || dir == 2) setTab(dir == 2 ? 1 : -1);
-                else if (dir == 3)
-                {
-                    onTabs = false;
-                    onSettings = true;
-                }
                 else if ((dir == 4 || aDown) && Launcher::FirstIn(view()) >= 0)
                 {
                     onTabs = false;
@@ -597,30 +596,6 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             updateMenu.Draw(canvas, Updater::PopupTitle(), "A: CHOOSE    B: LATER",
                             Updater::PopupNote(Updater::Get().canInstall));
 #endif
-        {
-            // Title band buttons rendered with tactile button badges and frosted glass.
-            const int s = std::max(1, canvas.h / 240);
-            const Launcher::Theme& th = theme;
-            auto button = [&](int x, const char* badge, const char* label, bool on) {
-                const int bh = 11 * s;
-                const int textW = Canvas::TextWidth(label, s);
-                const int bw = bh + textW + 12 * s;
-                const int by = 5 * s;
-                const uint32_t borderCol = on ? th.title : 0xFF35415A;
-                if (on) canvas.GlowRound(x, by, bw, bh, 3 * s, 2 * s, th.frame);
-                canvas.FillGlass(x, by, bw, bh, 3 * s, on ? th.frame : 0xFF242C3E, on ? (th.frame & 0x00FFFFFF) | 0xDD000000 : 0xFF181E2B, borderCol, 1);
-                canvas.DrawButtonBadge(x + 2 * s, by, badge, s, on ? th.title : 0xFF333E56, on ? th.frame : 0xFFFFFFFF, 0);
-                canvas.Text(x + bh + 5 * s, by + 2 * s, label, s, on ? th.title : th.hint);
-            };
-            if (guide && !keysOpen)
-                button(12 * s, "B", "BACK", false);
-            else if (!guide)
-            {
-                const int bh = 11 * s;
-                const int bw = bh + Canvas::TextWidth("SETTINGS", s) + 12 * s;
-                button(canvas.w - bw - 12 * s, "Y", "SETTINGS", onSettings);
-            }
-        }
         u32 stride;
         u32* out = (u32*)framebufferBegin(&fb, &stride);
         for (int y = 0; y < 720; y++)
