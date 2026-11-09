@@ -21,8 +21,11 @@
 #include "gamecode.h"
 #include <sys/stat.h>
 
+#include <chrono>
+#include <cmath>
 #include "ui.h"
 #include "switch_platform.h"
+#include "launcher_font.h"
 // (JPEG and PNG pictures for the list: the program that draws it defines STB_IMAGE_IMPLEMENTATION
 // with STBI_ONLY_JPEG and STBI_ONLY_PNG before including this, in one file.)
 #include "thirdparty/stb_image.h"
@@ -30,10 +33,21 @@
 namespace Launcher
 {
 
-// Keep the established launcher font while the replacement design is unfinished.
-inline void ModernText(Canvas& c, int x, int y, const std::string& text, int scale, uint32_t colour)
+inline float AnimTime()
 {
-    c.Text(x, y, text, scale, colour);
+    static const auto start = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    return std::chrono::duration<float>(now - start).count();
+}
+
+inline int ModernTextWidth(const std::string& text, int targetH)
+{
+    return Canvas::ModernTextWidth(text, targetH);
+}
+
+inline void ModernText(Canvas& c, int x, int y, const std::string& text, int targetH, uint32_t colour, bool shadow = false)
+{
+    c.ModernText(x, y, text, targetH, colour, shadow);
 }
 
 // The consoles the list has games of, in the order its sections and tabs come in.
@@ -177,13 +191,7 @@ inline bool IsCustomHackTitle(const std::string& name)
 // as they are spelt).
 inline std::string TitleCase(const std::string& name)
 {
-    std::string out;
-    bool start = true;
-    for (char c : name)
-    {
-        out += start ? (char)toupper((unsigned char)c) : (char)tolower((unsigned char)c);
-        start = c == ' ';
-    }
+    std::string out = ToNiceTitle(name);
     for (const char* word : { "Firered", "Leafgreen" })
     {
         const size_t at = out.find(word);
@@ -528,9 +536,9 @@ inline void Sort(std::vector<Game>& games)
 // The list's colours (ARGB): Horizon-inspired dark slate with white text and accent details.
 struct Theme
 {
-    uint32_t bg = 0xFF0D1017, band = 0xFF151924, bandLine = 0xFFE0242C, title = 0xFFFFFFFF;
-    uint32_t tile = 0xFF1A202E, frame = 0xFFE0242C;
-    uint32_t name = 0xFFC8D0E0, nameSel = 0xFFFFFFFF, sub = 0xFF7E8A9E, subSel = 0xFFE0242C, bad = 0xFFE0242C;
+    uint32_t bg = 0xFF0D1017, band = 0xFF151924, bandLine = 0xFF0090FF, title = 0xFFFFFFFF;
+    uint32_t tile = 0xFF1A202E, frame = 0xFF0090FF;
+    uint32_t name = 0xFFC8D0E0, nameSel = 0xFFFFFFFF, sub = 0xFF7E8A9E, subSel = 0xFF0090FF, bad = 0xFFE0242C;
     uint32_t hint = 0xFF94A0B8;
     int bandLineH = 1;       // the band's line, in font pixels
     int frameW = 2;          // the chosen game's frame, in font pixels
@@ -679,8 +687,8 @@ inline void LoadLook(const std::string& cfg, const std::string& folder, Theme& t
 // Draw the iconic Nintendo DS dual-screen logo [ ⊟ ]
 inline void DrawDsLogo(Canvas& c, int x, int y, int s, uint32_t color)
 {
-    const int sw = 10 * s, sh = 6 * s;
-    const int gap = 2 * s;
+    const int sw = 8 * s, sh = 4 * s + 1;
+    const int gap = std::max(1, s + 1);
     c.OutlineRound(x, y, sw, sh, s, 1, color);
     c.FillBlend(x + s, y + s, sw - 2 * s, sh - 2 * s, (color & 0x00FFFFFF) | 0x33000000);
     c.OutlineRound(x, y + sh + gap, sw, sh, s, 1, color);
@@ -712,141 +720,165 @@ inline void DrawDsMesh(Canvas& c, int s)
     }
 }
 
-// Draw the Nintendo DSi Upper Display Game Showcase Card
-inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& g, int s, uint32_t accent)
+// Shorten a game title for compact card footers (e.g. "Pokémon Edición Negra" -> "Edición Negra")
+inline std::string ShortCardTitle(const std::string& rawName)
 {
-    c.ShadowRound(x, y, w, h, 4 * s, s, 70);
-    c.FillGlass(x, y, w, h, 4 * s, 0xEE1E2638, 0xEE121824, 0xFF2F3C54, 1);
-    c.FillRound(x + 3 * s, y + 4 * s, 3 * s, h - 8 * s, s, accent);
-
-    const int wellSz = h - 10 * s;
-    const int wellX = x + 10 * s, wellY = y + 5 * s;
-    c.FillRound(wellX, wellY, wellSz, wellSz, 3 * s, 0xFF0E131C);
-    c.OutlineRound(wellX, wellY, wellSz, wellSz, 3 * s, 1, 0xFF2A364C);
-
-    if (g.hasIcon)
+    std::string nice = TitleCase(rawName);
+    for (const char* pfx : { "Pokémon ", "Pokemon " })
     {
-        const int iconScale = std::max(1, (wellSz - 4 * s) / 32);
-        const int iconSz = 32 * iconScale;
-        const int ix = wellX + (wellSz - iconSz) / 2;
-        const int iy = wellY + (wellSz - iconSz) / 2;
-        for (int py = 0; py < 32; py++)
-            for (int px = 0; px < 32; px++)
-            {
-                const uint32_t p = g.icon[py * 32 + px];
-                if ((p >> 24) >= 0x40)
-                    c.Fill(ix + px * iconScale, iy + py * iconScale, iconScale, iconScale, p | 0xFF000000u);
-            }
+        const size_t n = strlen(pfx);
+        if (nice.size() > n + 2 && !nice.compare(0, n, pfx))
+        {
+            nice = nice.substr(n);
+            break;
+        }
     }
-    else
-    {
-        const int cartW = wellSz * 75 / 100, cartH = wellSz * 80 / 100;
-        const int cx = wellX + (wellSz - cartW) / 2, cy = wellY + (wellSz - cartH) / 2;
-        c.FillRound(cx, cy, cartW, cartH, 2 * s, 0xFF262C38);
-        c.OutlineRound(cx, cy, cartW, cartH, 2 * s, 1, 0xFF455064);
-        c.FillRound(cx + s, cy + s, cartW - 2 * s, 3 * s, 1, (g.platform == GBA ? 0xFF4D1D88 : 0xFF143A70));
-    }
-
-    const int textX = wellX + wellSz + 8 * s;
-    std::string title = g.name;
-    int ts = s + 1;
-    while (ts > 1 && Canvas::TextWidth(title, ts) > w - wellSz - 160 * s) --ts;
-    c.Text(textX, y + 6 * s, title, ts, 0xFFFFFFFF);
-
-    const std::string plat = (g.platform == GBA ? "GAME BOY ADVANCE" : "NINTENDO DS");
-    const std::string serial = (g.platform == GBA ? "AGB-" : "NTR-") + g.code;
-    const std::string meta = plat + "  -  " + serial;
-    c.Text(textX, y + 6 * s + 9 * ts, meta, s, 0xFF8FA0B8);
-
-    const std::string status = g.comingSoon ? UiLang::Tr("COMING SOON") : !g.known ? UiLang::Tr("NOT PLAYABLE") : g.hasSave ? UiLang::Tr("SAVE FOUND") : UiLang::Tr("NEW GAME");
-    const uint32_t statusCol = !g.known && !g.comingSoon ? 0xFFFF453A : g.comingSoon ? 0xFFA855F7 : g.hasSave ? 0xFF00E676 : 0xFFFFB020;
-    const uint32_t statusBg = !g.known && !g.comingSoon ? 0xDD3B141C : g.comingSoon ? 0xDD251A38 : g.hasSave ? 0xDD123624 : 0xDD3A2B12;
-    const int sw = Canvas::TextWidth(status, s) + 16 * s;
-    const int sh = 12 * s;
-    const int sx = x + w - sw - 12 * s, sy = y + (h - sh) / 2;
-    c.FillRound(sx, sy, sw, sh, 3 * s, statusBg);
-    c.OutlineRound(sx, sy, sw, sh, 3 * s, 1, (statusCol & 0x00FFFFFF) | 0x88000000);
-    c.FillRound(sx + 5 * s, sy + 4 * s, 4 * s, 4 * s, 2 * s, statusCol);
-    c.Text(sx + 12 * s, sy + 3 * s, status, s, statusCol);
+    return nice;
 }
 
-// Renders a tactile physical cartridge (Nintendo DS or GBA) when high-res box art is not present.
+// Renders the modern Nintendo Switch / Tico Glass Hero Title & Metadata Showcase Banner
+inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& g, int s, uint32_t accent, int gameIdx = 0, int totalGames = 0)
+{
+    const bool isGba = (g.platform == GBA);
+    const bool is3ds = (g.platform == N3DS);
+    const uint32_t platAccent = isGba ? 0xFFA855F7 : is3ds ? 0xFFF43F5E : (accent ? accent : 0xFF00C3FF);
+
+    // Subtle frosted glass showcase container with glowing left accent bar
+    const int rad = 4 * s;
+    c.ShadowRound(x, y, w, h, rad, s, 70);
+    c.FillGlass(x, y, w, h, rad, 0xCC161F30, 0xCC0D131F, 0xFF26344B, 1);
+    c.FillRound(x + 2 * s, y + 3 * s, std::max(3, s + 1), h - 6 * s, std::max(1, s / 2), platAccent);
+
+    const int contentX = x + 8 * s;
+    std::string title = TitleCase(g.name);
+    int titleH = std::max(16, 24 * s / 3);
+    while (titleH > 15 && ModernTextWidth(title, titleH) > w - 70 * s) --titleH;
+
+    const int pillH = 8 * s;
+    const int metaFontH = std::max(10, 12 * s / 3);
+    const int gap = 3 * s;
+    const int totalTextH = titleH + gap + pillH;
+    const int startY = y + (h - totalTextH) / 2;
+
+    // Line 1: Bold pure white game title with soft shadow
+    ModernText(c, contentX, startY, title, titleH, 0xFFFFFFFF, true);
+
+    // Line 2: Structured Metadata Pill Badges (Platform  •  Serial  •  Save Status)
+    int curX = contentX;
+    const int pillY = startY + titleH + gap;
+
+    auto drawPill = [&](const std::string& label, uint32_t bgCol, uint32_t borderCol, uint32_t textCol) {
+        const int tw = ModernTextWidth(label, metaFontH);
+        const int pw = tw + 6 * s;
+        c.FillRound(curX, pillY, pw, pillH, 2 * s, bgCol);
+        c.OutlineRound(curX, pillY, pw, pillH, 2 * s, 1, borderCol);
+        ModernText(c, curX + 3 * s, pillY + (pillH - metaFontH) / 2, label, metaFontH, textCol);
+        curX += pw + 3 * s;
+    };
+
+    const std::string plat = (isGba ? "Game Boy Advance" : is3ds ? "Nintendo 3DS" : "Nintendo DS");
+    const uint32_t platBg = isGba ? 0x38A855F7 : is3ds ? 0x38F43F5E : 0x3800C3FF;
+    const uint32_t platBd = isGba ? 0x80A855F7 : is3ds ? 0x80F43F5E : 0x8000C3FF;
+    const uint32_t platFg = isGba ? 0xFFD8B4FE : is3ds ? 0xFFFDA4AF : 0xFF7DD3FC;
+    drawPill(plat, platBg, platBd, platFg);
+
+    const std::string serial = (isGba ? "AGB-" : is3ds ? "CTR-" : "NTR-") + g.code;
+    drawPill(serial, 0x441E293B, 0x88334155, 0xFFCBD5E1);
+
+    const std::string rawStatus = g.comingSoon ? UiLang::Tr("COMING SOON") : !g.known ? UiLang::Tr("NOT PLAYABLE") : g.hasSave ? UiLang::Tr("SAVE FOUND") : UiLang::Tr("NEW GAME");
+    const std::string status = std::string(1, (char)7) + " " + ToNiceTitle(rawStatus);
+    const uint32_t statusFg = !g.known && !g.comingSoon ? 0xFFFF6B6B : g.comingSoon ? 0xFFD8B4FE : g.hasSave ? 0xFF34D399 : 0xFFFBBF24;
+    const uint32_t statusBg = !g.known && !g.comingSoon ? 0x33FF453A : g.comingSoon ? 0x33A855F7 : g.hasSave ? 0x3300E676 : 0x33FFB020;
+    const uint32_t statusBd = !g.known && !g.comingSoon ? 0x80FF453A : g.comingSoon ? 0x80A855F7 : g.hasSave ? 0x8000E676 : 0x80FFB020;
+    drawPill(status, statusBg, statusBd, statusFg);
+
+    // Right side of Hero Banner: Library Counter Badge ("1 / 6")
+    if (totalGames > 0 && gameIdx >= 0)
+    {
+        char countBuf[32];
+        snprintf(countBuf, sizeof(countBuf), "%d / %d", gameIdx + 1, totalGames);
+        const std::string countStr = countBuf;
+        const int countFontH = std::max(12, 14 * s / 3);
+        const int cw = ModernTextWidth(countStr, countFontH) + 10 * s;
+        const int ch = 11 * s;
+        const int cx = x + w - cw - 5 * s;
+        const int cy = y + (h - ch) / 2;
+        c.FillRound(cx, cy, cw, ch, 3 * s, 0x661E293B);
+        c.OutlineRound(cx, cy, cw, ch, 3 * s, 1, 0xFF334155);
+        ModernText(c, cx + 5 * s, cy + (ch - countFontH) / 2, countStr, countFontH, 0xFFE2E8F0, true);
+    }
+}
+
+// Renders a sleek Nintendo DS / GBA / 3DS Software Tile with framed emblem and card title footer
 inline void DrawCartridgeCase(Canvas& c, int x, int y, int sz, int platform, const uint32_t* icon32,
-                              const std::string& code, const std::string& name, int s)
+                              const std::string& code, const std::string& name, int s, bool hasSave = false, bool sel = false)
 {
     const bool isGba = (platform == GBA);
-    const int cw = isGba ? sz * 92 / 100 : sz * 86 / 100;
-    const int ch = isGba ? sz * 78 / 100 : sz * 88 / 100;
-    const int cx = x + (sz - cw) / 2;
-    const int cy = y + (sz - ch) / 2;
-    const int rad = std::max(2, 4 * s);
+    const bool is3ds = (platform == N3DS);
 
-    c.ShadowRound(cx, cy, cw, ch, rad, s, std::max(1, s / 2));
+    // Rich dark gradient surface tailored to console family
+    const uint32_t gradTop = isGba ? (sel ? 0xFF2B1C44 : 0xFF201534) : is3ds ? (sel ? 0xFF381928 : 0xFF2A121E) : (sel ? 0xFF1F2D46 : 0xFF162032);
+    const uint32_t gradBot = isGba ? 0xFF10091B : is3ds ? 0xFF14070D : 0xFF0C121E;
+    const int rad = std::max(4, 5 * s);
+    c.FillGradV(x, y, sz, sz, gradTop, gradBot, rad);
+    c.OutlineRound(x, y, sz, sz, rad, 1, sel ? 0xFF3B5278 : 0xFF26354C);
 
-    const uint32_t shellTop = isGba ? 0xFF2A2F3B : 0xFF242730;
-    const uint32_t shellBot = isGba ? 0xFF191C24 : 0xFF15181F;
-    const uint32_t shellBorder = isGba ? 0xFF3C4354 : 0xFF363B48;
-    c.FillGlass(cx, cy, cw, ch, rad, shellTop, shellBot, shellBorder, 1);
+    // Subtle upper specular reflection band
+    c.FillBlend(x + 2 * s, y + 2 * s, sz - 4 * s, sz / 4, 0x09FFFFFF);
 
-    if (isGba)
+    // Platform pill badge in top-left
+    const char* badge = isGba ? "GBA" : is3ds ? "3DS" : "DS";
+    const uint32_t badgeBg = isGba ? 0x48A855F7 : is3ds ? 0x48F43F5E : 0x4800C3FF;
+    const uint32_t badgeBorder = isGba ? 0x99A855F7 : is3ds ? 0x99F43F5E : 0x9900C3FF;
+    const uint32_t badgeCol = isGba ? 0xFFD8B4FE : is3ds ? 0xFFFDA4AF : 0xFF38BDF8;
+    const int badgeH = 9 * s;
+    const int badgeFontH = std::max(10, 11 * s / 3);
+    const int badgeW = ModernTextWidth(badge, badgeFontH) + 6 * s;
+    const int bx = x + 4 * s, by = y + 4 * s;
+    c.FillRound(bx, by, badgeW, badgeH, 2 * s, badgeBg);
+    c.OutlineRound(bx, by, badgeW, badgeH, 2 * s, 1, badgeBorder);
+    ModernText(c, bx + 3 * s, by + (badgeH - badgeFontH) / 2, badge, badgeFontH, badgeCol);
+
+    // Save status LED dot in top-right corner when a save file exists
+    if (hasSave)
     {
-        const int lipW = cw * 70 / 100;
-        const int lipH = std::max(2, 3 * s);
-        const int lipX = cx + (cw - lipW) / 2;
-        c.FillRound(lipX, cy + s, lipW, lipH, s, 0x55000000);
-        c.OutlineRound(lipX, cy + s, lipW, lipH, s, 1, 0x44FFFFFF);
-    }
-    else
-    {
-        const int notchW = std::max(2, 4 * s);
-        const int notchH = std::max(3, 6 * s);
-        c.Fill(cx + cw - notchW, cy, notchW, notchH, 0xFF11141A);
-        const int arrowW = 6 * s, arrowH = 2 * s;
-        c.FillRound(cx + (cw - arrowW) / 2, cy + ch - arrowH - s, arrowW, arrowH, 1, 0x44000000);
-    }
-
-    const int stickerPad = std::max(3, 4 * s);
-    const int sx = cx + stickerPad;
-    const int sy = cy + (isGba ? 6 * s : 4 * s);
-    const int sw = cw - 2 * stickerPad;
-    const int sh = ch - (isGba ? 9 * s : 8 * s);
-    const int sRad = std::max(2, 2 * s);
-
-    const uint32_t labelTop = isGba ? 0xFF261D3A : 0xFFE2E6EC;
-    const uint32_t labelBot = isGba ? 0xFF140E20 : 0xFFCBD2DA;
-    c.FillGradV(sx, sy, sw, sh, labelTop, labelBot, sRad);
-    c.OutlineRound(sx, sy, sw, sh, sRad, 1, isGba ? 0xFF4A3870 : 0xFF9CA7B4);
-
-    const int stripH = std::max(3, 5 * s);
-    if (isGba)
-    {
-        c.FillRound(sx + s, sy + s, sw - 2 * s, stripH, 1, 0xFF4D1D88);
-        const int bs = std::max(1, s - 1);
-        c.Text(sx + 3 * s, sy + s + (stripH - 7 * bs) / 2, "GAME BOY ADVANCE", bs, 0xFFE6D6FF);
-    }
-    else
-    {
-        c.FillRound(sx + s, sy + s, sw - 2 * s, stripH, 1, 0xFF163E78);
-        const int bs = std::max(1, s - 1);
-        c.Text(sx + 3 * s, sy + s + (stripH - 7 * bs) / 2, "NINTENDO DS", bs, 0xFFFFFFFF);
+        const int dotR = std::max(2, 2 * s);
+        const int dx = x + sz - 5 * s - dotR * 2;
+        const int dy = by + (badgeH - dotR * 2) / 2;
+        c.FillRound(dx - s, dy - s, (dotR + s) * 2, (dotR + s) * 2, dotR + s, 0x3800E676);
+        c.FillRound(dx, dy, dotR * 2, dotR * 2, dotR, 0xFF00E676);
     }
 
+    // Framed inner Emblem Medallion for the 32x32 DS/GBA icon (3x = 96x96 inside a 114x114 recessed glass well)
+    const int footerH = 19 * s;
+    const int bodyH = sz - footerH;
+    const int iconScale = (sz >= 180) ? 3 : 2;
+    const int iconSz = 32 * iconScale;
+    const int wellPad = 4 * s;
+    const int wellSz = iconSz + wellPad * 2;
+    const int wx = x + (sz - wellSz) / 2;
+    const int wy = y + 10 * s + (bodyH - 10 * s - wellSz) / 2;
+    const int wellRad = 4 * s;
+
+    // Ambient radial glow behind the recessed emblem well
+    const uint32_t glowCol = isGba ? 0x26A855F7 : is3ds ? 0x26F43F5E : 0x2600C3FF;
+    c.GlowRound(wx - 2 * s, wy - 2 * s, wellSz + 4 * s, wellSz + 4 * s, wellRad + 2 * s, 3 * s, glowCol);
+    c.FillRound(wx, wy, wellSz, wellSz, wellRad, 0xB8090D16);
+    c.OutlineRound(wx, wy, wellSz, wellSz, wellRad, 1, sel ? badgeBorder : 0xFF28364E);
+
+    const int ix = wx + wellPad;
+    const int iy = wy + wellPad;
     if (icon32)
     {
-        const int maxArtH = sh - stripH - (isGba ? 8 * s : 7 * s);
-        const int iconScale = std::max(1, std::min(sw - 4 * s, maxArtH) / 32);
-        const int iconSz = 32 * iconScale;
-        const int ix = sx + (sw - iconSz) / 2;
-        const int iy = sy + stripH + (maxArtH - iconSz) / 2 + s;
-
-        c.FillRound(ix - s, iy - s, iconSz + 2 * s, iconSz + 2 * s, 2, isGba ? 0x66000000 : 0x22000000);
         for (int py = 0; py < 32; py++)
+        {
             for (int px = 0; px < 32; px++)
             {
                 const uint32_t p = icon32[py * 32 + px];
                 if ((p >> 24) >= 0x40)
                     c.Fill(ix + px * iconScale, iy + py * iconScale, iconScale, iconScale, p | 0xFF000000u);
             }
+        }
     }
     else
     {
@@ -854,72 +886,68 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int sz, int platform, con
         for (char ch : name)
             if (isupper((unsigned char)ch) && initials.size() < 4) initials += ch;
         if (initials.empty() && !code.empty()) initials = code;
-        const int is = std::max(1, s);
-        const int iw = Canvas::TextWidth(initials, is);
-        c.Text(sx + (sw - iw) / 2, sy + (sh - 7 * is) / 2, initials, is, isGba ? 0xFFFFFFFF : 0xFF1E2634);
+        const int is = 18 * s / 3;
+        const int iw = ModernTextWidth(initials, is);
+        ModernText(c, wx + (wellSz - iw) / 2, wy + (wellSz - is) / 2, initials, is, 0xFF8FA0B8, true);
     }
 
-    std::string serial = (isGba ? "AGB-" : "NTR-") + code;
-    const int ss = std::max(1, s / 2);
-    const int swidth = Canvas::TextWidth(serial, ss);
-    if (swidth + 4 * ss <= sw)
-    {
-        const int serY = sy + sh - 7 * ss - 2 * ss;
-        c.Text(sx + (sw - swidth) / 2, serY, serial, ss, isGba ? 0x99D0C0F0 : 0xFF5A6678);
-    }
+    // Frosted card footer strip with game short title and serial code
+    const int fy = y + sz - footerH;
+    c.FillBlend(x + s, fy, sz - 2 * s, footerH - s, 0x66060910);
+    c.Fill(x + 3 * s, fy, sz - 6 * s, 1, 0x44334155);
 
-    for (int gy = 0; gy < sh / 2; gy++)
+    std::string cardTitle = ShortCardTitle(name);
+    int nameFontH = std::max(11, 13 * s / 3);
+    while (cardTitle.size() > 6 && ModernTextWidth(cardTitle, nameFontH) > sz - 6 * s)
     {
-        const int gw = std::max(0, sw - gy * 2);
-        if (gw > 0)
-            c.FillBlend(sx + s, sy + s + gy, gw, 1, 0x14FFFFFF);
+        cardTitle.pop_back();
     }
+    const int nw = ModernTextWidth(cardTitle, nameFontH);
+    ModernText(c, x + (sz - nw) / 2, fy + 2 * s, cardTitle, nameFontH, sel ? 0xFFFFFFFF : 0xFFD8E2F0, true);
+
+    std::string serial = (isGba ? "AGB-" : is3ds ? "CTR-" : "NTR-") + code;
+    const int serH = std::max(9, 10 * s / 3);
+    const int swidth = ModernTextWidth(serial, serH);
+    ModernText(c, x + (sz - swidth) / 2, fy + 2 * s + nameFontH + s, serial, serH, sel ? 0xFF94A3B8 : 0xFF64748B);
 }
 
-// Where the list's parts go on a canvas: the title band, the tabs under it, then the games'
-// tiles (each the game's picture with its name below), in an adaptive grid that scales
-// gracefully across orientations and high resolutions.
+// Where the list's parts go on a canvas: the title band, the tabs under it, the DSi showcase
+// banner, and the horizontal game carousel (Nintendo Switch Home + Nintendo DSi Showcase).
 struct Grid
 {
-    int s, gap, colGap, rowGap, labelH, tabsY, tabsH, headH, top, bottom, tile, cols, gx;
-    int bannerY = 0, bannerH = 0; // Nintendo DSi Upper Display Showcase Banner
-    int panelX = 0, panelW = 0;
-    int rowH() const { return tile + labelH + rowGap; }
+    int w = 0, h = 0;
+    int s = 1;
+    int tabsY = 0, tabsH = 0;         // Category tabs bar
+    int bannerY = 0, bannerH = 0;     // Hero Title & Status Area
+    int carouselY = 0;                // Center-stage horizontal carousel Y
+    int tile = 0;                     // Square card size (240x240 at 720p)
+    int colGap = 0;                   // Gap between cards
+    int labelH = 0;                   // Height reserved below card
+    int dockH = 0;                    // Bottom controller dock height
+    int top = 0, bottom = 0;
 };
 inline Grid Layout(const Canvas& c)
 {
     Grid g;
-    g.s = std::max(1, std::min(c.w, c.h) / 240); // the font's scale: 3 at 720 lines
-    g.colGap = 7 * g.s;
-    g.rowGap = 7 * g.s;
-    g.gap = g.rowGap;
-    g.labelH = (UiLang::Tall() ? 32 : 20) * g.s;
-    g.bannerY = (c.h > c.w ? 44 : 24) * g.s;
-    g.bannerH = (c.h > c.w ? 0 : 26 * g.s);
-    g.tabsY = (c.h > c.w ? 46 * g.s : g.bannerY + g.bannerH + 4 * g.s);
-    g.tabsH = 13 * g.s;
-    g.headH = 13 * g.s;
-    g.top = g.tabsY + g.tabsH + 5 * g.s;
-    g.bottom = c.h - 18 * g.s;
-    const int availH = g.bottom - g.top - g.headH;
-    if (c.h > c.w) // portrait / vertical screen
-    {
-        g.cols = 2;
-        g.tile = std::max(32, (c.w - 3 * g.colGap) / 2);
-    }
-    else // landscape widescreen
-    {
-        g.tile = std::max(32, std::min(Art * c.h / 720, (availH - g.rowGap) / 2 - g.labelH - g.rowGap));
-        const int maxCols = c.w >= 2560 ? 7 : c.w >= 1920 ? 6 : c.w >= 1400 ? 5 : 4;
-        g.cols = std::max(2, std::min(maxCols, (c.w - 4 * g.colGap) / (g.tile + g.colGap)));
-    }
-    const int gridW = g.cols * g.tile + (g.cols - 1) * g.colGap;
-    g.gx = std::max(0, (c.w - gridW) / 2);
+    g.w = c.w;
+    g.h = c.h;
+    g.s = std::max(1, std::min(c.w, c.h) / 240); // 3 at 720 lines
+    g.colGap = 9 * g.s;                          // 27px gap
+    g.labelH = 8 * g.s;                          // 24px for selection indicator pill
+    g.tabsY = 20 * g.s;                          // 60px
+    g.tabsH = 11 * g.s;                          // 33px
+    g.bannerY = g.tabsY + g.tabsH + 6 * g.s;     // 111px
+    g.bannerH = 24 * g.s;                        // 72px Glass Hero Banner
+    g.dockH = 18 * g.s;                          // 54px
+    g.bottom = c.h - g.dockH;                    // 666px
+    g.tile = (g.s == 3) ? 240 : 76 * g.s;        // 240px card size at 720p
+    // Vertically balance carousel in the body below the hero banner
+    g.carouselY = 232;
+    g.top = g.carouselY;
     return g;
 }
 
-// What one tab shows: each game's tile and each console's heading (on ALL) or the line saying it
-// has none yet, in content coordinates.
+// What one tab shows: the horizontal carousel spots of games belonging to this tab.
 struct View
 {
     struct Spot { int game, x, y, section; };
@@ -928,8 +956,8 @@ struct View
     int tab = 0;
     std::vector<Spot> spots;
     std::vector<Head> heads;
+    int width = 0;
     int height = 0;
-    // The spot of game i, or -1.
     int SpotOf(int game) const
     {
         for (size_t k = 0; k < spots.size(); k++)
@@ -943,63 +971,67 @@ inline View MakeView(const Canvas& c, const std::vector<Game>& games, int tab)
     v.g = Layout(c);
     v.tab = tab;
     const Grid& g = v.g;
-    const int emptyH = 16 * g.s;
-    int y = 0;
-    for (int p = 0; p < PLATFORMS; p++)
+    std::vector<int> mine;
+    for (size_t i = 0; i < games.size(); i++)
+        if (InTab(games[i].platform, tab))
+            mine.push_back((int)i);
+
+    if (mine.empty())
     {
-        if (!InTab(p, tab)) continue;
-        std::vector<int> mine;
-        for (size_t i = 0; i < games.size(); i++)
-            if (games[i].platform == p) mine.push_back((int)i);
-        // (ALL: every console under its heading, also one without games yet.)
-        if (tab == 0)
-        {
-            v.heads.push_back({ p, y, false });
-            y += g.headH;
-        }
-        if (mine.empty())
-        {
-            v.heads.push_back({ p, y, true });
-            y += emptyH + g.rowGap;
-            continue;
-        }
-        for (size_t k = 0; k < mine.size(); k++)
-            v.spots.push_back({ mine[k], g.gx + (int)(k % g.cols) * (g.tile + g.colGap), y + (int)(k / g.cols) * g.rowH(), p });
-        y += (int)((mine.size() + g.cols - 1) / g.cols) * g.rowH() + g.rowGap;
+        v.heads.push_back({ tab <= 0 ? DS : tab - 1, g.carouselY, true });
+        v.width = 0;
+        v.height = 0;
+        return v;
     }
-    v.height = y;
+
+    const int totalW = (int)mine.size() * g.tile + (int)(mine.size() - 1) * g.colGap;
+    const int startX = (totalW <= c.w - 48 * g.s) ? (c.w - totalW) / 2 : 24 * g.s;
+
+    for (size_t k = 0; k < mine.size(); k++)
+    {
+        const int x = startX + (int)k * (g.tile + g.colGap);
+        v.spots.push_back({ mine[k], x, g.carouselY, games[mine[k]].platform });
+    }
+    v.width = totalW;
+    v.height = g.tile + g.labelH;
     return v;
 }
 
-// Keeps the chosen game in view (with its console's heading when it is in the first row under
-// it): scroll is how far down the content the screen is. follow false: only kept within the
-// content (a finger scrolling the list).
+// Keeps the chosen game in view by centering it horizontally in the carousel.
 inline void FollowSelection(const View& v, int selected, int& scroll, bool follow = true)
 {
+    if (v.spots.empty()) { scroll = 0; return; }
     const Grid& g = v.g;
-    const int viewH = g.bottom - g.top;
+    const int screenW = g.w > 0 ? g.w : 1280;
+    if (v.width <= screenW - 48 * g.s)
+    {
+        const int diff = 0 - scroll;
+        if (std::abs(diff) <= 2) scroll = 0;
+        else scroll += diff / 3;
+        return;
+    }
     const int k = follow ? v.SpotOf(selected) : -1;
     if (k >= 0)
     {
-        int top = v.spots[k].y;
-        for (const View::Head& h : v.heads)
-            if (!h.empty && h.platform == v.spots[k].section && top - h.y <= g.headH) top = h.y;
-        const int bottom = v.spots[k].y + g.tile + g.labelH;
-        if (top < scroll) scroll = top;
-        if (bottom > scroll + viewH) scroll = bottom - viewH;
+        const int cardCenterX = v.spots[k].x + g.tile / 2;
+        int targetScroll = cardCenterX - screenW / 2;
+        const int maxScroll = v.spots.back().x + g.tile - screenW + 24 * g.s;
+        targetScroll = std::max(0, std::min(targetScroll, maxScroll));
+        const int diff = targetScroll - scroll;
+        if (std::abs(diff) <= 2) scroll = targetScroll;
+        else scroll += diff / 3;
     }
-    scroll = std::max(0, std::min(scroll, std::max(0, v.height - viewH)));
 }
 
-// The game whose tile (with its name below it) is at x, y on the canvas, or -1.
+// The game whose card in the horizontal carousel is at x, y on the canvas, or -1.
 inline int TileAt(const View& v, int scroll, int x, int y)
 {
     const Grid& g = v.g;
-    if (y < g.top || y >= g.bottom) return -1;
+    if (y < g.carouselY || y >= g.carouselY + g.tile + g.labelH) return -1;
     for (const View::Spot& sp : v.spots)
     {
-        const int ty = g.top + sp.y - scroll;
-        if (x >= sp.x && x < sp.x + g.tile && y >= ty && y < ty + g.tile + g.labelH) return sp.game;
+        const int tx = sp.x - scroll;
+        if (x >= tx && x < tx + g.tile) return sp.game;
     }
     return -1;
 }
@@ -1007,7 +1039,7 @@ inline int TileAt(const View& v, int scroll, int x, int y)
 // Where the tabs are drawn (TabsDraw) and which one is at x, y, or -1.
 inline int TabX(const Canvas& c, const Grid& g, int t)
 {
-    const int step = 22 * 6 * g.s / 3; // (each tab's room, at the font's scale)
+    const int step = 22 * 6 * g.s / 3;
     return c.w / 2 + (t * 2 - (TABS - 1)) * step / 2;
 }
 inline int TabAt(const Canvas& c, int x, int y)
@@ -1020,30 +1052,16 @@ inline int TabAt(const Canvas& c, int x, int y)
     return -1;
 }
 
-// The next game from `selected` in direction dir (1 left, 2 right, 3 up, 4 down): left and right
-// go through the tab's games in order, up and down to the nearest tile in the row above or below
-// (across the headings). -1 when there is nothing that way (up from the first row: the caller's
-// title band; down from the last: stay).
+// Step in carousel: Left (1) and Right (2) traverse the games in the carousel;
+// Up (3) jumps seamlessly up to the category tabs bar; Down (4) stays on card.
 inline int Step(const View& v, int selected, int dir)
 {
     const int k = v.SpotOf(selected);
     if (k < 0) return v.spots.empty() ? -1 : v.spots[0].game;
     if (dir == 1) return k > 0 ? v.spots[k - 1].game : selected;
     if (dir == 2) return k + 1 < (int)v.spots.size() ? v.spots[k + 1].game : selected;
-    // The row above or below: the nearest y beyond this one, then the nearest x in it.
-    const int y = v.spots[k].y, x = v.spots[k].x;
-    int rowY = -1;
-    for (const View::Spot& sp : v.spots)
-        if ((dir == 3 ? sp.y < y : sp.y > y) && (rowY < 0 || (dir == 3 ? sp.y > rowY : sp.y < rowY))) rowY = sp.y;
-    if (rowY < 0) return dir == 3 ? -1 : selected;
-    int best = -1, bestD = 0;
-    for (const View::Spot& sp : v.spots)
-        if (sp.y == rowY && (best < 0 || std::abs(sp.x - x) < bestD))
-        {
-            best = sp.game;
-            bestD = std::abs(sp.x - x);
-        }
-    return best;
+    if (dir == 3) return -1; // up to category tabs!
+    return selected;
 }
 
 // A tab's own first game (when the one chosen is not in it), or -1 when it has none.
@@ -1068,27 +1086,28 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
         if (const uint32_t* bgPx = th.background->Fitted(c.w, c.h)) std::copy(bgPx, bgPx + (size_t)c.w * c.h, c.px.begin());
 
     // Nintendo DS / DSi top header bar with twin-screen logo and date / battery widget.
-    const int bandH = (c.h > c.w ? 43 : 22) * s;
-    c.FillGradV(0, 0, c.w, bandH, 0xFF191F2D, th.band, 0);
+    const int bandH = (c.h > c.w ? 43 : 16) * s;
+    c.FillGradV(0, 0, c.w, bandH, 0xFF1A2130, th.band, 0);
     c.Fill(0, bandH, c.w, th.bandLineH * s, th.bandLine);
-    c.FillBlend(0, bandH + th.bandLineH * s, c.w, 2 * s, 0x33000000);
+    c.FillBlend(0, bandH + th.bandLineH * s, c.w, 2 * s, 0x44000000);
 
-    DrawDsLogo(c, 10 * s, (bandH - 12 * s) / 2, s, th.title);
-    const std::string title = "NOSPLIT DS";
-    c.Text(24 * s, (bandH - 7 * (s + 1)) / 2, title, s + 1, th.title);
+    const int logoH = (4 * s + 1) * 2 + std::max(1, s + 1);
+    DrawDsLogo(c, 10 * s, (bandH - logoH) / 2, s, th.title);
+    const std::string title = "NoSplitNX";
+    const int topFontH = std::max(13, 5 * s + 1);
+    c.ModernText(21 * s, (bandH - topFontH) / 2, title, topFontH, th.title, true);
 
-    // Center pill: console mode indicator
-#ifdef __SWITCH__
-    const std::string modeStr = SwitchPlatform::IsHandheld() ? "MODO PORTATIL" : "MODO CONSOLA";
-#else
-    const std::string modeStr = "NOSPLIT DS";
-#endif
-    const int modeW = Canvas::TextWidth(modeStr, s) + 8 * s;
-    const int modeH = 11 * s;
-    const int modeY = (bandH - modeH) / 2;
-    c.FillRound((c.w - modeW) / 2, modeY, modeW, modeH, 3 * s, 0xFF222938);
-    c.OutlineRound((c.w - modeW) / 2, modeY, modeW, modeH, 3 * s, 1, 0xFF354258);
-    c.Text((c.w - Canvas::TextWidth(modeStr, s)) / 2, modeY + 2 * s, modeStr, s, th.hint);
+    // Subtle edition pill badge beside NoSplitNX
+    const int titleW = c.ModernTextWidth(title, topFontH);
+    const std::string subTag = "WIDESCREEN";
+    const int tagFontH = std::max(9, 3 * s + 1);
+    const int tagW = c.ModernTextWidth(subTag, tagFontH) + 5 * s;
+    const int tagH = 6 * s + 2;
+    const int tagX = 21 * s + titleW + 4 * s;
+    const int tagY = (bandH - tagH) / 2;
+    c.FillRound(tagX, tagY, tagW, tagH, 2 * s, 0x3300C3FF);
+    c.OutlineRound(tagX, tagY, tagW, tagH, 2 * s, 1, 0x8000C3FF);
+    c.ModernText(tagX + (tagW - c.ModernTextWidth(subTag, tagFontH)) / 2, tagY + (tagH - tagFontH) / 2, subTag, tagFontH, 0xFF7DD3FC);
 
     // Right: Date, Time & DS 3-bar battery widget
     int yr = 0, mo = 0, dy = 0, hr = 0, mn = 0, sc = 0;
@@ -1104,6 +1123,10 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
         haveTime = true;
     }
 #endif
+    const float t = AnimTime();
+    const float pulse = 0.5f + 0.5f * sinf(t * 3.5f);
+    const int floatY = (int)(3.0f * sinf(t * 2.8f));
+
     if (haveTime)
     {
         char dateBuf[16], timeBuf[16];
@@ -1111,21 +1134,28 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
         snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", hr, mn);
         const std::string dateStr = dateBuf;
         const std::string timeStr = timeBuf;
-        const int clockW = Canvas::TextWidth(dateStr, s) + Canvas::TextWidth(timeStr, s + 1) + 36 * s;
+        const int dateFontH = std::max(10, 4 * s);
+        const int timeFontH = std::max(12, 5 * s - 1);
+        const int dateW = ModernTextWidth(dateStr, dateFontH);
+        const int timeW = ModernTextWidth(timeStr, timeFontH);
+        const int clockH = 11 * s;
+        const int clockW = dateW + timeW + 34 * s;
         const int clockX = c.w - clockW - 10 * s;
-        const int clockY = (bandH - 14 * s) / 2;
-        c.FillRound(clockX, clockY, clockW, 14 * s, 4 * s, 0xFF202736);
-        c.OutlineRound(clockX, clockY, clockW, 14 * s, 4 * s, 1, 0xFF354258);
-        c.Text(clockX + 6 * s, clockY + 4 * s, dateStr, s, th.hint);
-        c.Text(clockX + Canvas::TextWidth(dateStr, s) + 12 * s, clockY + 2 * s, timeStr, s + 1, th.title);
-        DrawDsBattery(c, clockX + clockW - 18 * s, clockY + 3 * s, s, 3);
+        const int clockY = (bandH - clockH) / 2;
+        c.FillRound(clockX, clockY, clockW, clockH, 3 * s, 0xFF1F2737);
+        c.OutlineRound(clockX, clockY, clockW, clockH, 3 * s, 1, 0xFF33425B);
+        ModernText(c, clockX + 5 * s, clockY + (clockH - dateFontH) / 2, dateStr, dateFontH, th.hint);
+        c.Fill(clockX + 8 * s + dateW, clockY + 2 * s, 1, clockH - 4 * s, 0xFF33425B);
+        ModernText(c, clockX + 11 * s + dateW, clockY + (clockH - timeFontH) / 2, timeStr, timeFontH, th.title, true);
+        DrawDsBattery(c, clockX + clockW - 19 * s, clockY + (clockH - 8 * s) / 2, s, 3);
     }
 
     // Nintendo DSi Upper Display Game Showcase Card
     if (grid.bannerH > 0 && !games.empty() && selected >= 0 && selected < (int)games.size())
     {
-        const int bannerW = c.w - 32 * s;
-        DrawDsiTopBanner(c, 16 * s, grid.bannerY, bannerW, grid.bannerH, games[selected], s, th.frame);
+        const int spotIdx = v.SpotOf(selected);
+        DrawDsiTopBanner(c, 24 * s, grid.bannerY, c.w - 48 * s, grid.bannerH, games[selected], s, th.frame,
+                         spotIdx >= 0 ? spotIdx : 0, (int)v.spots.size());
     }
 
     // Segmented pill bar for console tabs (ALL, DS, GBA, 3DS) with tactile L / R bumper badges.
@@ -1143,11 +1173,12 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
 
     for (int t = 0; t < TABS; t++)
     {
-        const std::string name = TabName(t);
-        const int nameW = Canvas::TextWidth(name, s);
+        const std::string name = (t == 0 ? UiLang::Tr("ALL") : t == 1 ? "Nintendo DS" : t == 2 ? "GBA" : "3DS");
+        const int tabH = 14;
+        const int nameW = ModernTextWidth(name, tabH);
         const int cx = TabX(c, grid, t);
-        const int x = cx - nameW / 2, y = grid.tabsY + 3 * s;
-        const int pillW = std::max(nameW + 10 * s, tabStep - 4 * s);
+        const int x = cx - nameW / 2, y = grid.tabsY + (grid.tabsH - tabH) / 2;
+        const int pillW = std::max(nameW + 12 * s, tabStep - 4 * s);
         const int pillX = cx - pillW / 2;
         if (t == tab)
         {
@@ -1155,88 +1186,72 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
             {
                 c.GlowRound(pillX, grid.tabsY, pillW, grid.tabsH, 3 * s, 3 * s, th.frame);
                 c.FillRound(pillX, grid.tabsY, pillW, grid.tabsH, 3 * s, th.frame);
-                c.Text(x, y, name, s, th.title);
+                ModernText(c, x, y, name, tabH, 0xFFFFFFFF, true);
             }
             else
             {
-                c.FillGlass(pillX, grid.tabsY, pillW, grid.tabsH, 3 * s, 0xFF263146, 0xFF19202E, th.frame, 1);
-                c.Text(x, y, name, s, th.title);
+                c.FillGlass(pillX, grid.tabsY, pillW, grid.tabsH, 3 * s, 0xFF28364E, 0xFF182232, th.frame, 1);
+                ModernText(c, x, y, name, tabH, 0xFFFFFFFF, true);
             }
         }
         else
         {
-            c.Text(x, y, name, s, th.hint);
+            ModernText(c, x, y, name, tabH, th.hint);
         }
     }
 
     FollowSelection(v, selected, scroll, follow);
-    const int top = grid.top, bottom = grid.bottom, tile = grid.tile, labelH = grid.labelH;
+    const int tile = grid.tile, labelH = grid.labelH;
+    const int cardRad = std::max(4, 5 * s);
 
-    // Console section headers on ALL tab, or empty-state cards when a console has no ROMs.
-    for (const View::Head& h : v.heads)
+    // Empty state card if the chosen tab has no ROMs installed
+    if (v.spots.empty())
     {
-        const int y = top + h.y - scroll;
-        if (h.empty)
-        {
-            const std::string none = UiLang::Tr("NO GAMES FOUND") + " (" + PlatformName(h.platform) + ")";
-            if (tab != 0)
-            {
-                const int ew = Canvas::TextWidth(none, s) + 16 * s;
-                const int eh = 18 * s;
-                const int ex = (c.w - ew) / 2, ey = (top + bottom - eh) / 2;
-                c.FillRound(ex, ey, ew, eh, 4 * s, 0xCC141926);
-                c.OutlineRound(ex, ey, ew, eh, 4 * s, 1, 0xFF283248);
-                c.Text(ex + 8 * s, ey + 5 * s, none, s, th.hint);
-            }
-            else if (y >= top && y + 12 * s <= bottom)
-            {
-                const int ew = Canvas::TextWidth(none, s) + 10 * s;
-                c.FillRound(grid.gx, y, ew, 12 * s, 3 * s, 0x99141926);
-                c.Text(grid.gx + 5 * s, y + 2 * s, none, s, th.hint);
-            }
-            continue;
-        }
-        if (y < top || y + 10 * s > bottom) continue;
-        const std::string name = PlatformName(h.platform);
-        c.FillRound(grid.gx, y + s, 2 * s, 8 * s, s, th.frame);
-        c.Text(grid.gx + 4 * s, y + s, name, s + 1, th.title);
-        const int lx = grid.gx + 4 * s + Canvas::TextWidth(name, s + 1) + 5 * s;
-        const int rx = grid.gx + grid.cols * tile + (grid.cols - 1) * grid.colGap;
-        if (rx > lx)
-        {
-            c.Fill(lx, y + 5 * s, std::min(24 * s, rx - lx), std::max(1, s / 2), th.frame);
-            if (rx > lx + 24 * s)
-                c.Fill(lx + 24 * s, y + 5 * s, rx - lx - 24 * s, std::max(1, s / 2), 0xFF252D40);
-        }
+        const std::string none = UiLang::Tr("NO GAMES FOUND") + " (" + PlatformName(tab <= 0 ? DS : tab - 1) + ")";
+        const int ew = ModernTextWidth(none, 14) + 24 * s;
+        const int eh = 24 * s;
+        const int ex = (c.w - ew) / 2, ey = grid.carouselY + (tile - eh) / 2;
+        c.FillRound(ex, ey, ew, eh, 4 * s, 0xDD141926);
+        c.OutlineRound(ex, ey, ew, eh, 4 * s, 1, 0xFF2A364C);
+        ModernText(c, ex + 12 * s, ey + 6 * s, none, 14, th.hint);
     }
 
-    // Elevated rounded game cards with cover art, cartridge icon well, platform badge, and save status pill.
-    const int cardRad = std::max(4, 5 * s);
+    // Ambient focus handled on active card
+
+    // Render horizontal carousel cards
     for (const View::Spot& sp : v.spots)
     {
-        const int x = sp.x, y = top + sp.y - scroll;
-        const int cardH = tile + labelH - 2 * s;
-        if (y < top || y + cardH > bottom) continue;
+        const bool sel = (sp.game == selected);
+        const int x = sp.x - scroll;
+        const int y = sp.y - (sel ? floatY : 0);
+        if (x + tile < -20 * s || x > c.w + 20 * s) continue;
         const Game& g = games[sp.game];
-        const bool sel = sp.game == selected;
 
+        const int cardRad = std::max(4, 5 * s);
         if (sel)
-            c.GlowRound(x, y, tile, cardH, cardRad, 5 * s, th.frame);
+        {
+            // Sleek Nintendo Switch Selection Focus: crisp white frame + neon cyan halo + soft shadow
+            const uint32_t glowAlpha = (uint32_t)(40 + 30 * pulse) << 24;
+            c.ShadowRound(x - 2 * s, y, tile + 4 * s, tile + 4 * s, cardRad + 2 * s, 3 * s, 110);
+            c.GlowRound(x - 3 * s, y - 3 * s, tile + 6 * s, tile + 6 * s, cardRad + 3 * s, (int)((3.0f + 2.0f * pulse) * s), (th.frame & 0x00FFFFFF) | glowAlpha);
+            c.OutlineRound(x - s, y - s, tile + 2 * s, tile + 2 * s, cardRad + s, s + 1, 0xFFFFFFFF);
+            c.OutlineRound(x - 3 * s, y - 3 * s, tile + 6 * s, tile + 6 * s, cardRad + 3 * s, s + 1, th.frame);
+        }
         else
-            c.ShadowRound(x, y, tile, cardH, cardRad, s, 2 * s);
+        {
+            c.ShadowRound(x, y, tile, tile, cardRad, s, 2 * s);
+        }
 
-        const uint32_t cardTop = sel ? 0xFF263248 : 0xFF181E2C;
-        const uint32_t cardBot = sel ? 0xFF1A2234 : 0xFF111520;
-        const uint32_t cardBorder = sel ? th.frame : 0xFF28344C;
-        c.FillGlass(x, y, tile, cardH, cardRad, cardTop, cardBot, cardBorder, 1);
-
-        // Cover art area at top of card
-        const int artPad = 2 * s;
-        const int artX = x + artPad, artY = y + artPad;
-        const int artSz = tile - 2 * artPad;
+        const uint32_t cardTop = sel ? 0xFF222C3E : 0xFF161B26;
+        const uint32_t cardBot = sel ? 0xFF161E2C : 0xFF0E121A;
+        const uint32_t cardBorder = sel ? 0xFFFFFFFF : 0xFF283448;
+        c.FillGlass(x, y, tile, tile, cardRad, cardTop, cardBot, cardBorder, 1);
 
         if (!g.art.empty())
         {
+            const int artPad = 2 * s;
+            const int artX = x + artPad, artY = y + artPad;
+            const int artSz = tile - 2 * artPad;
             const int artRad = std::max(2, cardRad - artPad);
             c.FillRound(artX, artY, artSz, artSz, artRad, 0xFF0D1017);
             for (int py = 0; py < artSz; py++)
@@ -1259,7 +1274,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
         }
         else
         {
-            DrawCartridgeCase(c, artX, artY, artSz, g.platform, g.hasIcon ? g.icon : nullptr, g.code, g.name, s);
+            DrawCartridgeCase(c, x, y, tile, g.platform, g.hasIcon ? g.icon : nullptr, g.code, g.name, s, g.hasSave, sel);
         }
 
         // Platform badge (NDS / GBA) on top-left of box art
@@ -1268,82 +1283,58 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
             const char* platText = g.platform == GBA ? "GBA" : "NDS";
             const uint32_t platBg = g.platform == GBA ? 0xEE4E1D88 : 0xEE0B4FA8;
             const uint32_t platBorder = g.platform == GBA ? 0xFF9D4EDD : 0xFF3A86FF;
-            const int bScale = std::max(1, s - 1);
-            const int bW = Canvas::TextWidth(platText, bScale) + 6 * bScale;
-            const int bH = 9 * bScale;
-            const int bx = artX + 3 * s, by = artY + 3 * s;
-            c.FillRound(bx, by, bW, bH, 2 * bScale, platBg);
-            c.OutlineRound(bx, by, bW, bH, 2 * bScale, 1, platBorder);
-            c.Text(bx + 3 * bScale, by + bScale, platText, bScale, 0xFFFFFFFF);
+            const int bW = ModernTextWidth(platText, 11) + 8 * s;
+            const int bH = 10 * s;
+            const int bx = x + 4 * s, by = y + 4 * s;
+            c.FillRound(bx, by, bW, bH, 2 * s, platBg);
+            c.OutlineRound(bx, by, bW, bH, 2 * s, 1, platBorder);
+            ModernText(c, bx + 4 * s, by + s, platText, 11, 0xFFFFFFFF);
         }
 
         // COMING SOON overlay if unreleased
         if (g.comingSoon)
         {
-            c.FillBlend(artX, artY, artSz, artSz, 0xAA080B12);
-            const std::string soon = "COMING SOON";
-            const int bs = Canvas::TextWidth(soon, s) + 8 * s <= artSz ? s : std::max(1, s - 1);
-            const int bannerH = 14 * bs;
-            const int bannerY = artY + (artSz - bannerH) / 2;
-            c.FillRound(artX + 2 * s, bannerY, artSz - 4 * s, bannerH, 3 * bs, 0xF0151924);
-            c.OutlineRound(artX + 2 * s, bannerY, artSz - 4 * s, bannerH, 3 * bs, 1, th.frame);
-            c.Text(artX + (artSz - Canvas::TextWidth(soon, bs)) / 2, bannerY + 3 * bs, soon, bs, th.title);
+            c.FillBlend(x, y, tile, tile, 0xAA080B12);
+            const std::string soon = UiLang::Tr("COMING SOON");
+            const int soonH = 16;
+            const int bannerH = 16 * s;
+            const int bannerY = y + (tile - bannerH) / 2;
+            c.FillRound(x + 2 * s, bannerY, tile - 4 * s, bannerH, 3 * s, 0xF0151924);
+            c.OutlineRound(x + 2 * s, bannerY, tile - 4 * s, bannerH, 3 * s, 1, th.frame);
+            ModernText(c, x + (tile - ModernTextWidth(soon, soonH)) / 2, bannerY + 3 * s, soon, soonH, th.title, true);
         }
 
-        // Focused double selection ring
+        // Clean active indicator pill under selected card
         if (sel)
         {
-            const int fw = th.frameW * s;
-            c.OutlineRound(x - fw, y - fw, tile + 2 * fw, cardH + 2 * fw, cardRad + fw, fw, th.frame);
-            c.OutlineRound(x - fw - s, y - fw - s, tile + 2 * (fw + s), cardH + 2 * (fw + s), cardRad + fw + s, s, (th.frame & 0x00FFFFFF) | 0x44000000u);
+            const int dotW = (int)((24.0f + 6.0f * pulse) * s);
+            const int dotH = std::max(2, 2 * s);
+            c.FillRound(x + (tile - dotW) / 2, y + tile + 8 * s, dotW, dotH, dotH / 2, 0xFF00E5FF);
         }
-
-        // Game title
-        std::string name = g.name;
-        if (name.rfind("POKEMON ", 0) == 0) name = name.substr(8);
-        int ns = s;
-        while (ns > 1 && Canvas::TextWidth(name, ns) > tile - 6 * s) --ns;
-        c.Text(x + (tile - Canvas::TextWidth(name, ns)) / 2, y + tile + 2 * s, name, ns, sel ? th.nameSel : th.name);
-
-        // Status string & hardware LED dot
-        std::string sub = g.comingSoon ? "COMING SOON" : !g.known ? "NOT PLAYABLE" : g.hasSave ? "SAVE FOUND" : "NEW GAME";
-        if (!g.where.empty() && g.known) sub = (g.hasSave ? "SAVE " : "NEW ") + g.where;
-        const int ss = std::max(1, s * 2 / 3);
-        const uint32_t ledCol = !g.known && !g.comingSoon ? 0xFFFF453A
-                              : g.comingSoon ? 0xFFA855F7
-                              : g.hasSave ? 0xFF00E676
-                              : 0xFFFFB020;
-        const uint32_t pillBg = !g.known && !g.comingSoon ? 0xDD3B141C
-                              : g.comingSoon ? 0xDD251A38
-                              : g.hasSave ? 0xDD123624
-                              : 0xDD3A2B12;
-        const uint32_t pillBorder = !g.known && !g.comingSoon ? 0x88FF453A
-                                  : g.comingSoon ? 0x88A855F7
-                                  : g.hasSave ? 0x8800E676
-                                  : 0x88FFB020;
-
-        const int dotR = std::max(2, 2 * ss);
-        const int textW = Canvas::TextWidth(sub, ss);
-        const int pillW = textW + dotR * 2 + 10 * ss;
-        const int pillH = 10 * ss;
-        const int pillX = x + (tile - pillW) / 2;
-        const int pillY = y + tile + (UiLang::Tall() ? 19 : 12) * s;
-
-        c.FillRound(pillX, pillY - ss, pillW, pillH, 3 * ss, pillBg);
-        c.OutlineRound(pillX, pillY - ss, pillW, pillH, 3 * ss, 1, pillBorder);
-
-        const int dotX = pillX + 4 * ss + dotR;
-        const int dotY = pillY - ss + pillH / 2;
-        c.FillRound(dotX - dotR - 1, dotY - dotR - 1, (dotR + 1) * 2, (dotR + 1) * 2, dotR + 1, (ledCol & 0x00FFFFFF) | 0x44000000u);
-        c.FillRound(dotX - dotR, dotY - dotR, dotR * 2, dotR * 2, dotR, ledCol);
-        c.Fill(dotX - 1, dotY - 1, 2, 2, 0xFFFFFFFF);
-
-        c.Text(dotX + dotR + 3 * ss, pillY, sub, ss, ledCol | 0xFF000000u);
     }
 
-    // Scroll indicator pill when more games lie below.
-    if (scroll + (bottom - top) < v.height - grid.gap)
-        c.FillRound(c.w / 2 - 10 * s, bottom - 2 * s, 20 * s, s + 1, std::max(1, s / 2), th.frame);
+    // Nintendo DSi Carousel Navigation Arrow Badges with gentle floating animation
+    const int arrowFloat = (int)(2.5f * sinf(t * 4.0f));
+    if (scroll > 0)
+    {
+        const int arrW = 13 * s, arrH = 22 * s;
+        const int arrX = 6 * s + arrowFloat, arrY = grid.carouselY + (tile - arrH) / 2;
+        c.ShadowRound(arrX, arrY, arrW, arrH, 4 * s, s, 90);
+        c.FillGlass(arrX, arrY, arrW, arrH, 4 * s, 0xF01C2538, 0xF0111726, 0xFF3E5070, 1);
+        const int chevH = std::max(14, 5 * s);
+        const int chevW = ModernTextWidth("<", chevH);
+        ModernText(c, arrX + (arrW - chevW) / 2, arrY + (arrH - chevH) / 2, "<", chevH, 0xFFFFFFFF, true);
+    }
+    if (scroll + c.w < v.width + 24 * s)
+    {
+        const int arrW = 13 * s, arrH = 22 * s;
+        const int arrX = c.w - arrW - 6 * s - arrowFloat, arrY = grid.carouselY + (tile - arrH) / 2;
+        c.ShadowRound(arrX, arrY, arrW, arrH, 4 * s, s, 90);
+        c.FillGlass(arrX, arrY, arrW, arrH, 4 * s, 0xF01C2538, 0xF0111726, 0xFF3E5070, 1);
+        const int chevH = std::max(14, 5 * s);
+        const int chevW = ModernTextWidth(">", chevH);
+        ModernText(c, arrX + (arrW - chevW) / 2, arrY + (arrH - chevH) / 2, ">", chevH, 0xFFFFFFFF, true);
+    }
 
     // Bottom control dock bar with tactile button badges
     const int dockH = 18 * s;
@@ -1351,28 +1342,33 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
 
     if (!note.empty())
     {
-        int noteScale = s;
-        while (noteScale > 1 && Canvas::TextWidth(note, noteScale) > c.w - 32 * s) --noteScale;
-        const int nw = Canvas::TextWidth(note, noteScale) + 16 * noteScale;
-        const int nh = 12 * noteScale;
+        int noteH = 14;
+        while (noteH > 10 && ModernTextWidth(note, noteH) > c.w - 32 * s) --noteH;
+        const int nw = ModernTextWidth(note, noteH) + 16 * s;
+        const int nh = 14 * s;
         const int nx = (c.w - nw) / 2, ny = c.h - dockH + (dockH - nh) / 2;
-        c.FillRound(nx, ny, nw, nh, 3 * noteScale, 0xEE1E2638);
-        c.OutlineRound(nx, ny, nw, nh, 3 * noteScale, 1, th.frame);
-        c.Text(nx + 8 * noteScale, ny + 2 * noteScale, note, noteScale, th.title);
+        c.FillRound(nx, ny, nw, nh, 3 * s, 0xEE1E2638);
+        c.OutlineRound(nx, ny, nw, nh, 3 * s, 1, th.frame);
+        ModernText(c, nx + 8 * s, ny + (nh - noteH) / 2, note, noteH, th.title, true);
     }
     else
     {
         struct DockItem { const char* badge; const char* label; };
         static const DockItem items[] = {
-            { "A", "PLAY" }, { "Y", "SETTINGS" }, { "X", "RANDOM" }, { "L", "TABS" }, { "+", "QUIT" }
+            { "A", "PLAY" }, { "Y", "SETTINGS" }, { "X", "RANDOM" }, { "L/R", "TABS" }, { "+", "QUIT" }
         };
         const int itemCount = 5;
         const int bh = 11 * s;
+        const int dockFontH = std::max(12, 14 * s / 3);
         int totalW = 0;
         int widths[itemCount];
         for (int i = 0; i < itemCount; i++)
         {
-            widths[i] = bh + Canvas::TextWidth(items[i].label, s) + 5 * s;
+            const std::string trLabel = (strcmp(items[i].label, "RANDOM") == 0)
+                ? (UiLang::lang == 1 ? "Aleatorio" : UiLang::lang == 2 ? "Casuale" : UiLang::lang == 3 ? "Aléatoire" : UiLang::lang == 4 ? "Zufall" : "Random")
+                : ToNiceTitle(UiLang::Tr(items[i].label));
+            const int bw = (strlen(items[i].badge) > 1) ? bh * 16 / 10 : bh;
+            widths[i] = bw + ModernTextWidth(trLabel, dockFontH) + 6 * s;
             totalW += widths[i];
         }
         const int itemGap = 14 * s;
@@ -1384,17 +1380,21 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
             const int by = c.h - dockH + (dockH - bh) / 2;
             for (int i = 0; i < itemCount; i++)
             {
+                const std::string trLabel = (strcmp(items[i].label, "RANDOM") == 0)
+                    ? (UiLang::lang == 1 ? "Aleatorio" : UiLang::lang == 2 ? "Casuale" : UiLang::lang == 3 ? "Aléatoire" : UiLang::lang == 4 ? "Zufall" : "Random")
+                    : ToNiceTitle(UiLang::Tr(items[i].label));
+                const int bw = (strlen(items[i].badge) > 1) ? bh * 16 / 10 : bh;
                 c.DrawButtonBadge(dx, by, items[i].badge, s, 0xFF222B3D, 0xFFFFFFFF, 0xFF3D4B66);
-                c.Text(dx + bh + 4 * s, by + 2 * s, items[i].label, s, th.hint);
+                ModernText(c, dx + bw + 5 * s, by + (bh - dockFontH) / 2, trLabel, dockFontH, 0xFFD8E2F0, true);
                 dx += widths[i] + itemGap;
             }
         }
         else
         {
             const std::string hint = !hintText.empty() ? hintText : "A: PLAY   Y: SETTINGS   X: RANDOM   L / R: TABS   +: QUIT";
-            int hintScale = s;
-            while (hintScale > 1 && Canvas::TextWidth(hint, hintScale) > c.w - 16 * s) --hintScale;
-            c.Text((c.w - Canvas::TextWidth(hint, hintScale)) / 2, c.h - 11 * s, hint, hintScale, th.hint);
+            int hintH = 13;
+            while (hintH > 9 && ModernTextWidth(hint, hintH) > c.w - 16 * s) --hintH;
+            ModernText(c, (c.w - ModernTextWidth(hint, hintH)) / 2, c.h - 13 * s, hint, hintH, th.hint);
         }
     }
 }
@@ -1617,9 +1617,18 @@ struct SettingsPage
             if (g == sel) row = (int)items.size();
             const SettingsGroup& sg = SettingsGroups()[g];
             std::string names;
+            int count = 0;
             for (const Setting& s : all)
-                if (GroupOf(s) == g) names += (names.empty() ? "" : " / ") + std::string(s.name);
-            groupText[g] = names + ".";
+            {
+                if (GroupOf(s) == g && count < 2)
+                {
+                    std::string trName = ToNiceTitle(UiLang::Tr(s.name));
+                    names += (names.empty() ? "" : ", ") + trName;
+                    count++;
+                }
+            }
+            if (!names.empty()) names += "...";
+            groupText[g] = names;
             items.push_back({ sg.key, sg.name, { { "", ">" } }, "", groupText[g].c_str() });
         }
         selected = row;
@@ -1760,17 +1769,20 @@ struct SettingsPage
         c.FillGradV(0, 0, c.w, bandH, 0xFF191F2D, th.band, 0);
         c.Fill(0, bandH, c.w, th.bandLineH * s, th.bandLine);
         c.FillBlend(0, bandH + th.bandLineH * s, c.w, 2 * s, 0x33000000);
-        DrawDsLogo(c, 10 * s, (bandH - 12 * s) / 2, s, th.title);
-        const std::string title = group < 0 ? "SETTINGS" : std::string("SETTINGS: ") + UiLang::Tr(SettingsGroups()[group].name);
-        int titleScale = s + 1;
-        while (titleScale > 1 && Canvas::TextWidth(title, titleScale) > c.w - 8) --titleScale;
-        c.Text((c.w - Canvas::TextWidth(title, titleScale)) / 2, 6 * s, title, titleScale, th.title);
-        const int width = std::min(c.w - 24 * s, 100 * 6 * ts);
+        const int logoH = (4 * s + 1) * 2 + std::max(1, s + 1);
+        DrawDsLogo(c, 10 * s, (bandH - logoH) / 2, s, th.title);
+        const std::string title = group < 0 ? ToNiceTitle(UiLang::Tr("SETTINGS")) : ToNiceTitle(UiLang::Tr("SETTINGS")) + ": " + ToNiceTitle(UiLang::Tr(SettingsGroups()[group].name));
+        const int titleH = std::max(14, 5 * s + 1);
+        const int tw = c.ModernTextWidth(title, titleH);
+        c.ModernText((c.w - tw) / 2, (bandH - titleH) / 2, title, titleH, th.title);
+        const int width = std::min(c.w - 48 * s, 860);
         const int x = (c.w - width) / 2;
         struct Line { std::string text, value; int item; bool name; };
         std::vector<Line> out;
         int selFirst = 0, selLast = 0;
         bool infoHeading = false;
+        const int nameFontH = std::max(13, 7 * ts);
+        const int descFontH = std::max(11, 5 * ts);
         for (int i = 0; i < (int)items.size(); i++)
         {
             const Setting& e = items[i];
@@ -1782,28 +1794,37 @@ struct SettingsPage
             if (i == selected) selFirst = (int)out.size();
             const std::string value = e.key ? Shown(e) : "";
             const bool arrows = !value.empty() && i == selected && e.key && strncmp(e.key, "!group", 6);
-            const std::string drawnValue = arrows ? "< " + UiLang::Tr(value) + " >" : UiLang::Tr(value);
-            const bool stacked = Canvas::TextWidth(e.name, ts) + Canvas::TextWidth(drawnValue, ts) + 8 * ts > width;
-            out.push_back({ e.name, stacked ? "" : value, i, true });
+            const std::string niceVal = ToNiceTitle(UiLang::Tr(value));
+            const std::string drawnValue = arrows ? "< " + niceVal + " >" : niceVal;
+            const std::string niceName = ToNiceTitle(UiLang::Tr(e.name));
+            const bool stacked = c.ModernTextWidth(niceName, nameFontH) + c.ModernTextWidth(drawnValue, nameFontH) + 16 * ts > width;
+            out.push_back({ niceName, stacked ? "" : value, i, true });
             if (stacked && !value.empty())
-                for (const std::string& l : Wrap(UiLang::Tr(value), width / (6 * ts) - 2)) out.push_back({ l, "", i, false });
-            for (const std::string& l : Wrap(UiLang::Tr(e.text), width / (6 * ts) - 2)) out.push_back({ l, "", i, false });
+                for (const std::string& l : Wrap(niceVal, width / (6 * ts) - 2)) out.push_back({ l, "", i, false });
+            for (const std::string& l : Wrap(ToNiceTitle(UiLang::Tr(e.text)), width / (6 * ts) - 2)) out.push_back({ l, "", i, false });
             if (i == selected) selLast = (int)out.size() - 1;
             out.push_back({ "", "", -1, false });
         }
-        const int top = (c.h > c.w ? 48 : 30) * s, bottom = c.h - 18 * s;
-        lineH = (UiLang::Tall() ? 16 : 10) * ts;
+        int top = (c.h > c.w ? 48 : 30) * s, bottom = c.h - 18 * s;
+        lineH = std::max(20, (UiLang::Tall() ? 16 : 11) * ts);
         const int fit = std::max(1, (bottom - top) / lineH);
         if (follow)
         {
             if (selFirst < scroll) scroll = selFirst;
             if (selLast >= scroll + fit) scroll = selLast - fit + 1;
         }
+        if (group < 0 && (int)out.size() < fit)
+        {
+            const int totalH = (int)out.size() * lineH;
+            top = top + std::max(0, (bottom - top - totalH) / 2);
+        }
         scroll = std::max(0, std::min(scroll, (int)out.size() - fit));
         rows.clear();
 
         // Draw elevated frosted glass cards behind each visible item group before drawing text.
         const int cardRad = std::max(3, 4 * ts);
+        const float t = AnimTime();
+        const float pulse = 0.5f + 0.5f * sinf(t * 3.5f);
         for (int i = scroll; i < (int)out.size(); )
         {
             const int y0 = top + (i - scroll) * lineH;
@@ -1817,9 +1838,10 @@ struct SettingsPage
             const bool sel = it == selected;
             if (sel)
             {
-                c.GlowRound(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, 3 * ts, th.frame);
+                const uint32_t glowCol = (th.frame & 0x00FFFFFF) | ((uint32_t)(40 + 35 * pulse) << 24);
+                c.GlowRound(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, 3 * ts, glowCol);
                 c.FillGlass(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, 0xFF242E44, 0xFF192030, th.frame, 1);
-                c.FillRound(x - 4 * ts, cardY + 2 * ts, std::max(2, 2 * ts), cardH - 4 * ts, ts, th.frame);
+                c.FillRound(x - 4 * ts, cardY + 2 * ts, std::max(2, 2 * ts), cardH - 4 * ts, ts, 0xFF00E5FF);
             }
             else
             {
@@ -1837,17 +1859,18 @@ struct SettingsPage
             if (l.name)
             {
                 const bool info = !items[l.item].key;
-                c.Text(x, y, l.text, ts, info ? th.hint : sel ? th.nameSel : th.subSel);
+                c.ModernText(x + 4 * ts, y + (lineH - nameFontH) / 2, l.text, nameFontH, info ? th.hint : sel ? th.nameSel : th.subSel);
                 if (!l.value.empty())
                 {
                     const bool group = !strncmp(items[l.item].key, "!group", 6);
-                    const std::string v = sel && !group ? "< " + UiLang::Tr(l.value) + " >" : l.value;
-                    c.Text(x + width - Canvas::TextWidth(v, ts), y, v, ts, sel ? th.nameSel : th.name);
+                    const std::string v = sel && !group ? "< " + ToNiceTitle(UiLang::Tr(l.value)) + " >" : ToNiceTitle(l.value);
+                    const int valW = c.ModernTextWidth(v, nameFontH);
+                    c.ModernText(x + width - valW - 4 * ts, y + (lineH - nameFontH) / 2, v, nameFontH, sel ? th.nameSel : th.name);
                 }
             }
             else if (!l.text.empty())
             {
-                c.TextRaw(x + 2 * 6 * ts, y, l.text, ts, sel ? th.name : th.sub);
+                c.ModernText(x + 10 * ts, y + (lineH - descFontH) / 2, l.text, descFontH, sel ? th.name : th.sub);
             }
         }
         if (scroll > 0) c.FillRound(c.w / 2 - 10 * s, top - 4 * s, 20 * s, s + 1, std::max(1, s / 2), th.frame);
@@ -1856,16 +1879,18 @@ struct SettingsPage
         c.FillGlass(0, c.h - dockH, c.w, dockH, 0, 0xFA141926, 0xFA0B0E16, 0xFF28344C, 1);
 
         struct DockItem { const char* badge; const char* label; };
-        static const DockItem items[] = {
+        static const DockItem dockItems[] = {
             { "A", "CHANGE" }, { "B", "BACK" }
         };
         const int itemCount = 2;
         const int bh = 11 * s;
+        const int dockFontH = std::max(11, 4 * s);
         int totalW = 0;
         int widths[itemCount];
         for (int i = 0; i < itemCount; i++)
         {
-            widths[i] = bh + Canvas::TextWidth(items[i].label, s) + 5 * s;
+            const std::string niceLabel = ToNiceTitle(UiLang::Tr(dockItems[i].label));
+            widths[i] = bh + c.ModernTextWidth(niceLabel, dockFontH) + 6 * s;
             totalW += widths[i];
         }
         const int itemGap = 16 * s;
@@ -1877,16 +1902,18 @@ struct SettingsPage
             const int by = c.h - dockH + (dockH - bh) / 2;
             for (int i = 0; i < itemCount; i++)
             {
-                c.DrawButtonBadge(dx, by, items[i].badge, s, 0xFF222B3D, 0xFFFFFFFF, 0xFF3D4B66);
-                c.Text(dx + bh + 4 * s, by + 2 * s, items[i].label, s, th.hint);
+                c.DrawButtonBadge(dx, by, dockItems[i].badge, s, 0xFF222B3D, 0xFFFFFFFF, 0xFF3D4B66);
+                const std::string niceLabel = ToNiceTitle(UiLang::Tr(dockItems[i].label));
+                c.ModernText(dx + bh + 4 * s, by + (bh - dockFontH) / 2, niceLabel, dockFontH, th.hint);
                 dx += widths[i] + itemGap;
             }
         }
         else
         {
-            int hintScale = s;
-            while (hintScale > 1 && Canvas::TextWidth(hint, hintScale) > c.w - 16 * s) --hintScale;
-            c.Text((c.w - Canvas::TextWidth(hint, hintScale)) / 2, c.h - 11 * s, hint, hintScale, th.pokemon ? 0xFFDBE9FAu : th.hint);
+            const int hintH = std::max(11, 4 * s);
+            const std::string niceHint = ToNiceTitle(hint);
+            const int hw = c.ModernTextWidth(niceHint, hintH);
+            c.ModernText((c.w - hw) / 2, c.h - dockH + (dockH - hintH) / 2, niceHint, hintH, th.pokemon ? 0xFFDBE9FAu : th.hint);
         }
     }
 };

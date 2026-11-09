@@ -3,75 +3,28 @@
 
 ## Unreleased
 
-- **Tegra X1 deko3D render target alignment fix (door exit crash)**:
-  - Fixed MMU fault / hardware crash on Nintendo Switch when walking through doors or transitioning from buildings/houses to the overworld in Pokémon Black and White. Maxwell compressed color and depth render targets (`DkImageFlags_HwCompression`) require 64 KB alignment; `Image()` allocated `size + align` but passed an offset of `0` to `dkImageInitialize()`. Now computes the aligned offset `(align - (base % align)) % align` to guarantee exact hardware alignment.
-  - Added alignment check in `SlotImage()` for pitch-linear render targets, safely falling back to final pass image blits if unaligned.
-  - Guarded `WideGpuSendJoin(2)` and buffer publishing in `GPU3D_Wide` to prevent joining unqueued jobs or publishing stale frame buffers when GPU submission fails.
-  - Defaulted `wideMap` to `false` to prevent unwanted zone loading heap modifications on map transitions.
 
-- **Fast forward performance optimization (10 FPS slowdown fix)**:
-  - Eliminated the 60 Hz wall-clock timer stall in `presentDue`, `presentFrame`, and ahead-pipeline waits while fast forwarding (`speed > 1`), allowing the emulator to run unthrottled at true multi-speed.
-  - Reduced wide 3D GPU render height to 192p (native DS resolution) while fast forwarding, slashing Tegra X1 fillrate and memory bandwidth bottlenecks by ~14x.
-  - Skipped intermediate wide 3D GPU rendering (`rc_wide_render_skip`) on all intermediate frames so only the displayed frame is drawn.
-  - Reduced fast forward audio queue backlog buffer from 30 seconds to 2 seconds, eliminating multi-megabyte `vector::erase` memory copies that evicted CPU cache every few frames.
+## v1.0.0-beta.1 — Clean Baseline: Switch Fast-Forward Fix, Indoor Void, Weather Caching & Tico-Style Launcher
 
-- **Settings and menu simplification**:
-  - Pruned confusing, redundant, or unstable settings from the launcher and pause menu (`wide_map`, `battle_buttons`, `busy_detail`, `start_button`, `pad_touch`, and non-interactive help cards), keeping menus uncluttered, intuitive, and focused.
+- **Fast-forward stability and 3D pipeline synchronisation on Nintendo Switch**:
+  - Fixed a race condition in `ListHelper::Start` (`GPU3D_Wide.cpp`) where `Cur` and `Prev` polygon list pointers were updated outside the worker mutex while Core 1/2 was reading them.
+  - Fixed texture corruption and crashes during fast-forward scene transitions when the 2048×2048 `WideGpuAtlas` filled up and reset (`at.Reset` now resynchronises `UploadedY`/`UploadedX` in `WideGpuDeko` and OpenGL backends).
+  - Preserved the 1-frame 3D pipeline contract across fast-forward batches (`rc_wide_render_skip` on intermediate frames `i < emuSpeed - 2`), preventing `SoftRenderer` semaphore deadlocks and keeping `WideLinesNow` steady on `deko3D` hardware rendering so fast-forward never triggers mid-frame GPU render target reallocations.
+  - Pre-allocated `WideGpuDeko::Target` slot memory to at least 720p capacity so zero-copy `melonDS::Wide.Front` buffers are never destroyed while read by the main thread.
+  - Integrated `AudioFastForward` batch compression so sound effects stay in sync with fast-forward without accumulating audio lag.
 
-- **Complete Horizon OS launcher, settings, and in-game HUD visual overhaul**:
-  - **Dynamic responsive grid**: eliminated the 4-column cap on widescreen, high-resolution (1080p, 1440p, 4K), and ultra-wide displays; balanced horizontal and vertical card gaps evenly; adaptive 2-column portrait layout for vertical displays.
-  - **Tactile physical cartridge case fallback**: when custom box art is absent, rendered a detailed 3D retro cartridge case (Nintendo DS matte dark charcoal with grip arrow/notch or GBA slate with curved lip relief), complete with metallic label sticker, platform header, crisp 32x32 scaled pixel icon, and authentic serial code (`NTR-` / `AGB-`).
-  - **Frosted glass acrylic cards & radiant glow**: added multi-layer radiant bloom glow to focused cards, tabs, and buttons; soft ambient drop shadows; rounded top corners on cover art matching card geometry.
-  - **Glowing hardware LED status indicators**: replaced plain text status with realistic illuminated LED dots (emerald for save found, amber for new game, ruby for unsupported, violet for coming soon) and luminous glass status capsules.
-  - **Tactile controller button badges dock**: replaced plain text button hints with physical 3D beveled controller button badges `[A] PLAY`, `[Y] SETTINGS`, `[X] RANDOM`, `[L] [R] TABS`, `[+] QUIT` in both launcher and settings pages, as well as top header buttons `[< BACK (B)]` and `[SETTINGS (Y)]`.
-  - **Horizon OS sliding toggle switches & slider bars**: upgraded settings page and in-game pause menu with modern sliding switches, smooth continuous volume slider bars with circular thumb knobs, and frosted glass panels with subtle cinematic perimeter vignetting.
-  - **In-game HUD glassmorphism**: sleek frosted glass capsules for the FPS counter and fast-forward indicator (`>>`) with glowing status dots, and modernized notification toasts with luminous accent stripes.
-  - **Vibrant color palette**: overhauled accent themes with 8 rich high-contrast colours (Crimson Red, Electric Azure, Emerald Mint, Cosmic Amethyst, Sunset Amber, Coral Pink, Aqua Teal, Platinum Silver).
+- **Switch rendering fixes (weather uploads, indoor void, battle cursor) & multicore tuning**:
+  - **Weather uploads**: unified left/right weather particle textures into a single `WeatherTex[0]` and added 64-bit FNV-1a signature caching (`weatherSig`, `edgeSig`, `narrowSig`, `fillSig`) in `GpuCompositor`, skipping redundant `SDL_UpdateTexture` uploads when 30 FPS weather sprites or 2D edge bars have not changed between 60 FPS display frames.
+  - **Indoor void**: expanded `MergedFillWideHoles` room-end detection across the full widescreen canvas width and restored `isIndoorScene()` using `sc.narrow = true; sc.softBars = true;` while keeping `sc.wide` active, preventing stretched wall stripes and black void in indoor rooms without expiring `Wide.Owner` after 300 frames.
+  - **Battle cursor**: immediately hides the right-stick touch crosshair (`cursorShownUntil = 0`) when pressing D-pad or face buttons during battle, and disables the SDL mouse cursor on Switch.
+  - **Switch CPU & GPU scheduling**: balanced `ListHelper` onto Core 2 and `WideGpuSend` onto Core 1 during VBlank, limited SDL joystick polling to player 1 on Switch, and offloaded pause-menu backdrop dimming to `SDL_RenderFillRect` on the GPU.
 
+- **Redesigned Tico / Horizon OS Launcher, Settings & Pause Menu (`NoSplitNX`)**:
+  - **Glass Hero Showcase Banner**: full-width frosted glass header displaying the selected game title, colour-coded console badge (`Nintendo DS`, `Game Boy Advance`, `Nintendo 3DS`), serial code (`NTR-` / `AGB-`), save status pill (`Save Found` / `New Game`), and library counter (`1 / N`).
+  - **Framed Emblem Game Cards**: redesigned carousel cards with recessed glass emblem wells, radial console glow, top-right save LED indicator, and frosted card footers showing each game's short title and serial code.
+  - **Proportional antialiased typography & aligned controls**: rendered with supersampled antialiased font metrics, vertically centred clock/battery widget, and tactile controller button docks.
+  - **Touch drag & swipe protection**: integrated `MenuDrag` so touch scrolling in the launcher or settings never accidentally triggers an option on finger release.
 
-## v1.0.0-beta.7 — Fix overworld clipping overflow, candidate search stall, and 60 FPS interpolation toggle
-
-- **Overworld door exit and map transition stability**:
-  - Fixed a fatal crash (`__stack_chk_fail` stack canary trip) when exiting houses or buildings into outdoor maps with over 2,600 polygons in Pokémon Black and White by adding strict boundary checks in `ClipAgainstPlane` and `SubmitPolygon` to prevent stack array overflows during polygon clipping.
-  - Eliminated a severe CPU stall and OS watchdog hang when loading outdoor overworld geometry by reordering 2D bounding-box and depth culling before `sharesCorner` in `ExtendToEdges`, reducing millions of redundant polygon candidate corner tests to near zero.
-  - Added arithmetic safety against division by zero in `ClipSegment` when vertices share identical clipping plane distances.
-  - Cleaned up deko3D image target allocation by ensuring `FreeTargets()` is called on dimension changes in `MakeTargets` to prevent Tegra X1 texture memory corruption.
-
-- **Safe 60 FPS interpolation toggle**:
-  - Fixed crash when toggling the 60 FPS interpolation setting from the pause menu mid-dialogue or during static scenes by clearing raw polygon buffers (`RawCurrent`, `RawPrevious`) and resetting all interpolation state.
-  - Clarified that the "60 FPS" setting generates intermediate in-between frames for DS 3D polygon rendering (motion interpolation) rather than acting as a frame rate limiter.
-
-
-## v1.0.0-beta.6 — Fix door transition crash and Tegra X1 texture alignment
-
-- **Door exit and map transition stability**:
-  - Fixed a crash on Nintendo Switch when walking through doors or transitioning between interiors and the overworld by aligning narrow side bar textures (`NarrowTex`) to 8x192 with a 32-byte stride (matching Tegra X1 hardware requirements).
-  - Added strict null pointer and bounds checking for screen images and background pixels in `GpuCompositor::Draw` during transition wipes.
-  - Added vertex count validation and null vertex protections in `GPU3D_Wide::ExtendToEdges` to prevent stack corruption and invalid memory accesses during outdoor map entry.
-  - Ensured GPU queue completion (`dkQueueWaitIdle`) before destroying slot target memory upon dimension changes in deko3D.
-
-## v1.0.0-beta.5 — Safe 60 FPS interpolation toggle and bounds validation
-
-- **Safe 60 FPS interpolation toggle and bounds checking**:
-  - Fixed a segmentation fault / crash when toggling 60 FPS from the pause menu mid-dialogue or during scenes without 3D camera movement by resetting pending and deferred interpolated frames (`InterpPending`, `InterpDeferred`, `InterpShowReal`) on toggle.
-  - Added strict vector bounds checks for polygon strip indices, partner mappings, and previous raw polygon lookups in `GPU3D_Wide::Replay()`.
-  - Guarded `BuildInterpolatedFrame()` and `VCount215()` in `GPU3D.cpp` against uninitialized or stale polygon pointers when interpolation is disabled.
-
-## v1.0.0-beta.4 — Fix overworld entry, 60fps pacing and edge texture alignment
-
-- **Gen 5 overworld loading and stability fixes**:
-  - Fixed a freeze/hang when loading a save or entering the overworld in Pokémon Black and White by restoring proper 3D rendering pipeline flow and preventing render skips on transition scenes.
-  - Retained deko3D target memory blocks across dimension changes, eliminating allocation faults on Tegra X1 when transitioning between interior maps and the overworld.
-  - Aligned the screen edge continuation texture to 32 bytes (8x192), resolving the Tegra X1 hardware stride crash when exiting buildings and houses.
-  - Restored full 60 FPS interpolation and 720p adaptive rendering defaults for Gen 5 games on Switch, keeping intro audio smooth and eliminating frame pacing stutter.
-  - Fixed launcher accent colors (`COLOUR` / `list_colour`) failing to persist on Nintendo Switch FAT32 filesystems.
-
-## v1.0.0-beta.3 — Switch stability, audio and launcher theme fixes
-
-- **Nintendo Switch stability, audio and launcher theme fixes**:
-  - Fixed launcher accent colors (`COLOUR` / `list_colour`) failing to persist on Nintendo Switch FAT32 filesystems and immediately updating launcher cards, tabs, and lines in real-time.
-  - Fixed 30 FPS slowdown and audio stuttering on loading screens, intros, and 2D menus in Pokémon White and Black by skipping unrendered 3D passes (`skipWide`), setting Gen 5 Switch defaults to 384 lines with auto-detail, and preventing audio stretching loops when the queue is healthy.
-  - Fixed fatal crash when exiting houses/buildings into the overworld in Pokémon White by restoring clean deko3D target recreation (`FreeTargets()`) upon dimension changes, waiting for GPU idle before destroying frame memory, and adding boundary checks to wide hole fills.
 
 - **Nintendo Switch UI redesign & self-updater fix**: modern Horizon-inspired launcher, settings cards, and in-game pause menu with rounded cards, vertical gradients, soft shadows, status pills, non-overlapping header clock/mode badges, and colour-coded FPS/toast pills. Fixed the Nintendo Switch self-updater (`CHECK FOR UPDATES`) to support HTTPS on Horizon OS, pre-release beta tags, `SHA256SUMS.txt` verification, and clean `romfs` unmounting when replacing `nosplitnx.nro`.
 

@@ -334,6 +334,8 @@ private:
             // row that goes on as a pattern has its 16 edge pixels in it, any other row its
             // one colour 16 times.
             bool any = false, anyInner = false;
+            uint64_t edgeSig = 1469598103934665603ULL;
+            uint64_t edgeInSig = 1469598103934665603ULL;
             for (int y = 0; y < 192; y++)
             {
                 const EdgeContinuation c = MergedEdgeContinuation(scene, top, y, side);
@@ -348,8 +350,12 @@ private:
                 {
                     if (inner && top.pixels) inPx = (EdgeCustomFailed ? 0xFF000000u : 0u) | (top.pixels[y * 256 + (side ? 239 : 16)] & 0xFFFFFF);
                     for (int k = 0; k < 16; k++)
+                    {
                         row[k] = (EdgeCustomFailed ? 0xFF000000u : 0u) | (top.pixels ? (top.pixels[y * 256 + (side ? 240 : 0) + k] & 0xFFFFFF) : 0u);
+                        edgeSig = (edgeSig ^ row[k]) * 1099511628211ULL;
+                    }
                     std::fill(&EdgeIn[y * 8], &EdgeIn[y * 8] + 8, inPx);
+                    edgeInSig = (edgeInSig ^ inPx) * 1099511628211ULL;
                     continue;
                 }
                 uint32_t r = (c.rgb >> 16) & 0xFF, g = (c.rgb >> 8) & 0xFF, b = c.rgb & 0xFF;
@@ -374,8 +380,10 @@ private:
                     px = (uint32_t)(a * 255 / 16) << 24 | r << 16 | g << 8 | b;
                 }
                 std::fill(row, row + 16, px);
+                edgeSig = (edgeSig ^ px) * 1099511628211ULL;
                 if (inner) inPx = px;
                 std::fill(&EdgeIn[y * 8], &EdgeIn[y * 8] + 8, inPx);
+                edgeInSig = (edgeInSig ^ inPx) * 1099511628211ULL;
             }
             if (!any) continue;
             const float barW = side == 0 ? (float)left : (float)(outW - right);
@@ -393,7 +401,12 @@ private:
                 SDL_SetTextureBlendMode(e, SDL_BLENDMODE_BLEND);
             }
             SDL_SetTextureScaleMode(e, SDL_ScaleModeNearest);
-            SDL_UpdateTexture(e, nullptr, Edge, 16 * 4);
+            if (!EdgeTex[side].hasSig || EdgeTex[side].sig != edgeSig)
+            {
+                SDL_UpdateTexture(e, nullptr, Edge, 16 * 4);
+                EdgeTex[side].sig = edgeSig;
+                EdgeTex[side].hasSig = true;
+            }
             // Copies 16 base pixels wide, outwards from the screen's edge (the last one cut at
             // the edge of the view).
             const float tw = 16 * v.unit;
@@ -412,7 +425,12 @@ private:
                 {
                     SDL_SetTextureBlendMode(in, EdgeCustomFailed ? SDL_BLENDMODE_BLEND : EdgeMode);
                     SDL_SetTextureScaleMode(in, SDL_ScaleModeNearest);
-                    SDL_UpdateTexture(in, nullptr, EdgeIn, 8 * 4);
+                    if (!EdgeInTex[side].hasSig || EdgeInTex[side].sig != edgeInSig)
+                    {
+                        SDL_UpdateTexture(in, nullptr, EdgeIn, 8 * 4);
+                        EdgeInTex[side].sig = edgeInSig;
+                        EdgeInTex[side].hasSig = true;
+                    }
                     const SDL_Rect src = { 0, 0, 1, 192 };
                     const SDL_FRect dst = { side ? v.originX + 255 * v.unit : v.originX, (float)y0, v.unit, (float)h };
                     SDL_RenderCopyF(R, in, &src, &dst);
@@ -422,6 +440,8 @@ private:
         // sprites, drawn again one screen width to the left and to the right.
         if (scene.weatherObj && (left > 0 || right < outW))
         {
+            bool anyWeather = false;
+            uint64_t weatherSig = 1469598103934665603ULL;
             // Extract the weather sprite pixels once for both sides instead of duplicating work.
             for (int y = 0; y < 192; y++)
             {
@@ -434,24 +454,38 @@ private:
                 for (int x = 0; x < 256; x++)
                 {
                     const int i = y * 256 + x;
-                    row[x] = LayerClass(top.flags[i]) == LAYER_OBJ ? 0xFF000000u | (top.pixels[i] & 0xFFFFFF) : 0u;
+                    const uint32_t px = LayerClass(top.flags[i]) == LAYER_OBJ ? 0xFF000000u | (top.pixels[i] & 0xFFFFFF) : 0u;
+                    row[x] = px;
+                    if (px)
+                    {
+                        anyWeather = true;
+                        weatherSig = (weatherSig ^ ((uint64_t)i << 32 | px)) * 1099511628211ULL;
+                    }
                 }
             }
-            SDL_Texture* w = Make(WeatherTex[0], 256, 192);
-            if (w)
+            if (anyWeather)
             {
-                SDL_SetTextureBlendMode(w, SDL_BLENDMODE_BLEND);
-                SDL_SetTextureScaleMode(w, SDL_ScaleModeNearest);
-                SDL_UpdateTexture(w, nullptr, Weather, 256 * 4);
-                if (left > 0)
+                SDL_Texture* w = Make(WeatherTex[0], 256, 192);
+                if (w)
                 {
-                    const SDL_FRect dst = { v.originX - 256 * v.unit, (float)y0, 256 * v.unit, (float)h };
-                    SDL_RenderCopyF(R, w, nullptr, &dst);
-                }
-                if (right < outW)
-                {
-                    const SDL_FRect dst = { v.originX + 256 * v.unit, (float)y0, 256 * v.unit, (float)h };
-                    SDL_RenderCopyF(R, w, nullptr, &dst);
+                    if (!WeatherTex[0].hasSig || WeatherTex[0].sig != weatherSig)
+                    {
+                        SDL_SetTextureBlendMode(w, SDL_BLENDMODE_BLEND);
+                        SDL_SetTextureScaleMode(w, SDL_ScaleModeNearest);
+                        SDL_UpdateTexture(w, nullptr, Weather, 256 * 4);
+                        WeatherTex[0].sig = weatherSig;
+                        WeatherTex[0].hasSig = true;
+                    }
+                    if (left > 0)
+                    {
+                        const SDL_FRect dst = { v.originX - 256 * v.unit, (float)y0, 256 * v.unit, (float)h };
+                        SDL_RenderCopyF(R, w, nullptr, &dst);
+                    }
+                    if (right < outW)
+                    {
+                        const SDL_FRect dst = { v.originX + 256 * v.unit, (float)y0, 256 * v.unit, (float)h };
+                        SDL_RenderCopyF(R, w, nullptr, &dst);
+                    }
                 }
             }
         }
@@ -472,9 +506,18 @@ private:
             if (!t) continue;
             SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
             SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
+            uint64_t narrowSig = 1469598103934665603ULL;
             for (int y = 0; y < 192; y++)
+            {
                 std::fill(&NarrowBuf[y * 8], &NarrowBuf[y * 8] + 8, bars[side][y]);
-            SDL_UpdateTexture(t, nullptr, NarrowBuf, 8 * 4);
+                narrowSig = (narrowSig ^ bars[side][y]) * 1099511628211ULL;
+            }
+            if (!NarrowTex[side].hasSig || NarrowTex[side].sig != narrowSig)
+            {
+                SDL_UpdateTexture(t, nullptr, NarrowBuf, 8 * 4);
+                NarrowTex[side].sig = narrowSig;
+                NarrowTex[side].hasSig = true;
+            }
             const SDL_Rect src = { 0, 0, 1, 192 };
             const SDL_FRect dst = side == 0 ? SDL_FRect { 0, y0, (float)left, h } : SDL_FRect { (float)right, y0, (float)(outW - right), h };
             if (dst.w > 0) SDL_RenderCopyF(R, t, &src, &dst);
@@ -492,9 +535,11 @@ private:
         const int y0 = (int)v.originY, h = (int)(192 * v.unit + 0.5f);
         for (int side = 0; side < 2; side++)
         {
+            uint64_t fillSig = 1469598103934665603ULL;
             for (int y = 0; y < 192; y++)
             {
                 const uint32_t c = EdgeFillColour(top, y, side);
+                fillSig = (fillSig ^ c) * 1099511628211ULL;
                 for (int x = 0; x < 16; x++)
                 {
                     // Column 0 is the outer edge on the left side, the inner one on the right.
@@ -507,7 +552,12 @@ private:
             if (!t) continue;
             SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
             SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
-            SDL_UpdateTexture(t, nullptr, Fill, 16 * 4);
+            if (!FillTex[side].hasSig || FillTex[side].sig != fillSig)
+            {
+                SDL_UpdateTexture(t, nullptr, Fill, 16 * 4);
+                FillTex[side].sig = fillSig;
+                FillTex[side].hasSig = true;
+            }
             const SDL_Rect dst = side == 0 ? SDL_Rect { 0, y0, left, h } : SDL_Rect { right, y0, outW - right, h };
             SDL_RenderCopy(R, t, nullptr, &dst);
         }

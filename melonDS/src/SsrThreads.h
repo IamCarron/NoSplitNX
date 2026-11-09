@@ -96,11 +96,12 @@ inline void SsrHelperThreadStart(int role)
     }
     if (role < 0)
     {
-        // Core 1 (or 2 when 1 is busy), at the main thread's priority: what it builds is
-        // waited for 23 lines after it starts.
-        const uint32_t rc = svcSetThreadCoreMask(currentThread, 1, (1u << 1) | (1u << 2));
+        // Core 2 (or 1 when 2 is busy), at the main thread's priority: what it builds is
+        // waited for 23 lines after it starts, and starting on core 2 avoids contending with
+        // the graphics chip sending thread on core 1 during the VBlank burst.
+        const uint32_t rc = svcSetThreadCoreMask(currentThread, 2, (1u << 1) | (1u << 2));
         const uint32_t prc = svcSetThreadPriority(currentThread, 0x2C);
-        fprintf(stderr, "[switch] polygon list thread on core 1: 0x%x 0x%x\n", (unsigned)rc, (unsigned)prc);
+        fprintf(stderr, "[switch] polygon list thread on core 2: 0x%x 0x%x\n", (unsigned)rc, (unsigned)prc);
         return;
     }
     // The 3D thread: core 1 only, at the main thread's priority (0x2C; new threads get 0x3B).

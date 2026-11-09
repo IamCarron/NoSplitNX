@@ -57,6 +57,7 @@
 #include "ui.h"
 #include "merged.h"
 #include "audiostretch.h"
+#include "audio_fast_forward.h"
 #include "gpucompose.h"
 #include "emuthread.h"
 
@@ -2415,7 +2416,13 @@ int main(int argc, char** argv)
             const char* name = SDL_JoystickNameForIndex(i);
             fprintf(stderr, "  device %d: %s, %04x:%04x, %s\n", i, name ? name : "?", SDL_JoystickGetDeviceVendor(i),
                 SDL_JoystickGetDeviceProduct(i), SDL_IsGameController(i) ? "known layout" : "no known layout");
+#ifdef __SWITCH__
+            // On Switch, SDL exposes 8 virtual joystick slots; polling all 8 every frame wastes
+            // ~0.7 ms of main-thread time on Core 0 when only player 1 (index 0) is used.
+            if (i == 0) pads.Open(i);
+#else
             pads.Open(i);
+#endif
         }
     }
 
@@ -2596,6 +2603,7 @@ int main(int argc, char** argv)
         int battleList = -1, battleBag = -1, battleChoice = -1, battleYesNo = -1;
         int battleYesNoPoll = -1;
         int setupSingle = -1, setupDouble = -1, setupTriple = -1, setupRotation = -1;
+        std::vector<int> setupOther; // the other kinds of battle (multi, link), where named
         int save = -1, saveWrite = -1;
         std::vector<int> levelUpWin; // the level-up window in a battle (BtlvCore_Wait*LevelUp*)
         int battleTarget = -1;       // choosing a move's target (double, triple, rotation battles)
@@ -2650,6 +2658,9 @@ int main(int argc, char** argv)
         bw2.setupDouble = bw2Find("BtlMain_SetupAloneDouble");
         bw2.setupTriple = bw2Find("BtlMain_SetupAloneTriple");
         bw2.setupRotation = bw2Find("BtlMain_SetupAloneRotation");
+        for (const char* f : { "BtlMain_SetupAloneMulti", "BtlMain_SetupCommSingle", "BtlMain_SetupCommDouble",
+                               "BtlMain_SetupCommTriple", "BtlMain_SetupCommRotation" })
+            bw2.setupOther.push_back(bw2Find(f));
         bw2.save = bw2Find("EventSave_Callback");       // SAVE from the X menu, until it is done
         // Waits for the save memory: while the game writes its save it does nothing else, for
         // over a second, not even the overworld (see the save layout).
@@ -2949,6 +2960,43 @@ int main(int argc, char** argv)
         // with black bars beside it); wideView still decides where menus and buttons go, which
         // needs the room.
         const bool worldWide = viewWidth > 256.5f;
+        // Indoor rooms do not extend 3D geometry to the bottom or outer widescreen margins of
+        // the canvas, leaving raw black void around the room. Keep sc.wide active so Wide.Front
+        // continues updating every frame, and mark the scene narrow with soft ambient bars
+        // while the room is surrounded by void.
+        auto isIndoorScene = [&]() -> bool {
+            if (!worldWide) return false;
+            const u32* f = melonDS::Wide.Front;
+            const int fw = melonDS::Wide.FrontW, fh = melonDS::Wide.FrontH;
+            if (!f || fw <= 0 || fh <= 0)
+                return false;
+            int centreOpaque = 0;
+            for (int y = fh / 3; y < (fh * 2) / 3; y += 8)
+                for (int x = fw / 3; x < (fw * 2) / 3; x += 8)
+                    if (f[(size_t)y * fw + x] >> 24)
+                        centreOpaque++;
+            if (centreOpaque == 0) return false;
+            int bottomOpaque = 0;
+            const int xStart = fw / 3, xEnd = (fw * 2) / 3;
+            const int yStart = std::max(0, fh - 16);
+            for (int y = yStart; y < fh; y += 2)
+                for (int x = xStart; x < xEnd; x += 4)
+                    if (f[(size_t)y * fw + x] >> 24)
+                        bottomOpaque++;
+            if (bottomOpaque == 0) return true;
+            int leftOpaque = 0, rightOpaque = 0;
+            const int sideW = std::max(4, fw / 8);
+            for (int y = fh / 4; y < (fh * 3) / 4; y += 4)
+            {
+                for (int x = 0; x < sideW; x += 4)
+                    if (f[(size_t)y * fw + x] >> 24)
+                        leftOpaque++;
+                for (int x = fw - sideW; x < fw; x += 4)
+                    if (f[(size_t)y * fw + x] >> 24)
+                        rightOpaque++;
+            }
+            return leftOpaque == 0 && rightOpaque == 0;
+        };
         // A panel of touch-screen controls in the lower right corner of the view, below the
         // player's HP box (whose numbers end at y 132), over the empty right part of the
         // message box, keeping the game's own arrangement so that the D-pad moves the
@@ -3120,6 +3168,7 @@ int main(int argc, char** argv)
             // click shows it).
             only("top", 0);
             sc.wide = worldWide;
+            if (isIndoorScene()) { sc.narrow = true; sc.softBars = true; }
             sc.weatherObj = pt.Weather(funcWatch, 4); // rain, snow, ...: repeated to the view's edges
             if (wideView && funcWatch.Ran(pt.startMenu, 2))
             {
@@ -3167,6 +3216,12 @@ int main(int argc, char** argv)
                     seen = funcWatch.LastFrame(setups[k]);
                     kind = k == 0 ? 1 : 2;
                 }
+            for (int f : bw2.setupOther)
+                if (funcWatch.LastFrame(f) > seen) { seen = funcWatch.LastFrame(f); kind = 2; }
+            // A setup from before the overworld last ran was an earlier battle's: this one started
+            // some other way (Black and White's multi battles, with a partner, have no named setup)
+            // and is told by its boxes below, not taken for the last battle's kind (GitHub #112).
+            if (kind && funcWatch.LastFrame(bw2.field) > seen) kind = 0;
             if (!kind && screens && screens[0].flags)
             {
                 // Not seen: a single battle has one box at each of these places.
@@ -3336,8 +3391,9 @@ int main(int argc, char** argv)
             // by side popping up for that time, as they did.)
             only("save", 0);
             sc.wide = worldWide;
+            if (isIndoorScene()) { sc.narrow = true; sc.softBars = true; }
             sc.weatherObj = weatherParticles();
-            if (worldWide) sc.items[0].drop = LAYER_BG1; // the strip pointing at the other screen (as in the X menu)
+            if (worldWide && !sc.narrow) sc.items[0].drop = LAYER_BG1; // the strip pointing at the other screen (as in the X menu)
             SaveScreenPieces(sc, wideView, viewRight, screens);
         }
         else if (funcWatch.Ran(bw2.fieldMenu, 8)) // (it skips a few frames while the menu opens)
@@ -3347,11 +3403,12 @@ int main(int argc, char** argv)
             // like it should.
             only("start-menu", 0);
             sc.wide = worldWide;
+            if (isIndoorScene()) { sc.narrow = true; sc.softBars = true; }
             sc.weatherObj = weatherParticles();
             // The strip along the bottom of the top screen (BG1, with an arrow down) only says
             // to look at the other screen; without it the overworld shows there instead (only where
             // the world is widened: a 4:3 view has nothing under it, and showed a black band).
-            if (worldWide) sc.items[0].drop = LAYER_BG1;
+            if (worldWide && !sc.narrow) sc.items[0].drop = LAYER_BG1;
             // The touch screen holds up to six buttons, two to a row, in a fixed grid: 126 x 44
             // pixels each, rows 48 apart from y = 22. A slot is used when its button's left
             // edge (a light frame) is there; the menu fills the slots row by row.
@@ -3395,6 +3452,7 @@ int main(int argc, char** argv)
         {
             only("top", 0);
             sc.wide = worldWide;
+            if (isIndoorScene()) { sc.narrow = true; sc.softBars = true; }
             sc.weatherObj = weatherParticles();
         }
         else if (funcWatch.Ran(bw2.bag, 2))
@@ -4644,7 +4702,7 @@ int main(int argc, char** argv)
         M_RESUME, M_LAYOUT, M_LARGE, M_FPS60, M_FULLSCREEN, M_SMOOTH, M_WIDE, M_WIDEMAP, M_BATTLEBUTTONS,
         M_WIDELINES, M_AUTODETAIL, M_WIDEGPU, M_GPU3D, M_SHOWFPS, M_BUTTONS, M_PADTOUCH, M_EMULATION,
         M_CONTROLS, M_STARTBTN, M_FAST, M_FFLOWRES, M_SAVESTATE, M_LOADSTATE, M_RESET, M_QUIT,
-        M_DISPLAY, M_LANGUAGE, M_SOUND, M_GRAPHICS, M_CONTROLMENU, M_BACK, M_CHEATS, M_NOTHING,
+        M_SETTINGS, M_DISPLAY, M_LANGUAGE, M_SOUND, M_GRAPHICS, M_CONTROLMENU, M_BACK, M_CHEATS, M_NOTHING,
         M_VOLUME, M_FFMUTE, M_ASPECT, M_RA, M_RA_ON, M_RA_ACCOUNT, M_RA_GAME, M_RA_LOGIN, M_RA_TYPED, M_RA_CANCEL, M_BOTHVER,
         M_RA_LIST, M_ACH_POINTS, M_ACH_STATUS, M_ACH_RARITY,
         M_CSEARCH, M_SEARCH_LETTER, M_SEARCH_DELETE, M_SEARCH_SPACE, M_SEARCH_CLEAR, M_SEARCH_DONE,
@@ -4655,7 +4713,8 @@ int main(int argc, char** argv)
         M_CHEAT_ON = 49000, // ON NOW: every cheat that is on, from any folder
         M_CFOLDER0 = 50000  // (M_CFOLDER0 + i: folder i of the cheat database)
     };
-    enum { PAGE_MAIN, PAGE_KEYS, PAGE_DISPLAY, PAGE_GRAPHICS, PAGE_CONTROLS, PAGE_CHEATS, PAGE_RA, PAGE_SOUND, PAGE_RA_LIST, PAGE_RA_DETAIL, PAGE_CSEARCH, PAGE_CDETAIL, PAGE_CINFO, PAGE_BACKUPS, PAGE_RESTORE_CONFIRM, PAGE_LOAD_CONFIRM };
+    enum { PAGE_MAIN, PAGE_KEYS, PAGE_SETTINGS, PAGE_GRAPHICS, PAGE_CONTROLS, PAGE_CHEATS, PAGE_RA, PAGE_SOUND, PAGE_RA_LIST, PAGE_RA_DETAIL, PAGE_CSEARCH, PAGE_CDETAIL, PAGE_CINFO, PAGE_BACKUPS, PAGE_RESTORE_CONFIRM, PAGE_LOAD_CONFIRM };
+    static constexpr int PAGE_DISPLAY = PAGE_SETTINGS;
     // ACHIEVEMENTS (RETROACHIEVEMENTS' list): read from the set as the page opens.
     std::vector<Achievements::Row> achList;
     int achDetail = -1; // the one ACHIEVEMENTS' details are shown for (A on it)
@@ -4744,83 +4803,33 @@ int main(int argc, char** argv)
             add(M_RESUME, "RESUME", "");
             add(M_SAVESTATE, "SAVE STATE", "");
             add(M_LOADSTATE, "LOAD STATE", "");
-            if (!opt.noSave) add(M_BACKUPS, "SAVE BACKUPS", "");
             add(M_FAST, "FAST FORWARD", onOff(fastLock));
-            add(M_DISPLAY, "DISPLAY", "");
-            add(M_SOUND, "SOUND", "");
-            add(M_GRAPHICS, "GRAPHICS", "");
+            add(M_SETTINGS, "SETTINGS", "");
             add(M_CONTROLMENU, "CONTROLS", "");
             add(M_CHEATS, "CHEATS", cheats.On() ? std::to_string(cheats.On()) + " ON" : "");
-            if (exclusives.Supported()) add(M_BOTHVER, "OTHER VERSION POKEMON", onOff(exclusives.on));
-            if (Achievements::Available()) add(M_RA, "RETROACHIEVEMENTS", onOff(cfg.ra.on));
             add(M_RESET, "RESET GAME", "");
             add(M_QUIT, "QUIT", "");
         }
-        else if (menuPage == PAGE_DISPLAY)
-        {
-            add(M_LANGUAGE, "LANGUAGE", UiLang::ChoiceName());
-            {
-                static const char* const aspects[] = { "AUTO", "16:9", "16:10", "3:2", "4:3" };
-                add(M_ASPECT, "ASPECT RATIO", aspects[std::clamp(cfg.aspect, 0, 4)]);
-            }
-#ifndef __SWITCH__
-            // (The Switch always shows the one wide screen these layouts are built around.)
-            add(M_LAYOUT, "SCREEN LAYOUT", LayoutName(layout.mode));
-            add(M_LARGE, "LARGE SCREEN", large[focus.mode]);
-#if !defined(SSR_PHONE)
-            // (Always full screen on the Switch and phones. Borderless: a window the size of the
-            // screen, so other windows come up at once.)
-            add(M_FULLSCREEN, "BORDERLESS FULLSCREEN", onOff(cfg.fullscreen));
-#endif
-#endif
-            add(M_SMOOTH, "SMOOTH SCALING", onOff(cfg.smooth));
-            add(M_SHOWFPS, "FPS COUNTER", onOff(cfg.showFps));
-            add(M_BACK, "BACK", "");
-        }
-        else if (menuPage == PAGE_SOUND)
+        else if (menuPage == PAGE_SETTINGS)
         {
             add(M_VOLUME, "VOLUME", cfg.volume == 0 ? std::string("OFF") : std::to_string(cfg.volume) + "%");
             menu.items.back().slider = cfg.volume / 10;
-            add(M_FFMUTE, "FAST FORWARD SOUND", cfg.ffMute ? "OFF" : "ON");
-            add(M_BACK, "BACK", "");
-        }
-        else if (menuPage == PAGE_GRAPHICS)
-        {
             add(M_FPS60, "60 FPS", onOff(cfg.fps60));
             add(M_WIDE, "WIDESCREEN WORLD", onOff(cfg.wide));
-#ifdef __SWITCH__
-            add(M_WIDELINES, "WORLD DETAIL", std::to_string(detailLines[detailIndex()]));
-#else
-            // (The same setting, named as on a PC's other games: the lines the 3D world is drawn
-            // with, as a screen resolution.)
-            {
-                const int l = detailLines[detailIndex()];
-                add(M_WIDELINES, "3D RESOLUTION", std::to_string(l) + "P" + (l == 192 ? " (DS)" : l == 1440 ? " (2K)" : l == 2160 ? " (4K)" : ""));
-            }
+            add(M_SMOOTH, "SMOOTH SCALING", onOff(cfg.smooth));
+            add(M_SHOWFPS, "FPS COUNTER", onOff(cfg.showFps));
+            add(M_FFMUTE, "FAST FORWARD SOUND", cfg.ffMute ? "OFF" : "ON");
+            add(M_LANGUAGE, "LANGUAGE", UiLang::ChoiceName());
+#ifndef __SWITCH__
+            add(M_LAYOUT, "SCREEN LAYOUT", LayoutName(layout.mode));
+            add(M_LARGE, "LARGE SCREEN", large[focus.mode]);
+#if !defined(SSR_PHONE)
+            add(M_FULLSCREEN, "BORDERLESS FULLSCREEN", onOff(cfg.fullscreen));
 #endif
-#if SSR_WORLD_ON_GPU && !defined(__SWITCH__)
-            // ON: the widescreen world drawn by the graphics card (OpenGL), not the processor.
-            // (On the Switch always on: its fallback after a start that did not keep going is
-            // for that start only, see StartWideGpu's marker.)
-            add(M_WIDEGPU, "WORLD ON GPU", melonDS::WideGpuCurrent ? "ON" : cfg.wideGpu ? "ON (NOT AVAILABLE)" : "OFF");
 #endif
-#if SSR_MENU_GPU3D
-            // ON: the 3D scene drawn by the graphics chip instead of the processor. (Not on the
-            // Switch: its OpenGL driver hung the console from a second thread and, from the main
-            // thread, cost 10-12 ms a frame for the DS's picture and up to 22 ms to read a 720-line
-            // widescreen picture back, far more than drawing it in software.)
-            add(M_GPU3D, "3D ON GPU", UseGpu3D ? "ON" : cfg.gpu3d ? "ON (NOT AVAILABLE)" : "OFF");
-#endif
-#if !defined(__SWITCH__) && !defined(SSR_PHONE)
-            // ON: 360 lines while fast forwarding, for more frames a second (the menu's hint says so).
-            add(M_FFLOWRES, "FAST FORWARD LOW RES", onOff(cfg.ffLowRes));
-#endif
-#if SSR_MENU_EMULATION
-            // Read when the game starts (SwitchPlatform::Start); a change waits for the next start.
-            // FAST JIT: the JIT with fast memory.
-            add(M_EMULATION, "EMULATION", std::string(!cfg.jit ? "INTERPRETER" : cfg.fastMem ? "FAST JIT" : "JIT")
-                + (cfg.jit != UseJit || (cfg.jit && cfg.fastMem != UseFastMem) ? " (NEXT START)" : ""));
-#endif
+            if (exclusives.Supported()) add(M_BOTHVER, "OTHER VERSION POKEMON", onOff(exclusives.on));
+            if (!opt.noSave) add(M_BACKUPS, "SAVE BACKUPS", "");
+            if (Achievements::Available()) add(M_RA, "RETROACHIEVEMENTS", onOff(cfg.ra.on));
             add(M_BACK, "BACK", "");
         }
         else if (menuPage == PAGE_CHEATS)
@@ -5088,12 +5097,6 @@ int main(int argc, char** argv)
     std::vector<int16_t> audioOut;
     uint64_t audioTick = 0;
     double audioSlow = 1.0;
-    // Sound generated while fast forwarding, not yet played. Playback stays at the DS's
-    // own rate (below); this holds the rest. ffAudioAt is the index of the next unplayed
-    // sample (stereo, so two entries per frame).
-    std::vector<int16_t> ffAudio;
-    int ffAudioAt = 0;
-    double ffAudioFrac = 0;
     bool ffInBattle = false;
     bool audioWasFastForward = false;
     bool running = true;
@@ -5288,7 +5291,7 @@ int main(int argc, char** argv)
         {
             // (The widescreen world drawn during a frame is shown after the next one.)
             rc_frame_hidden = !ffFull && emuSpeed > 1 && i < emuSpeed - 1;
-            rc_wide_render_skip = !ffFull && emuSpeed > 1 && i < emuSpeed - 1;
+            rc_wide_render_skip = !ffFull && emuSpeed > 1 && i < emuSpeed - 2;
             rc_frame++;
             if (funcWatchOn) funcWatch.NextFrame();
             nds->RunFrame();
@@ -5385,6 +5388,12 @@ int main(int argc, char** argv)
         }
         if (j.overlayUsed)
         {
+            if (menu.open)
+            {
+                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(renderer, 5, 7, 13, 185);
+                SDL_RenderFillRect(renderer, nullptr);
+            }
             if (!overlayTex || overlayTexW != j.outW || overlayTexH != j.outH)
             {
                 if (overlayTex) SDL_DestroyTexture(overlayTex);
@@ -6234,7 +6243,7 @@ int main(int argc, char** argv)
             int backTo = -1;
             if (nav.back && menuPage != PAGE_MAIN)
             {
-                backTo = menuPage == PAGE_DISPLAY ? M_DISPLAY : menuPage == PAGE_SOUND ? M_SOUND : menuPage == PAGE_GRAPHICS ? M_GRAPHICS
+                backTo = menuPage == PAGE_SETTINGS ? M_SETTINGS : menuPage == PAGE_SOUND ? M_SETTINGS : menuPage == PAGE_GRAPHICS ? M_SETTINGS
                        : menuPage == PAGE_CHEATS ? M_CHEATS : menuPage == PAGE_RA ? M_RA : M_CONTROLMENU;
                 nav = MenuInput();
             }
@@ -6362,16 +6371,11 @@ int main(int argc, char** argv)
                 raTyped.clear();
                 SDL_StopTextInput();
                 break;
+            case M_SETTINGS:
             case M_DISPLAY:
-                goPage(PAGE_DISPLAY, -1);
-                hit = -1;
-                break;
             case M_SOUND:
-                goPage(PAGE_SOUND, -1);
-                hit = -1;
-                break;
             case M_GRAPHICS:
-                goPage(PAGE_GRAPHICS, -1);
+                goPage(PAGE_SETTINGS, -1);
                 hit = -1;
                 break;
             case M_CONTROLMENU:
@@ -6384,7 +6388,7 @@ int main(int argc, char** argv)
                 if(menuPage == PAGE_CINFO) {goPage(PAGE_CHEATS,M_CINFO);hit=-1;break;}
                 if(menuPage == PAGE_RESTORE_CONFIRM) {goPage(PAGE_BACKUPS,M_BACKUP0+restoreChoice);hit=-1;break;}
                 if(menuPage == PAGE_BACKUPS || menuPage == PAGE_LOAD_CONFIRM)
-                {goPage(PAGE_MAIN,menuPage == PAGE_BACKUPS ? M_BACKUPS : M_LOADSTATE);hit=-1;break;}
+                {goPage(PAGE_MAIN,menuPage == PAGE_BACKUPS ? M_SETTINGS : M_LOADSTATE);hit=-1;break;}
                 if(menuPage == PAGE_CHEATS && cheatWhere == -4)
                 {cheatWhere=-2;goPage(PAGE_CHEATS,M_CSEARCH);hit=-1;break;}
                 // A folder's codes (or ON NOW) go back to the folders. The folder list goes back
@@ -6410,7 +6414,7 @@ int main(int argc, char** argv)
                     break;
                 }
                 if (backTo < 0)
-                    backTo = menuPage == PAGE_DISPLAY ? M_DISPLAY : menuPage == PAGE_SOUND ? M_SOUND : menuPage == PAGE_GRAPHICS ? M_GRAPHICS
+                    backTo = menuPage == PAGE_SETTINGS ? M_SETTINGS : menuPage == PAGE_SOUND ? M_SETTINGS : menuPage == PAGE_GRAPHICS ? M_SETTINGS
                            : menuPage == PAGE_CHEATS ? M_CHEATS : menuPage == PAGE_RA ? M_RA : M_CONTROLMENU;
                 goPage(PAGE_MAIN, backTo);
                 hit = -1;
@@ -6636,7 +6640,11 @@ int main(int argc, char** argv)
         // the limit (the Switch, 10 ms or more a frame) running 4 at once is no faster than 3, it
         // only shows fewer of them.
         if (!paused && (fastLock || kbFast || ps.rt > 0.5f))
+#ifdef __SWITCH__
+            speed = ffFrameMs > 0 && !opt.headless ? std::clamp((int)(20.0 / ffFrameMs), 2, 3) : 2;
+#else
             speed = ffFrameMs > 0 && !opt.headless ? std::clamp((int)(33.3 / ffFrameMs), 2, 4) : 4; // (tests: always 4)
+#endif
         // A direction just pressed runs at normal speed for its first quarter of a second. The
         // games repeat a held direction in menus after a few frames: at 4x a quick tap lasted
         // long enough to move the cursor two or three times (shops, the elevator, the Bag).
@@ -6649,7 +6657,9 @@ int main(int argc, char** argv)
             const uint32_t now = opt.headless ? (uint32_t)(frame * 50 / 3) : SDL_GetTicks();
             if (dirs & ~prevDirs) dirSince = now;
             prevDirs = dirs;
-            if (speed > 1 && dirs && now - dirSince < 250) speed = 1;
+            // (FAST FORWARD turned on in the menu stays on whatever is pressed: the quarter second is for
+            // fast forward held on its button, where a quick tap in a menu would otherwise move two or three places.)
+            if (speed > 1 && dirs && !fastLock && now - dirSince < 250) speed = 1;
         }
         prevPad = ps;
 
@@ -6800,8 +6810,12 @@ int main(int argc, char** argv)
                 }
             }
             WideLinesNow = std::min(adaptLines, cfg.wideLines);
-            // While fast forwarding, at most 192 lines so GPU load remains lightweight.
-            if (speed > 1 && !opt.headless) WideLinesNow = std::min(WideLinesNow, 192);
+            // While fast forwarding on CPU rendering, at most 360 lines with FAST FORWARD LOW RES
+            // on. With deko3D hardware rendering (WideGpuCurrent), keep the target resolution
+            // steady so toggling fast-forward or direction debounce never destroys and reallocates
+            // GPU render targets mid-gameplay (intermediate frames are already skipped).
+            if (speed > 1 && !opt.headless && !melonDS::WideGpuCurrent && cfg.ffLowRes)
+                WideLinesNow = std::min(WideLinesNow, 360);
 #ifdef __SWITCH__
             // In handheld mode the console's screen is 1280x720: drawing more than 720 lines is
             // never seen on it and wastes fragment shading and memory bandwidth.
@@ -6969,6 +6983,14 @@ int main(int argc, char** argv)
                 if (cursorY < 0) cursorY = 0;
                 if (cursorY > 191) cursorY = 191;
                 cursorShownUntil = frame + 180;
+            }
+            else if (cursorShownUntil > 0 && !strncmp(scene.name, "battle", 6) &&
+                     (keys & ((1u << KEY_LEFT) | (1u << KEY_RIGHT) | (1u << KEY_UP) | (1u << KEY_DOWN) |
+                              (1u << KEY_A) | (1u << KEY_B) | (1u << KEY_X) | (1u << KEY_Y))))
+            {
+                // Hide the right-stick crosshair immediately when the player uses D-pad or face
+                // buttons in battle so it does not linger over the battle scene or command strip.
+                cursorShownUntil = 0;
             }
             if (curPress && !touching)
             {
@@ -7800,7 +7822,7 @@ int main(int argc, char** argv)
                 screenImages[s].edgeBlend = nullptr;
                 screenImages[s].edgeFlat = nullptr;
             }
-            scene.narrow = scene.wide && pictureFrame && frame - pictureFrame < 10;
+            scene.narrow = scene.narrow || (scene.wide && pictureFrame && frame - pictureFrame < 10);
         }
         if (opt.logSections)
         {
@@ -7818,18 +7840,9 @@ int main(int argc, char** argv)
             }
         }
 
-        // Fast forward runs several DS frames in one go, and each one produces a frame of
-        // sound. Playing all of it in that one moment would rush the music; keeping a single
-        // slice and throwing the rest away makes the song skip ahead. Keep every sample and
-        // hand the device one frame's worth per wall-clock frame, so the music stays at its
-        // normal speed while the picture runs ahead. The queue holds up to half a minute
-        // of sound so a long fast forward cannot store the whole song. Past that, further
-        // sound is left out; once what is queued has played, playback takes up from where
-        // the game is now. Letting go drops that long backlog. Keep the short device queue
-        // (normally about 100 ms) playing so the next samples have time to arrive; clearing
-        // it here creates a hole in playback. A battle has its own music: when one
-        // starts or ends, the queue is dropped so that track starts with the battle
-        // instead of waiting behind whatever was playing before it.
+        // Every emulated frame contributes sound. Compress the batch to the time of one
+        // displayed frame so effects stay with the picture, at a higher pitch during fast
+        // forward. Keeping the original-rate music accumulated up to 30 seconds of lag.
         const bool audioFastForward = speed > 1;
         if (audioFastForward != audioWasFastForward)
         {
@@ -7839,51 +7852,10 @@ int main(int argc, char** argv)
             audioSlow = 1.0;
             audioTick = 0;
             audioWasFastForward = audioFastForward;
-        }
-        const bool inBattle = std::strncmp(scene.name, "battle", 6) == 0;
-        if (speed > 1 && inBattle != ffInBattle && (ffAudioAt != 0 || !ffAudio.empty()))
-        {
-            ffAudio.clear();
-            ffAudioAt = 0;
-            ffAudioFrac = 0;
             if (audio) SDL_ClearQueuedAudio(audio);
         }
-        ffInBattle = inBattle;
-        if (speed > 1)
-        {
-            const int cap = 48000 * 2;
-            int have = ((int)ffAudio.size() - ffAudioAt) / 2;
-            if (have <= 0)
-            {
-                ffAudio.clear();
-                ffAudioAt = 0;
-                have = 0;
-            }
-            if (got > 0 && (have == 0 || have + got <= cap))
-                ffAudio.insert(ffAudio.end(), audioBuf.begin(), audioBuf.begin() + (size_t)got * 2);
-            ffAudioFrac += 48000.0 * frameTime;
-            int take = (int)ffAudioFrac;
-            ffAudioFrac -= take;
-            have = ((int)ffAudio.size() - ffAudioAt) / 2;
-            if (take > have) take = have;
-            if (take > 0)
-            {
-                std::copy(ffAudio.begin() + ffAudioAt, ffAudio.begin() + ffAudioAt + (size_t)take * 2, audioBuf.begin());
-                ffAudioAt += take * 2;
-                if (ffAudioAt >= 8192)
-                {
-                    ffAudio.erase(ffAudio.begin(), ffAudio.begin() + ffAudioAt);
-                    ffAudioAt = 0;
-                }
-            }
-            got = take;
-        }
-        else if (ffAudioAt != 0 || !ffAudio.empty())
-        {
-            ffAudio.clear();
-            ffAudioAt = 0;
-            ffAudioFrac = 0;
-        }
+        ffInBattle = std::strncmp(scene.name, "battle", 6) == 0;
+        got = AudioFastForward(audioBuf.data(), got, speed);
 
         if (audio && got > 0)
         {
@@ -8152,7 +8124,7 @@ int main(int argc, char** argv)
             };
             std::string hint = btn(Controls::A) + ": SELECT   " + btn(Controls::B) + ": BACK";
             const int selId = menu.selected >= 0 && menu.selected < (int)menuIds.size() ? menuIds[menu.selected] : -1;
-            static const char* pageTitle[] = { "", "KEYS AND BUTTONS", "DISPLAY", "GRAPHICS", "CONTROLS", "CHEATS", "RETROACHIEVEMENTS", "SOUND", "ACHIEVEMENTS", "ACHIEVEMENT", "SEARCH CHEATS", "CHEAT DETAILS", "DATABASE INFO", "SAVE BACKUPS", "RESTORE SAVE", "LOAD STATE" };
+            static const char* pageTitle[] = { "", "KEYS AND BUTTONS", "SETTINGS", "GRAPHICS", "CONTROLS", "CHEATS", "RETROACHIEVEMENTS", "SOUND", "ACHIEVEMENTS", "ACHIEVEMENT", "SEARCH CHEATS", "CHEAT DETAILS", "DATABASE INFO", "SAVE BACKUPS", "RESTORE SAVE", "LOAD STATE" };
             if (menuPage == PAGE_KEYS)
             {
                 hint = btn(Controls::A) + ": CHANGE   " + btn(Controls::B) + ": BACK";
@@ -8171,6 +8143,7 @@ int main(int argc, char** argv)
             // (What FAST FORWARD LOW RES is for, while it is the one chosen.)
             if (selId == M_FFLOWRES) hint = "ON: MORE FPS IN FAST FORWARD";
 #endif
+            if (selId == M_SETTINGS) hint = "AUDIO, VIDEO AND SYSTEM OPTIONS";
             if (selId == M_VOLUME) hint = "SOUND AND MUSIC: LEFT / RIGHT";
             if (selId == M_ASPECT) hint = "NARROWER THAN THE SCREEN: BARS AT THE SIDES";
             if (selId == M_FFMUTE) hint = "OFF: SILENT WHILE FAST FORWARDING";
@@ -8247,7 +8220,8 @@ int main(int argc, char** argv)
             if(menuPage == PAGE_LOAD_CONFIRM)
                 note="YOUR CARTRIDGE SAVE IS KEPT. SAVING IN-GAME AFTER LOADING AN OLD STATE CAN STILL REPLACE NEWER PROGRESS.";
             const bool wideMenu=menuPage==PAGE_CHEATS || menuPage==PAGE_CDETAIL || menuPage==PAGE_CINFO || menuPage==PAGE_CSEARCH || menuPage==PAGE_BACKUPS || menuPage==PAGE_RESTORE_CONFIRM || menuPage==PAGE_LOAD_CONFIRM;
-            menu.Draw(canvas, title, hint, note, wideMenu ? 260 : 0);
+            const bool needCpuDim = opt.headless || (!opt.shotDir.empty() && (opt.shotAt.count(frame) || g_sceneShots.count(frame) || (opt.shotEvery && frame % opt.shotEvery == 0)));
+            menu.Draw(canvas, title, hint, note, wideMenu ? 260 : 0, needCpuDim);
             }
             overlayUsed = true;
         }

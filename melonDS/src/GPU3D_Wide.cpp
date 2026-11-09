@@ -781,14 +781,14 @@ struct WideAccess
                 Quit = false;
                 Thread = std::thread(Loop);
             }
-            Cur = g.RawCurrent;
-            Prev = g.RawPrevious;
-            XNum = xnum;
-            XDen = xden;
-            View = view;
-            NumInterp = 0;
             {
                 std::lock_guard<std::mutex> lock(Mutex);
+                Cur = g.RawCurrent;
+                Prev = g.RawPrevious;
+                XNum = xnum;
+                XDen = xden;
+                View = view;
+                NumInterp = 0;
                 Paired = interpolate && !Prev.empty() && !Cur.empty();
                 for (int i = 0; i < 3; i++)
                 {

@@ -217,6 +217,34 @@ void Compiler::PopRegs(bool saveHiRegs, bool saveRegsToBeChanged)
     }
 }
 
+#ifdef __SWITCH__
+// (The code memory's two mappings, kept so that they can be given back at the program's end even if
+// the compiler is never destroyed: the Homebrew Menu cannot take the memory back while they are
+// there, and the console stays black instead of showing the game list.)
+static void* g_jitRW = nullptr;
+static void* g_jitRX = nullptr;
+static void* g_jitBase = nullptr;
+static bool g_jitCode = false, g_jitView = false;
+extern "C" void SsrJitRelease()
+{
+    constexpr size_t JitMemSize = ARMJIT_Global::CodeMemorySliceSize;
+    if (g_jitView)
+    {
+        const Result r = svcUnmapProcessMemory(g_jitRW, envGetOwnProcessHandle(), (u64)g_jitRX, JitMemSize);
+        fprintf(stderr, "[jit] writable view unmapped: 0x%x\n", (unsigned)r);
+        g_jitView = false;
+    }
+    if (g_jitCode)
+    {
+        const Result r = svcUnmapProcessCodeMemory(envGetOwnProcessHandle(), (u64)g_jitRX, (u64)g_jitBase, JitMemSize);
+        fprintf(stderr, "[jit] code memory unmapped: 0x%x\n", (unsigned)r);
+        if (R_SUCCEEDED(r)) free(g_jitBase);
+        g_jitCode = false;
+    }
+    fflush(stderr);
+}
+#endif
+
 Compiler::Compiler(melonDS::NDS& nds) : Arm64Gen::ARM64XEmitter(), NDS(nds)
 {
 #ifdef __SWITCH__
@@ -251,6 +279,7 @@ Compiler::Compiler(melonDS::NDS& nds) : Arm64Gen::ARM64XEmitter(), NDS(nds)
     // (Each step says in the log whether it worked: on the Switch nothing else would.)
     Result rc = JitRXStart ? svcMapProcessCodeMemory(envGetOwnProcessHandle(), (u64)JitRXStart, (u64)JitRWBase, JitMemSize) : (Result)-1;
     fprintf(stderr, "[jit] code memory at %p: 0x%x\n", JitRXStart, (unsigned)rc);
+    if (R_SUCCEEDED(rc)) { g_jitRX = JitRXStart; g_jitRW = JitRWStart; g_jitBase = JitRWBase; g_jitCode = true; }
     if (R_SUCCEEDED(rc))
     {
         rc = svcSetProcessMemoryPermission(envGetOwnProcessHandle(), (u64)JitRXStart, JitMemSize, Perm_Rx);
@@ -260,6 +289,7 @@ Compiler::Compiler(melonDS::NDS& nds) : Arm64Gen::ARM64XEmitter(), NDS(nds)
     {
         rc = svcMapProcessMemory(JitRWStart, envGetOwnProcessHandle(), (u64)JitRXStart, JitMemSize);
         fprintf(stderr, "[jit] writable view at %p: 0x%x\n", JitRWStart, (unsigned)rc);
+        if (R_SUCCEEDED(rc)) g_jitView = true;
     }
     fflush(stderr);
 
@@ -476,15 +506,7 @@ Compiler::Compiler(melonDS::NDS& nds) : Arm64Gen::ARM64XEmitter(), NDS(nds)
 Compiler::~Compiler()
 {
 #ifdef __SWITCH__
-    constexpr size_t JitMemSize = ARMJIT_Global::CodeMemorySliceSize;
-    if (JitRWStart != NULL)
-    {
-        bool succeded = R_SUCCEEDED(svcUnmapProcessMemory(JitRWStart, envGetOwnProcessHandle(), (u64)JitRXStart, JitMemSize));
-        assert(succeded);
-        succeded = R_SUCCEEDED(svcUnmapProcessCodeMemory(envGetOwnProcessHandle(), (u64)JitRXStart, (u64)JitRWBase, JitMemSize));
-        assert(succeded);
-        free(JitRWBase);
-    }
+    SsrJitRelease();
 #endif
 
     if (CodeMemBase) ARMJIT_Global::FreeCodeMem(CodeMemBase);

@@ -850,11 +850,12 @@ inline const uint32_t* MergedFillWideHoles(const WideImage& wide, int screenX0, 
         holes = (screenX0 > 0 && !(row[0] >> 24)) || (screenX1 < w && !(row[w - 1] >> 24));
     }
     if (!holes) return wide.pixels;
-    // Not where a room ends: indoors, a floor that ends inside the DS's own view has nothing
-    // under it down to the bottom of the picture, while outdoors the ground always reaches the
-    // bottom (the camera looks down at it). There the gap beside a wall is the room's real end,
-    // and going on in the wall's last colour drew it out into stripes (GitHub #60).
-    for (int x = screenX0; x < screenX1; x += 4)
+    // Not where a room ends: indoors, a floor that ends inside the view (either in the DS's
+    // own 4:3 centre or in the widescreen side margins) has nothing under it down to the bottom
+    // of the picture, while outdoors the ground always reaches the bottom (the camera looks down
+    // at it). There the gap beside a wall is the room's real end, and going on in the wall's
+    // last colour drew it out into stripes (GitHub #60).
+    for (int x = 0; x < w; x += 4)
     {
         if (wide.pixels[(size_t)(h - 1) * w + x] >> 24) continue;
         for (int y = h - 2; y >= 0; y--)

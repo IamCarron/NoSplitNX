@@ -643,8 +643,20 @@ void Stop()
         g_quit = true;
         g_queueWake.notify_all();
     }
+#ifdef __SWITCH__
+    // (Idle, it ends by itself the moment it is told to quit: joined, so no thread of ours is
+    // still running when the program hands back to the Homebrew Menu. In a request, given two
+    // seconds, then kept as before.)
+    if (g_worker.joinable())
+    {
+        for (int i = 0; i < 40 && g_busy.load(); i++) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (!g_busy.load()) g_worker.join();
+        else new std::thread(std::move(g_worker));
+    }
+#else
     // (A request on its way is left to finish on its own: the program is ending.)
     if (g_worker.joinable()) g_worker.detach();
+#endif
     if (g_loaded) rc_client_unload_game(g_client);
     g_nds = nullptr;
     g_read.store(nullptr);

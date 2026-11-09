@@ -91,33 +91,26 @@ jobs:
           cat << EOF > build-sd/RELEASE_NOTES.md
           # NoSplitNX ${{ github.ref_name }}
 
-          This release fixes the critical door exit crash in Pokémon Black and White by ensuring strict 64 KB Tegra X1 hardware alignment on compressed render targets in deko3D, resolves fast-forward performance stalls, and streamlines the interface by removing redundant settings.
+          Clean baseline release of **NoSplitNX** for Nintendo Switch, combining all recent upstream improvements with Switch-specific 3D pipeline stability fixes, fast-forward synchronisation, indoor widescreen handling, texture upload caching, and the redesigned Tico/Horizon OS interface.
 
-          ### Door Crash & Tegra X1 Hardware Alignment Fix
-          - **Hardware-aligned deko3D render targets**: Maxwell Tegra X1 compressed render targets (`DkImageFlags_HwCompression`) require 64 KB base address alignment. Allocated memory is now offset to exact alignment `(align - (base % align)) % align` rather than 0, completely resolving the MMU page fault and crash when walking through doors into the outdoor overworld.
-          - **Guarded pitch-linear targets**: `SlotImage` validates memory alignment and safely falls back to final pass blits if unaligned.
-          - **GPU Send Join & Publish Protection**: Only joins completed GPU fetch tasks and avoids publishing stale or unsubmitted frame buffers.
-          - **Safe Map Loading Default**: `wideMap` defaulted to `false` to avoid zone memory layout modification on transitions.
+          ### Fast-Forward & 3D Pipeline Stability
+          - **Thread-safe polygon list handoff**: Protected `Cur` and `Prev` pointer updates inside `ListHelper::Start`'s mutex, resolving the race condition crash when activating fast-forward.
+          - **deko3D texture atlas reset sync**: Resynchronises `UploadedY` and `UploadedX` when the 2048x2048 texture atlas fills up and resets during fast-forward scene transitions.
+          - **Steady GPU render targets & 720p slot floor**: Keeps `deko3D` render target resolution steady across fast-forward and pre-allocates slot buffers to 720p capacity so zero-copy `Wide.Front` buffers are never destroyed while in use.
+          - **Synchronised fast-forward audio**: Compresses audio batches during fast-forward so sound effects stay aligned without accumulating lag.
 
-          ### Fast Forward Performance Fix (No More 10 FPS Drop)
-          - **Unthrottled frame pacing**: Removed 60 Hz wall-clock timer sleeps during fast forward (`speed > 1`), allowing frames to advance as fast as the hardware can process them.
-          - **Dynamic 192p wide resolution**: During fast forward, wide 3D GPU lines drop to 192p (native DS height), reducing fillrate bottlenecks by ~14x. Full sharpness is restored immediately when fast forward ends.
-          - **Skip intermediate 3D rendering**: Intermediate emulation steps skip heavy wide 3D GPU passes entirely (`rc_wide_render_skip`), rendering only the final displayed frame.
-          - **Lightweight audio backlog**: Capped fast-forward audio buffer to 2 seconds instead of 30 seconds, eliminating multi-megabyte `vector::erase` memory copies every few frames.
+          ### Switch Rendering & Performance Fixes
+          - **Weather & edge upload caching**: Unified weather particle textures into `WeatherTex[0]` and added 64-bit FNV-1a signature caching (`weatherSig`, `edgeSig`, `narrowSig`, `fillSig`) in `GpuCompositor`, avoiding redundant `SDL_UpdateTexture` transfers on unchanged frames.
+          - **Indoor void & room edges**: Expanded `MergedFillWideHoles` across the full widescreen canvas and restored `isIndoorScene()` with soft ambient side bars while keeping `sc.wide` active so `Wide.Owner` never expires indoors.
+          - **Battle cursor**: Automatically clears the right-stick touch crosshair (`cursorShownUntil = 0`) as soon as D-pad or face buttons are pressed in battle.
+          - **Core 1 / Core 2 balancing & GPU pause dimming**: Assigned `ListHelper` to Core 2 and `WideGpuSend` to Core 1, restricted Switch SDL joystick polling to player 1, and offloaded pause-menu backdrop dimming to hardware `SDL_RenderFillRect`.
 
-          ### Streamlined Settings & Interface
-          - Removed clutter and unstable settings from the Launcher and Pause menus (`wide_map`, `battle_buttons`, `busy_detail`, `start_button`, `pad_touch`, and non-interactive help cards).
-          - Clean, intuitive, and modern Horizon OS interface.
-
-          ### Visual & UX Overhaul (from Beta 8)
-          - Dynamic responsive grid with adaptive multi-column layouts.
-          - 3D retro cartridge case fallbacks with metallic serial badges (`NTR-` / `AGB-`).
-          - Radiant bloom glow, frosted glass cards, and glowing LED hardware status indicators.
-          - Tactile 3D controller button badges dock (`[A] PLAY`, `[Y] SETTINGS`, etc.).
-          - Horizon OS sliding toggle switches and smooth continuous volume slider bars.
+          ### Redesigned Tico / Horizon OS Interface
+          - **Glass Hero Showcase Banner**: Full-width frosted glass banner with colour-coded platform pill, serial badge, save status pill, and library counter (`1 / N`).
+          - **Framed Emblem Game Cards**: Recessed glass emblem wells with console-themed radial glow, save status LED indicator, and frosted card footers with game title and serial code.
+          - **Touch Drag Protection**: Scrolling the game list or settings by touch never triggers an accidental selection on release.
 
           ### Installation & Updating
-
           - **From console:** Open \`SETTINGS (Y)\` -> \`CHECK FOR UPDATES\` and press \`A\` to install.
           - **Manual install:** Extract \`nosplitnx-switch.zip\` to the root of your microSD card (\`sdmc:/switch/nosplitnx/nosplitnx.nro\`) and place your ROMs in \`sdmc:/switch/nosplitnx/roms/\`.
           EOF

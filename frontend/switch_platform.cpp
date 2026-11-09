@@ -1359,9 +1359,12 @@ void ForceExit()
     for (;;) {}
 }
 
+extern "C" void SsrJitRelease();
+
 void Finish()
 {
     JitStarted(); // (an ordinary exit: the JIT did start)
+    SsrJitRelease(); // (the JIT's code memory given back: without that the Homebrew Menu cannot start the game list again)
     // QUIT in the pause menu, for a game chosen from the game list: the Homebrew Menu's loader
     // starts the program again, which shows the list.
     if (g_changeGame && !g_self.empty())

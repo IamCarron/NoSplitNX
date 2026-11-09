@@ -514,6 +514,7 @@ void WideGpuBuild(const GPU& gpu, Polygon* const* list, u32 count, int W, int H,
             at.Entries.clear();
             at.Used = 0;
             at.Full = false;
+            at.Reset = true;
         }
         SeeVersion(at, f.TexVersion);
     }

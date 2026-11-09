@@ -77,6 +77,7 @@ struct WideGpuAtlas
     u32 Used = 0;
     u64 SeenVersion = 0;
     bool Full = false;
+    bool Reset = false;
     std::vector<std::pair<u32, u32>> Uploads; // (first texel, count) decoded this frame
 };
 

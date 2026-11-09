@@ -324,8 +324,9 @@ public:
         }
         if (!s.Mem)
         {
-            s.Mem = Block(size, DkMemBlockFlags_CpuCached | DkMemBlockFlags_GpuCached);
-            s.Cap = s.Mem ? size : 0;
+            const u32 allocCap = std::max<u32>(size, 1280u * 720u * 4u);
+            s.Mem = Block(allocCap, DkMemBlockFlags_CpuCached | DkMemBlockFlags_GpuCached);
+            s.Cap = s.Mem ? allocCap : 0;
             s.ImageW = s.ImageH = 0;
         }
         s.Size = s.Mem ? size : 0;
@@ -360,11 +361,12 @@ public:
         // atlas).
         if (f.AtlasOn)
         {
-            const WideGpuAtlas& a = f.Atlas;
-            if (!AtlasSynced)
+            WideGpuAtlas& a = f.Atlas;
+            if (!AtlasSynced || a.Reset)
             {
                 memcpy(Data + OffAtlas, a.Texels.data(), (size_t)a.Used * 4);
                 AtlasSynced = true;
+                a.Reset = false;
             }
             else
                 for (const auto& [first, n] : a.Uploads)
