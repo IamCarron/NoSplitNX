@@ -18,6 +18,7 @@
 
 #include "SsrProf.h" // ssrecomp
 extern bool rc_wide_render_skip; // ssrecomp: GPU.cpp
+extern bool rc_wide_publish_only;
 #include <stdio.h>
 #include <string.h>
 #include <algorithm>
@@ -2649,8 +2650,9 @@ void GPU3D::VBlank() noexcept
                     // one (WideListsOnHelper), started first so that they are ready by the time
                     // the in-between frame is drawn; they are built with the in-between lists
                     // whenever one may be needed, as the DS-resolution one decides below.
+                    const bool skipWide = (rc_wide_render_skip || rc_wide_publish_only) && !capturing;
                     const bool helper = Wide.Owner == this && WideListsOnHelper();
-                    if (helper)
+                    if (helper && !skipWide)
                     {
                         SsrProf::Scope prof(SsrProf::WideFlush);
                         WideOnFlush(*this, interpolate);
@@ -2662,7 +2664,7 @@ void GPU3D::VBlank() noexcept
                         SsrProf::Scope prof(SsrProf::Interp);
                         BuildInterpolatedFrame();
                     }
-                    if (Wide.Owner == this && !helper)
+                    if (Wide.Owner == this && !helper && !skipWide)
                     {
                         SsrProf::Scope prof(SsrProf::WideFlush);
                         WideOnFlush(*this, InterpPending);

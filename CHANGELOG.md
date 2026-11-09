@@ -4,7 +4,20 @@
 ## Unreleased
 
 
-## v1.0.0-beta.2 — Wii U / 3DS Plaza Redesign, Fast-Forward Release Crash Fix & Outdoor Performance
+## v1.0.0-beta.3 — Switch Lite Handheld UI Scaling & Fast-Forward True Speed Optimisation
+
+- **Switch Lite Handheld UI Scaling & Legibility Overhaul (5.5" 720p Display)**:
+  - **In-game pause menu scale-up**: enlarged item font size from `21px` to `27px` (`itemFontH = 9 * scale`), row spacing from `36px` to `45px` (`lineH = 15 * scale`), menu card width from `600px` to `780px` (`boxW = 260 * scale`, occupying ~61% of the screen), header title font from `24px` to `33px`, hint font to `21px`, and note font to `18px`, making text effortless to read on handheld Switch Lite screens.
+  - **Settings menu full-resolution scaling**: eliminated the `ts = (s * 2 + 1) / 3` downsampling factor (`ts` is now full scale `s = 3`), scaling option titles to `24px`, values/descriptions to `18px`, line height to `42px`, and panel width to `1020px` (occupying ~80% of the display).
+  - **Launcher UI elements scale-up**: increased category tabs height to `39px` with `16px` font, top showcase title to `27px`, cartridge card titles to `21-24px`, and bottom dock buttons to `36px` height with `16px` font.
+
+- **Fast-Forward True Speed Optimisation (2.5x–4.0x Speedup)**:
+  - **Overworld D-pad unthrottling**: bypassed the 250ms direction change throttle (`speed = 1`) when walking in the overworld (`inField`), ensuring holding ZR while moving with the D-pad maintains full fast-forward speed instead of dropping to 1.0x real-time speed.
+  - **Raised fast-forward speed clamp on Switch**: updated the hardware target speed clamp from `std::clamp((int)(20.0 / ffFrameMs), 2, 3)` to `std::clamp((int)(33.3 / ffFrameMs), 2, 4)` (defaulting to 3x).
+  - **Redundant 3D GPU draw elimination during fast-forward**:
+    - Added `rc_wide_publish_only` flag in `melonDS/src/GPU.cpp` and `main.cpp`, allowing `GPU3D_Wide.cpp` on the last frame of a multi-frame batch (`i == emuSpeed - 1`) to publish the widescreen front buffer without starting another unneeded GPU draw.
+    - Skipped `WideOnFlush` in `GPU3D::VBlank` on skipped frames, eliminating wasted `ListHelper` thread synchronization overhead.
+    - Skipped redundant 256x192 DS 3D GPU passes in `WideGpuDSRenderer::RenderFrame` when intermediate frames are hidden, textures have not changed, and no screen capture is active.
 
 - **Fast-Forward stability & crash resolution on Nintendo Switch**:
   - **Fixed crash on fast-forward release**: pre-allocated all `deko3D` render targets and slot buffers to full 720p capacity at startup in `Init`, eliminated dynamic `FreeTargets()` destruction of `DkMemBlock` on background worker threads, and restricted pitch-linear rendering strictly to `1280x720` (all reduced/adaptive resolutions render safely through `FinalImage` block-linear copy).

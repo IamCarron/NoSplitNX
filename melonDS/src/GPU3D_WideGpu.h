@@ -189,7 +189,7 @@ class WideGpuDSRenderer : public Renderer3D
 public:
     explicit WideGpuDSRenderer(std::unique_ptr<WideGpuBackend> backend);
     ~WideGpuDSRenderer() override;
-    void Reset(GPU& gpu) override { HaveLines = false; }
+    void Reset(GPU& gpu) override { HaveLines = false; Dirty = true; }
     void RenderFrame(GPU& gpu) override;
     u32* GetLine(int line) override;
     bool NeedsScanlineDrain() const override { return false; }
@@ -199,7 +199,7 @@ private:
     std::unique_ptr<WideGpuBackend> Backend;
     WideGpuFrame Frame;
     u32* Pixels = nullptr;
-    bool Pending = false, Fetched = true, HaveLines = false;
+    bool Pending = false, Fetched = true, HaveLines = false, Dirty = true;
     u64 Version = 0;
     std::array<Polygon*, 2048> List {}; // (the frame's list as it was handed over)
     u32 Lines[256 * 192] {}; // in the format GetLine returns

@@ -452,10 +452,10 @@ struct Canvas
     void DrawButtonBadge(int x, int y, const std::string& label, int scale, uint32_t badgeColor = 0xFF2A344A, uint32_t textCol = 0xFFFFFFFF, uint32_t borderCol = 0xFF455577)
     {
         const int s = std::max(1, scale);
-        const int fontH = std::max(10, 11 * s / 3);
+        const int fontH = std::max(12, 5 * s + 1);
         const int tw = ModernTextWidth(label, fontH);
         const bool single = label.size() <= 1 || label == "+" || label == "-";
-        const int bh = 11 * s;
+        const int bh = 12 * s;
         const int bw = single ? bh : tw + 8 * s;
         const int rad = bh / 2;
         const uint32_t topBevel = (((badgeColor >> 16) & 0xFF) + 30 <= 255 ? badgeColor + 0x001E1E1E : 0xFFFFFFFF);
@@ -712,44 +712,44 @@ struct Menu
         const uint32_t barOff = shade(Accent, [](int v) { return 35 + v * 35 / 100; });
         int scale = std::min(c.w, c.h) / 240;
         if (scale < 1) scale = 1;
-        const int itemFontH = std::max(12, 7 * scale);
-        int lineH = std::max(18, (UiLang::Tall() ? 15 : 12) * scale);
+        const int itemFontH = std::max(16, 9 * scale);
+        int lineH = std::max(22, (UiLang::Tall() ? 17 : 15) * scale);
         // (Rows closer together if they would not all fit on the screen, down to 9 * scale.)
         // With no title the box starts with the first item.
         const bool hasTitle = !title.empty();
         // (A value as drawn: translated before its arrows go round it, as the whole would not be
         // in the language's table.)
         auto shownValue = [](const MenuItem& item) { return item.info ? item.value : "< " + UiLang::Tr(item.value) + " >"; };
-        int boxW = (boxUnits > 0 ? boxUnits : 200) * scale;
+        int boxW = (boxUnits > 0 ? std::max(boxUnits, 270) : 260) * scale;
         for (const auto& item : items)
         {
             const std::string trL = ToNiceTitle(UiLang::Tr(item.label));
             const std::string v = item.value.empty() ? "" : ToNiceTitle(shownValue(item));
-            const int modernW = c.ModernTextWidth(trL, itemFontH) + (item.value.empty() ? 0 : c.ModernTextWidth(v, itemFontH) + 16 * scale) + 32 * scale;
-            const int legacyW = Canvas::TextWidth(item.label, scale) + (item.value.empty() ? 0 : Canvas::TextWidth(shownValue(item), scale)) + 20 * scale;
+            const int modernW = c.ModernTextWidth(trL, itemFontH) + (item.value.empty() ? 0 : c.ModernTextWidth(v, itemFontH) + 16 * scale) + 36 * scale;
+            const int legacyW = Canvas::TextWidth(item.label, scale) + (item.value.empty() ? 0 : Canvas::TextWidth(shownValue(item), scale)) + 24 * scale;
             boxW = std::max({boxW, modernW, legacyW});
         }
         if (hasTitle)
         {
             const std::string niceTitle = (title == "NoSplitNX") ? title : ToNiceTitle(UiLang::Tr(title));
-            const int titleFontH = std::max(14, 8 * scale);
+            const int titleFontH = std::max(18, 11 * scale);
             const int titleW = c.ModernTextWidth(niceTitle, titleFontH);
-            boxW = std::max(boxW, titleW + 40 * scale);
+            boxW = std::max(boxW, titleW + 48 * scale);
         }
-        if (boxW > c.w - 8) boxW = c.w - 8;
+        if (boxW > c.w - 16) boxW = c.w - 16;
         // The note's lines (up to 4, the last cut short), and the box moved up to make room.
         std::vector<std::string> noteLines;
-        const int noteFontH = std::max(11, 5 * scale);
+        const int noteFontH = std::max(13, 6 * scale);
         if (!note.empty())
         {
-            const int maxW = boxW - 16 * scale;
+            const int maxW = boxW - 20 * scale;
             const int maxChars = std::max(10, maxW / (7 * scale));
             noteLines = UiLang::Wrap(UiLang::Tr(note), maxChars * 6);
             if (noteLines.size() > 4) { noteLines.resize(4); noteLines[3] = UiLang::Elide(noteLines[3] + "...", maxChars); }
         }
         const int noteH = noteLines.empty() ? 0 : (int)noteLines.size() * (noteFontH + 3 * scale) + 8 * scale;
         // (As many rows as fit at the smallest spacing; the rest scroll into view.)
-        const int fit = std::max(1, (c.h - 4 - 6 * scale - (noteH ? noteH + 3 * scale : 0)) / ((UiLang::Tall() ? 14 : 10) * scale) - (hasTitle ? 2 : 1));
+        const int fit = std::max(1, (c.h - 4 - 6 * scale - (noteH ? noteH + 3 * scale : 0)) / ((UiLang::Tall() ? 15 : 12) * scale) - (hasTitle ? 2 : 1));
         const int shown = std::min((int)items.size(), fit);
         if (selected < scroll) scroll = selected;
         if (selected >= scroll + shown) scroll = selected - shown + 1;
@@ -786,31 +786,31 @@ struct Menu
             const int hdrH = lineH + 3 * scale;
             c.FillGradV(bx + scale, by + scale, boxW - 2 * scale, hdrH, headerCol + 0x0006080C, headerCol, std::max(1, rad - scale));
             c.Fill(bx + 6 * scale, by + hdrH, boxW - 12 * scale, std::max(1, scale / 2), 0xFF26354A);
-            const int sw = 7 * scale, sh = 4 * scale, gap = scale;
-            const int titleFontH = std::max(14, 8 * scale);
+            const int sw = 8 * scale, sh = 5 * scale, gap = scale;
+            const int titleFontH = std::max(18, 11 * scale);
             const int titleW = c.ModernTextWidth(niceTitle, titleFontH);
-            const int contentW = sw + 5 * scale + titleW;
+            const int contentW = sw + 6 * scale + titleW;
             const int startX = bx + (boxW - contentW) / 2;
             const int logoX = startX, logoY = by + scale + (hdrH - (sh * 2 + gap)) / 2;
             c.OutlineRound(logoX, logoY, sw, sh, scale, 1, 0xFFFFFFFF);
             c.FillBlend(logoX + scale, logoY + scale, sw - 2 * scale, sh - 2 * scale, 0x33FFFFFF);
             c.OutlineRound(logoX, logoY + sh + gap, sw, sh, scale, 1, 0xFFFFFFFF);
             c.FillBlend(logoX + scale, logoY + sh + gap + scale, sw - 2 * scale, sh - 2 * scale, 0x66FFFFFF);
-            c.ModernText(startX + sw + 5 * scale, by + scale + (hdrH - titleFontH) / 2, niceTitle, titleFontH, 0xFFFFFFFF);
+            c.ModernText(startX + sw + 6 * scale, by + scale + (hdrH - titleFontH) / 2, niceTitle, titleFontH, 0xFFFFFFFF);
         }
 
         int y = by + (hasTitle ? lineH : 0) + 5 * scale;
-        if (scroll > 0) c.ModernText(bx + boxW - 12 * scale, y - lineH, "^", itemFontH, hintCol);
-        if (scroll + shown < (int)items.size()) c.ModernText(bx + boxW - 12 * scale, y + shown * lineH - 2 * scale, "v", itemFontH, hintCol);
+        if (scroll > 0) c.ModernText(bx + boxW - 14 * scale, y - lineH, "^", itemFontH, hintCol);
+        if (scroll + shown < (int)items.size()) c.ModernText(bx + boxW - 14 * scale, y + shown * lineH - 2 * scale, "v", itemFontH, hintCol);
         const int rowRad = std::max(3, 4 * scale);
         const float t = AnimTime();
         const float pulse = 0.5f + 0.5f * sinf(t * 3.5f);
         for (int i = scroll; i < scroll + shown; i++)
         {
             const bool sel = i == selected;
-            const int rx = bx + 4 * scale;
+            const int rx = bx + 5 * scale;
             const int ry = y - scale;
-            const int rw = boxW - 8 * scale;
+            const int rw = boxW - 10 * scale;
             const int rh = lineH - scale;
 
             if (sel)
@@ -826,39 +826,39 @@ struct Menu
             }
             const uint32_t col = sel ? 0xFFFFFFFF : 0xFFCAD4E4;
             const std::string trLabel = ToNiceTitle(UiLang::Tr(items[i].label));
-            c.ModernText(rx + 8 * scale, ry + (rh - itemFontH) / 2, trLabel, itemFontH, col);
+            c.ModernText(rx + 10 * scale, ry + (rh - itemFontH) / 2, trLabel, itemFontH, col);
             if (!items[i].value.empty())
             {
                 const std::string v = ToNiceTitle(shownValue(items[i]));
                 const int valW = c.ModernTextWidth(items[i].slider >= 0 ? "< 100% >" : v, itemFontH);
-                const int vx = rx + rw - 8 * scale - valW;
-                const int textVx = items[i].slider >= 0 ? rx + rw - 8 * scale - c.ModernTextWidth(v, itemFontH) : vx;
+                const int vx = rx + rw - 10 * scale - valW;
+                const int textVx = items[i].slider >= 0 ? rx + rw - 10 * scale - c.ModernTextWidth(v, itemFontH) : vx;
                 c.ModernText(textVx, ry + (rh - itemFontH) / 2, v, itemFontH, col);
                 if (items[i].slider >= 0)
                 {
-                    barStep = 5 * scale;
-                    barX = vx - 4 * scale - 10 * barStep;
+                    barStep = 6 * scale;
+                    barX = vx - 6 * scale - 10 * barStep;
                     const int barW = 10 * barStep - scale;
-                    const int barH = 7 * scale;
+                    const int barH = 8 * scale;
                     const_cast<Canvas&>(c).DrawSliderBar(barX, ry + (rh - barH) / 2, barW, barH, items[i].slider, 10, sel ? 0xFFFFFFFF : Accent, sel);
                 }
             }
             y += lineH;
         }
         if (!hint.empty()) c.Fill(bx + 6 * scale, y + scale, boxW - 12 * scale, std::max(1, scale / 2), 0xFF26354A);
-        const int hintFontH = std::max(11, 5 * scale);
+        const int hintFontH = std::max(14, 7 * scale);
         const std::string niceHint = ToNiceTitle(UiLang::Tr(hint));
         const int hw = c.ModernTextWidth(niceHint, hintFontH);
         const int footerAreaH = (by + boxH) - (y + scale);
         c.ModernText(bx + (boxW - hw) / 2, y + scale + std::max(2 * scale, (footerAreaH - hintFontH) / 2), niceHint, hintFontH, hintCol);
         if (!noteLines.empty())
         {
-            const int ny = by + boxH + 3 * scale;
+            const int ny = by + boxH + 4 * scale;
             const_cast<Canvas&>(c).ShadowRound(bx, ny, boxW, noteH, rad, 2 * scale, 90);
             c.FillGradV(bx, ny, boxW, noteH, noteBox, boxBot, rad);
             c.OutlineRound(bx, ny, boxW, noteH, rad, std::max(1, scale / 2), borderCol);
             for (size_t i = 0; i < noteLines.size(); i++)
-                c.ModernText(bx + 8 * scale, ny + 4 * scale + (int)i * (noteFontH + 3 * scale), noteLines[i], noteFontH, textCol);
+                c.ModernText(bx + 10 * scale, ny + 4 * scale + (int)i * (noteFontH + 3 * scale), noteLines[i], noteFontH, textCol);
         }
     }
 };

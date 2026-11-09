@@ -26,6 +26,9 @@ bool rc_frame_hidden = false;
 // ssrecomp: the widescreen world drawn at line 215 of this frame would not be shown either (it is
 // shown after the next frame), so it is not drawn (GPU3D::VCount215).
 bool rc_wide_render_skip = false;
+// ssrecomp: the last frame of a fast-forward batch: its line 215 only publishes the widescreen
+// picture drawn by the frame before it without starting a new GPU draw for the next hidden frame.
+bool rc_wide_publish_only = false;
 #include <string.h>
 #include "NDS.h"
 #include "GPU.h"

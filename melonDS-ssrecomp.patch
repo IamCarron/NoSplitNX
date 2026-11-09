@@ -1174,7 +1174,7 @@ diff --git a/src/GPU.cpp b/src/GPU.cpp
 index e1c7ddc..d6869c3 100644
 --- a/src/GPU.cpp
 +++ b/src/GPU.cpp
-@@ -16,6 +16,16 @@
+@@ -16,6 +16,19 @@
      with melonDS. If not, see http://www.gnu.org/licenses/.
  */
  
@@ -1188,6 +1188,9 @@ index e1c7ddc..d6869c3 100644
 +// ssrecomp: the widescreen world drawn at line 215 of this frame would not be shown either (it is
 +// shown after the next frame), so it is not drawn (GPU3D::VCount215).
 +bool rc_wide_render_skip = false;
++// ssrecomp: the last frame of a fast-forward batch: its line 215 only publishes the widescreen
++// picture drawn by the frame before it without starting a new GPU draw for the next hidden frame.
++bool rc_wide_publish_only = false;
  #include <string.h>
  #include "NDS.h"
  #include "GPU.h"
@@ -1822,12 +1825,13 @@ diff --git a/src/GPU3D.cpp b/src/GPU3D.cpp
 index 1204741..22f58ea 100644
 --- a/src/GPU3D.cpp
 +++ b/src/GPU3D.cpp
-@@ -16,6 +16,8 @@
+@@ -16,6 +16,9 @@
      with melonDS. If not, see http://www.gnu.org/licenses/.
  */
  
 +#include "SsrProf.h" // ssrecomp
 +extern bool rc_wide_render_skip; // ssrecomp: GPU.cpp
++extern bool rc_wide_publish_only;
  #include <stdio.h>
  #include <string.h>
  #include <algorithm>
@@ -2151,8 +2155,9 @@ index 1204741..22f58ea 100644
 +                    // one (WideListsOnHelper), started first so that they are ready by the time
 +                    // the in-between frame is drawn; they are built with the in-between lists
 +                    // whenever one may be needed, as the DS-resolution one decides below.
++                    const bool skipWide = (rc_wide_render_skip || rc_wide_publish_only) && !capturing;
 +                    const bool helper = Wide.Owner == this && WideListsOnHelper();
-+                    if (helper)
++                    if (helper && !skipWide)
 +                    {
 +                        SsrProf::Scope prof(SsrProf::WideFlush);
 +                        WideOnFlush(*this, interpolate);
@@ -2164,7 +2169,7 @@ index 1204741..22f58ea 100644
 +                        SsrProf::Scope prof(SsrProf::Interp);
 +                        BuildInterpolatedFrame();
 +                    }
-+                    if (Wide.Owner == this && !helper)
++                    if (Wide.Owner == this && !helper && !skipWide)
 +                    {
 +                        SsrProf::Scope prof(SsrProf::WideFlush);
 +                        WideOnFlush(*this, InterpPending);

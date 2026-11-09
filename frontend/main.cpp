@@ -282,7 +282,7 @@ static void Bw2DexCover(Scene& sc, float viewWidth, const ScreenImage* screens)
 
 // Defined in the 2D renderer: layers not to draw, per engine (see GPU2D_Soft.cpp).
 extern unsigned rc_hide_layers[2];
-extern bool rc_frame_hidden, rc_wide_render_skip; // melonDS/src/GPU.cpp
+extern bool rc_frame_hidden, rc_wide_render_skip, rc_wide_publish_only; // melonDS/src/GPU.cpp
 
 using namespace melonDS;
 
@@ -5292,6 +5292,7 @@ int main(int argc, char** argv)
             // (The widescreen world drawn during a frame is shown after the next one.)
             rc_frame_hidden = !ffFull && emuSpeed > 1 && i < emuSpeed - 1;
             rc_wide_render_skip = !ffFull && emuSpeed > 1 && i < emuSpeed - 2;
+            rc_wide_publish_only = !ffFull && emuSpeed > 1 && i == emuSpeed - 1;
             rc_frame++;
             if (funcWatchOn) funcWatch.NextFrame();
             nds->RunFrame();
@@ -5306,7 +5307,7 @@ int main(int argc, char** argv)
             }
         }
         emuGot = filled;
-        rc_frame_hidden = rc_wide_render_skip = false;
+        rc_frame_hidden = rc_wide_render_skip = rc_wide_publish_only = false;
         emuMs = perfNow() - t0;
     };
     if (pipelined)
@@ -6641,7 +6642,7 @@ int main(int argc, char** argv)
         // only shows fewer of them.
         if (!paused && (fastLock || kbFast || ps.rt > 0.5f))
 #ifdef __SWITCH__
-            speed = ffFrameMs > 0 && !opt.headless ? std::clamp((int)(20.0 / ffFrameMs), 2, 3) : 2;
+            speed = ffFrameMs > 0 && !opt.headless ? std::clamp((int)(33.3 / ffFrameMs), 2, 4) : 3;
 #else
             speed = ffFrameMs > 0 && !opt.headless ? std::clamp((int)(33.3 / ffFrameMs), 2, 4) : 4; // (tests: always 4)
 #endif
@@ -6658,8 +6659,10 @@ int main(int argc, char** argv)
             if (dirs & ~prevDirs) dirSince = now;
             prevDirs = dirs;
             // (FAST FORWARD turned on in the menu stays on whatever is pressed: the quarter second is for
-            // fast forward held on its button, where a quick tap in a menu would otherwise move two or three places.)
-            if (speed > 1 && dirs && !fastLock && now - dirSince < 250) speed = 1;
+            // fast forward held on its button, where a quick tap in a menu would otherwise move two or three places.
+            // In the overworld/field, fast forward carries on without direction throttle.)
+            const bool inField = (fieldActive() || (funcWatchOn && (funcWatch.Ran(bw2.field, 16) || funcWatch.Ran(pt.field, 16))));
+            if (speed > 1 && dirs && !fastLock && !inField && now - dirSince < 250) speed = 1;
         }
         prevPad = ps;
 

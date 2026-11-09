@@ -14,6 +14,9 @@
 #include "GPU3D.h"
 #include "SsrThreads.h"
 
+extern bool rc_wide_render_skip;
+extern bool rc_wide_publish_only;
+
 namespace melonDS
 {
 std::unique_ptr<WideGpuBackend> WideGpuCurrent;
@@ -195,11 +198,15 @@ void WideGpuDSRenderer::RenderFrame(GPU& gpu)
         Pending = false;
         Convert();
     }
-    if (!(textureChanged || texPalChanged) && gpu.GPU3D.RenderFrameIdentical && HaveLines)
+    if (textureChanged || texPalChanged || !gpu.GPU3D.RenderFrameIdentical || !HaveLines)
+        Dirty = true;
+    const bool capturing = (gpu.GPU2D_A.CaptureCnt & (1u << 31)) != 0;
+    if (!Dirty || ((rc_wide_render_skip || rc_wide_publish_only) && !capturing && HaveLines))
     {
         Fetched = true;
         return;
     }
+    Dirty = false;
     Pixels = Backend->Target(0, 256, 192);
     Fetched = false;
     // The list itself is copied (the in-between frame's is lent to RenderPolygonRAM for this

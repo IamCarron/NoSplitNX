@@ -91,25 +91,17 @@ jobs:
           cat << EOF > build-sd/RELEASE_NOTES.md
           # NoSplitNX ${{ github.ref_name }}
 
-          Nintendo Switch release of **NoSplitNX** with authentic Wii U / Nintendo 3DS / DSi Plaza redesign, resolution scaling, fast-forward stability fixes, and outdoor performance improvements.
+          Nintendo Switch release of **NoSplitNX** focusing on Switch Lite handheld UI legibility and true fast-forward speedup in the overworld.
 
-          ### Fast-Forward & Pipeline Stability Fixes
-          - **Eliminated crash on fast-forward release**: Pre-allocated all `deko3D` targets to 720p at startup in `Init`, eliminated runtime `FreeTargets()` destruction of GPU memory blocks, and restricted pitch-linear targets strictly to 1280x720.
-          - **Resolution transition debounce**: Reset frame window counters on fast-forward transitions so releasing fast-forward does not trigger a false resolution drop.
-          - **Frame-ahead race condition fix**: Synchronised `KeepLater()` copies prior to kicking `emuThread` during multi-frame fast-forward batches, preventing frame corruption.
-          - **Hardware 3D line drain elimination**: Added `NeedsScanlineDrain()` to skip line-0 GPU sync stalls during hidden fast-forward frames.
+          ### Switch Lite Handheld UI Scaling & Legibility Overhaul
+          - **In-game pause menu scale-up**: Enlarged menu options from 21px to 27px, row spacing from 36px to 45px, card width from 600px to 780px (~61% of display), header title to 33px, and hints to 21px for crystal clear readability on 5.5" handheld screens.
+          - **Settings page full-scale rendering**: Eliminated 2/3 downsampling (`ts` now full scale 3), increasing option titles to 24px, descriptions to 18px, and panel width to 1020px.
+          - **Launcher elements scale-up**: Category tabs scaled to 39px height with 16px font, top showcase title to 27px, cartridge card titles to 21-24px, and dock buttons to 36px with 16px font.
 
-          ### Performance & Audio Fixes in Heavy Scenes
-          - **Duplicate 3D frame skip**: Implemented `RenderFrameIdentical` check in `WideGpuDSRenderer`, skipping redundant GPU passes on 30 FPS overworld frames.
-          - **Fast-forward 360p GPU rendering**: Enabled `ffLowRes` on GPU rendering, cutting pixel shading and SDL texture upload overhead by 4x during fast-forward.
-          - **Audio queue slowdown in fast-forward**: Maintained audio stretching across fast-forward to prevent SDL audio buffer starvation and sound stuttering.
-
-          ### Wii U / Nintendo 3DS / DSi Plaza Redesign
-          - **Dynamic Screen Scaling**: Cards dynamically expand (`348x324` px for 1–3 games) to fill the 1280x720 display without awkward empty voids.
-          - **Physical Cartridge Silhouette & Sticker Frame**: 32x32 ROM icons (including Black/White's native checkerboard icon) are set in authentic silver/white printed sticker frames on molded DS/GBA/3DS cartridge shells with gold PCB pins.
-          - **Nintendo 3DS / DSi Upper Showcase**: Upper screen with stereo speaker grilles, 3D floating cartridge showcase, animated equalizer audio waves, and interactive launch dock.
-          - **Wii U / 3DS Plaza Backdrop**: Animated 3D translucent floating plaza cubes and cyan 3DS corner focus brackets.
-          - **Header Overlap & Menu Polish**: Removed overlapping `[Y] AJUSTES` button on the battery/clock widget, added `NoSplitNX` header emblem, and localized pause menu footer.
+          ### Fast-Forward True Speed Optimisation (2.5x–4.0x)
+          - **Overworld D-pad unthrottling**: Bypassed the 250ms direction change throttle when moving in the overworld, ensuring holding ZR while moving with the D-pad runs at true accelerated speed instead of dropping to 1.0x.
+          - **Raised Switch fast-forward speed clamp**: Updated the hardware clamp from 2–3x to 2–4x (defaulting to 3x).
+          - **Redundant 3D GPU render skipping**: Added `rc_wide_publish_only` to publish widescreen front buffers without queueing redundant GPU draws on hidden frames, skipped `WideOnFlush` thread overhead on skipped frames, and skipped unchanged 256x192 DS 3D GPU passes.
 
           ### Installation & Updating
           - **From console:** Open \`SETTINGS (Y)\` -> \`CHECK FOR UPDATES\` and press \`A\` to install.
