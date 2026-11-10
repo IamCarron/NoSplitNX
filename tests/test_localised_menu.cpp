@@ -8,7 +8,7 @@ static void Save(const Canvas& c, const std::string& name) {
     std::ofstream f(name, std::ios::binary); f << "P6\n" << c.w << " " << c.h << "\n255\n";
     for (auto p : c.px) { char rgb[] = {char(p >> 16), char(p >> 8), char(p)}; f.write(rgb, 3); }
 }
-static void TextMatches(const Canvas& c, int x, int y, const std::string& text, int scale, uint32_t colour) {
+static void TextMatches(const Canvas& c, int x, int y, [[maybe_unused]] const std::string& text, int scale, [[maybe_unused]] uint32_t colour) {
     assert(x >= 0 && x < c.w);
     assert(y >= 0 && y < c.h);
     // Verify that rendered text pixels are present in the canvas

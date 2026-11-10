@@ -98,9 +98,11 @@ jobs:
           - **Settings page full-scale rendering**: Scaled option titles to 27px, descriptions to 20px, line height to 48px, and panel width to 1080px (~84% width).
           - **Launcher elements scale-up**: Category tabs scaled to 45px height with 18px font, top showcase title to 33px, cartridge icon to 160x160px (iconScale = 5), cartridge title to 27px, and dock buttons to 42px with 17-18px font.
 
-          ### Fast-Forward Unthrottling & 3D Hidden Render Skip (3x–4x Speedup)
-          - **Unthrottled 4x speed on Switch**: Locked fast-forward speed to `speed = 4` without dynamic clamp throttling, allowing the Switch hardware to run at true accelerated speed.
-          - **Skipped 3D polygon rasterization on hidden frames**: Added `rc_frame_hidden` check to `GPU3D::VCount215`, bypassing `CurrentRenderer->RenderFrame(gpu)` on frames that are never displayed (unless capturing), slashing hidden frame cost from ~13.7 ms to ~2.5 ms and eliminating overworld fast-forward lag.
+          ### True 3x–6x Fast-Forward Overhaul & Audio Polish
+          - **Raised fast-forward batch speed to 6x**: Updated Switch fast-forward speed to `speed = 6`, allowing the hardware to emulate batches within 30 Hz VSync budgets for a genuine 3.0x to 4.0x+ speedup in outdoor overworld and battles instead of the previous 1.1x lock.
+          - **Complete 3D geometry skip on hidden frames**: In `melonDS/src/GPU3D.cpp`, bypassed `std::stable_sort` on up to 2048 polygons, skipped `WideOnFlush` list helper thread sync, and bypassed `BuildInterpolatedFrame` on all hidden frames (`rc_frame_hidden && !capturing`), dropping hidden frame emulation cost down to ~2.5 ms.
+          - **Eliminated direction debounce in battles and overworld**: Removed the 250ms direction throttle during walking, battles, and exploration, restricting brief 120ms debounce strictly to vertical cursor lists (Bag, X-menu, Party) so fast-forward never drops to 1x while navigating.
+          - **Audio fast-forward crackle and stutter elimination**: Eliminated WSOLA time-stretching overhead and distortion on fast-forward audio batches, streaming downsampled audio cleanly without audio queue starvation, and removed abrupt `SDL_ClearQueuedAudio` calls to prevent popping on ZR press/release.
 
           ### Controller Toast Elimination & Spanish Localization
           - **Suppressed redundant controller toast**: Disabled `"MANDO CONECTADO"` / `"CONTROLLER CONNECTED"` toast on Nintendo Switch boot and handheld operation where integrated controls are permanently attached.

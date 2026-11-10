@@ -4,16 +4,18 @@
 ## Unreleased
 
 
-## v1.0.0-beta.4 — Switch Lite Handheld Scale, Unthrottled 4x Fast-Forward & UI Polish
+## v1.0.0-beta.4 — Switch Lite Handheld Scale, True 3x–6x Fast-Forward & Audio Polish
+
+- **True 3x–6x Fast-Forward Overhaul on Nintendo Switch**:
+  - **Raised fast-forward batch speed to 6x**: updated Switch fast-forward speed to `speed = 6`, allowing the hardware to emulate batches within 30 Hz VSync budgets for a genuine 3.0x to 4.0x+ speedup in outdoor overworld and battles instead of the previous 1.1x lock.
+  - **Complete 3D geometry skip on hidden frames**: in `melonDS/src/GPU3D.cpp`, bypassed `std::stable_sort` on up to 2048 polygons, skipped `WideOnFlush` list helper thread sync, and bypassed `BuildInterpolatedFrame` on all hidden frames (`rc_frame_hidden && !capturing`), dropping hidden frame emulation cost down to ~2.5 ms.
+  - **Eliminated direction debounce in battles and overworld**: removed the 250ms direction throttle during walking, battles, and exploration, restricting brief 120ms debounce strictly to vertical cursor lists (Bag, X-menu, Party) so fast-forward never drops to 1x while navigating.
+  - **Audio fast-forward crackle and stutter elimination**: eliminated WSOLA time-stretching overhead and distortion on fast-forward audio batches, streaming downsampled audio cleanly without audio queue starvation, and removed abrupt `SDL_ClearQueuedAudio` calls to prevent popping on ZR press/release.
 
 - **Switch Lite Handheld UI Scaling (5.5" 720p Native Typography)**:
   - **In-game pause menu scale-up**: enlarged item font size to `33px` (`itemFontH = 11 * scale`), row spacing to `51px` (`lineH = 17 * scale`), menu card width to `960px` (`boxW = 320 * scale`, occupying 75% of the screen width), header title font to `39px`, note font to `21px`, and hint font to `24px` for effortless legibility on the compact 5.5" Switch Lite screen.
   - **Launcher elements scale-up**: enlarged cartridge icons to `160x160` (`iconScale = 5`), cartridge width to `196px`, cartridge card titles to `27px`, category tabs to `45px` height with `18px` font, top showcase title to `33px`, and bottom dock buttons to `42px` with `17-18px` font.
   - **Settings page scale-up**: scaled option titles to `27px`, descriptions to `20px`, line height to `48px`, panel width to `1080px` (~84% screen width), and bottom dock buttons to `42px`.
-
-- **Unthrottled 4x Fast-Forward & 3D Hidden Render Skip**:
-  - **Unthrottled 4x speed on Switch**: locked fast-forward speed to `speed = 4` without dynamic clamp throttling, allowing the Switch hardware to run at maximum multi-frame speed.
-  - **Skipped 3D polygon rasterization on hidden frames**: added `rc_frame_hidden` check to `GPU3D::VCount215`, bypassing `CurrentRenderer->RenderFrame(gpu)` on frames that are never displayed (unless capturing), slashing hidden frame CPU/GPU cost from ~13.7 ms to ~2.5 ms and eliminating overworld fast-forward lag.
 
 - **Controller Toast & Spanish Localization Polish**:
   - **Suppressed redundant controller toast**: disabled `"MANDO CONECTADO"` / `"CONTROLLER CONNECTED"` toast on Nintendo Switch boot and handheld operation where integrated controls are permanently attached.

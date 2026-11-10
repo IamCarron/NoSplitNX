@@ -4714,7 +4714,6 @@ int main(int argc, char** argv)
         M_CFOLDER0 = 50000  // (M_CFOLDER0 + i: folder i of the cheat database)
     };
     enum { PAGE_MAIN, PAGE_KEYS, PAGE_SETTINGS, PAGE_GRAPHICS, PAGE_CONTROLS, PAGE_CHEATS, PAGE_RA, PAGE_SOUND, PAGE_RA_LIST, PAGE_RA_DETAIL, PAGE_CSEARCH, PAGE_CDETAIL, PAGE_CINFO, PAGE_BACKUPS, PAGE_RESTORE_CONFIRM, PAGE_LOAD_CONFIRM };
-    static constexpr int PAGE_DISPLAY = PAGE_SETTINGS;
     // ACHIEVEMENTS (RETROACHIEVEMENTS' list): read from the set as the page opens.
     std::vector<Achievements::Row> achList;
     int achDetail = -1; // the one ACHIEVEMENTS' details are shown for (A on it)
@@ -5104,7 +5103,6 @@ int main(int argc, char** argv)
     bool mouseDown = false;
     int mouseTapHold = 0;      // frames a click lasts at least (see SDL_MOUSEBUTTONDOWN)
     int mouseX = 0, mouseY = 0;
-    bool touchMenuHeld = false, prevTouchMenu = false;
     // On a touch screen, the Pokedex's cover is pushed across as on the DS: a swipe to the left
     // from the right half of the closed cover opens it (A), and a swipe to the right from the left
     // half of the list closes it (B). (A quarter of the screen across, more across than down.)
@@ -6641,22 +6639,17 @@ int main(int argc, char** argv)
                 if (ps.lt > 0.3f) curPress = true;
             }
         }
-        // Fast forward (4x) while the right trigger (ZR on the Switch) or Left Shift is held, or
+        // Fast forward (up to 6x) while the right trigger (ZR on the Switch) or Left Shift is held, or
         // locked on from the menu.
-        // Fast forward runs several frames at once and shows the last, up to 4. As many as fit
-        // in about 33 ms by the last time's measure (ffFrameMs): where the emulation itself is
-        // the limit (the Switch, 10 ms or more a frame) running 4 at once is no faster than 3, it
-        // only shows fewer of them.
         if (!paused && (fastLock || kbFast || ps.rt > 0.5f))
 #ifdef __SWITCH__
-            speed = 4;
+            speed = 6;
 #else
             speed = ffFrameMs > 0 && !opt.headless ? std::clamp((int)(33.3 / ffFrameMs), 2, 4) : 4; // (tests: always 4)
 #endif
-        // A direction just pressed runs at normal speed for its first quarter of a second. The
-        // games repeat a held direction in menus after a few frames: at 4x a quick tap lasted
-        // long enough to move the cursor two or three times (shops, the elevator, the Bag).
-        // A tap now moves it once; held longer (walking, scrolling), fast forward carries on.
+        // A direction just pressed in a menu list runs at normal speed for a brief moment (120ms)
+        // so that a quick tap moves the cursor one item (shops, Bag, party).
+        // In the overworld, battles, and field exploration, fast forward continues at full speed.
         {
             constexpr uint32_t dirMask = (1u << KEY_RIGHT) | (1u << KEY_LEFT) | (1u << KEY_UP) | (1u << KEY_DOWN);
             static uint32_t prevDirs = 0, dirSince = 0;
@@ -6665,11 +6658,8 @@ int main(int argc, char** argv)
             const uint32_t now = opt.headless ? (uint32_t)(frame * 50 / 3) : SDL_GetTicks();
             if (dirs & ~prevDirs) dirSince = now;
             prevDirs = dirs;
-            // (FAST FORWARD turned on in the menu stays on whatever is pressed: the quarter second is for
-            // fast forward held on its button, where a quick tap in a menu would otherwise move two or three places.
-            // In the overworld/field, fast forward carries on without direction throttle.)
-            const bool inField = (fieldActive() || (funcWatchOn && (funcWatch.Ran(bw2.field, 16) || funcWatch.Ran(pt.field, 16))));
-            if (speed > 1 && dirs && !fastLock && !inField && now - dirSince < 250) speed = 1;
+            const bool isMenu = funcWatchOn && (funcWatch.Ran(bw2.fieldMenu, 8) || funcWatch.Ran(bw2.bag, 8) || funcWatch.Ran(bw2.party, 8));
+            if (speed > 1 && dirs && !fastLock && isMenu && now - dirSince < 120) speed = 1;
         }
         prevPad = ps;
 
@@ -7871,38 +7861,51 @@ int main(int argc, char** argv)
             audioSlow = 1.0;
             audioTick = 0;
             audioWasFastForward = audioFastForward;
-            if (audio) SDL_ClearQueuedAudio(audio);
         }
         ffInBattle = std::strncmp(scene.name, "battle", 6) == 0;
         got = AudioFastForward(audioBuf.data(), got, speed);
 
         if (audio && got > 0)
         {
-            // How much longer than a DS frame the frames are taking: above full speed's 1 the
-            // sound is stretched to match (see AudioStretch), steered towards 100 ms of sound
-            // waiting in the queue. Averaged over about a second, so that frames that come
-            // quicker and slower in turn do not make the music speed up and slow down with
-            // them (the queue takes up the difference).
-            const int queued = (int)SDL_GetQueuedAudioSize(audio) / 4;
-            const uint64_t t = SDL_GetPerformanceCounter();
-            if (audioTick)
+            if (speed > 1)
             {
-                const double dt = (double)(t - audioTick) / perfFreq;
-                if (dt < 0.25) audioSlow += (std::min(dt / frameTime, 4.0) - audioSlow) * 0.03;
+                // In fast forward, AudioFastForward has already averaged the batch into 1 displayed frame.
+                // Queue directly without running through AudioStretch, preventing stutter, distortion, and CPU overhead.
+                audioOut.assign(audioBuf.begin(), audioBuf.begin() + (size_t)got * 2);
+                if (cfg.ffMute)
+                    std::fill(audioOut.begin(), audioOut.end(), (int16_t)0);
+                else if (cfg.volume < 100)
+                    for (int16_t& v : audioOut) v = (int16_t)(v * cfg.volume / 100);
+                const int queued = (int)SDL_GetQueuedAudioSize(audio) / 4;
+                if (queued < 48000 / 4 && !audioOut.empty())
+                    SDL_QueueAudio(audio, audioOut.data(), (Uint32)(audioOut.size() * 2));
             }
-            audioTick = t;
-            const double slowdown = AudioQueueSlowdown(audioSlow, queued);
-            audioOut.clear();
-            audioStretch.Process(audioBuf.data(), got, slowdown, audioOut);
-            // VOLUME: scaled here, after the game's own mixing (silence at OFF, still queued, so
-            // the timing the queue gives stays the same).
-            if (cfg.ffMute && speed > 1)
-                std::fill(audioOut.begin(), audioOut.end(), (int16_t)0); // (FAST FORWARD SOUND off)
-            else if (cfg.volume < 100)
-                for (int16_t& v : audioOut) v = (int16_t)(v * cfg.volume / 100);
-            // Drop audio rather than let latency grow if the queue backs up.
-            if (queued < 48000 / 4 && !audioOut.empty())
-                SDL_QueueAudio(audio, audioOut.data(), (Uint32)(audioOut.size() * 2));
+            else
+            {
+                // How much longer than a DS frame the frames are taking: above full speed's 1 the
+                // sound is stretched to match (see AudioStretch), steered towards 100 ms of sound
+                // waiting in the queue. Averaged over about a second, so that frames that come
+                // quicker and slower in turn do not make the music speed up and slow down with
+                // them (the queue takes up the difference).
+                const int queued = (int)SDL_GetQueuedAudioSize(audio) / 4;
+                const uint64_t t = SDL_GetPerformanceCounter();
+                if (audioTick)
+                {
+                    const double dt = (double)(t - audioTick) / perfFreq;
+                    if (dt < 0.25) audioSlow += (std::min(dt / frameTime, 4.0) - audioSlow) * 0.03;
+                }
+                audioTick = t;
+                const double slowdown = AudioQueueSlowdown(audioSlow, queued);
+                audioOut.clear();
+                audioStretch.Process(audioBuf.data(), got, slowdown, audioOut);
+                // VOLUME: scaled here, after the game's own mixing (silence at OFF, still queued, so
+                // the timing the queue gives stays the same).
+                if (cfg.volume < 100)
+                    for (int16_t& v : audioOut) v = (int16_t)(v * cfg.volume / 100);
+                // Drop audio rather than let latency grow if the queue backs up.
+                if (queued < 48000 / 4 && !audioOut.empty())
+                    SDL_QueueAudio(audio, audioOut.data(), (Uint32)(audioOut.size() * 2));
+            }
         }
         if (opt.audioStats && got > 0)
         {

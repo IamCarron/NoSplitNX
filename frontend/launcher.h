@@ -1325,6 +1325,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
         haveTime = true;
     }
 #endif
+    (void)yr; (void)sc;
     const float t = AnimTime();
     const float pulse = 0.5f + 0.5f * sinf(t * 3.5f);
     const int floatY = (int)(3.0f * sinf(t * 2.8f));
@@ -1403,7 +1404,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     }
 
     FollowSelection(v, selected, scroll, follow);
-    const int tile = grid.tile, tileH = grid.tileH, labelH = grid.labelH;
+    const int tile = grid.tile, tileH = grid.tileH;
     const int cardRad = std::max(4, 5 * s);
 
     // Empty state card if the chosen tab has no ROMs installed

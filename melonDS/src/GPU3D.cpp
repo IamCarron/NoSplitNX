@@ -2626,11 +2626,14 @@ void GPU3D::VBlank() noexcept
                             RenderPolygonRAM[io++] = poly;
                     }
 
-                    // apply Y-sorting
-
-                    std::stable_sort(RenderPolygonRAM.begin(),
-                        RenderPolygonRAM.begin() + ((FlushAttributes & 0x1) ? NumOpaquePolygons : NumPolygons),
-                        YSort);
+                    // apply Y-sorting only if the frame is actually going to be rendered
+                    const bool capturing = (NDS.GPU.GPU2D_A.CaptureCnt & (1u << 31)) != 0;
+                    if (!rc_frame_hidden || capturing)
+                    {
+                        std::stable_sort(RenderPolygonRAM.begin(),
+                            RenderPolygonRAM.begin() + ((FlushAttributes & 0x1) ? NumOpaquePolygons : NumPolygons),
+                            YSort);
+                    }
                 }
 
                 RenderNumPolygons = NumPolygons;
@@ -2651,7 +2654,7 @@ void GPU3D::VBlank() noexcept
                     // one (WideListsOnHelper), started first so that they are ready by the time
                     // the in-between frame is drawn; they are built with the in-between lists
                     // whenever one may be needed, as the DS-resolution one decides below.
-                    const bool skipWide = (rc_wide_render_skip || rc_wide_publish_only) && !capturing;
+                    const bool skipWide = (rc_wide_render_skip || rc_wide_publish_only || rc_frame_hidden) && !capturing;
                     const bool helper = Wide.Owner == this && WideListsOnHelper();
                     if (helper && !skipWide)
                     {
@@ -2660,7 +2663,7 @@ void GPU3D::VBlank() noexcept
                     }
                     if (interpolate && helper)
                         InterpDeferred = true; // built when it is drawn, from the helper's pairs
-                    else if (interpolate)
+                    else if (interpolate && !rc_frame_hidden)
                     {
                         SsrProf::Scope prof(SsrProf::Interp);
                         BuildInterpolatedFrame();
@@ -2759,7 +2762,7 @@ void GPU3D::VCount215(GPU& gpu) noexcept
     const bool capturing = (gpu.GPU2D_A.CaptureCnt & (1u << 31)) != 0;
     if (!rc_frame_hidden || capturing)
         CurrentRenderer->RenderFrame(gpu);
-    if (Wide.Owner == this && !rc_wide_render_skip) { SsrProf::Scope prof(SsrProf::WideRender); WideOnRender(gpu, false); }
+    if (Wide.Owner == this && !rc_wide_render_skip && (!rc_frame_hidden || capturing)) { SsrProf::Scope prof(SsrProf::WideRender); WideOnRender(gpu, false); }
 }
 
 void GPU3D::SetRenderXPos(u16 xpos) noexcept

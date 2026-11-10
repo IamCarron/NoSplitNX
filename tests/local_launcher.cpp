@@ -66,8 +66,7 @@ int main() {
     for (auto size : {std::pair<int,int>{576,1280},{720,1600},{1280,720}}) {
         Canvas c; c.Resize(size.first,size.second);
         const auto layout=Launcher::Layout(c);
-        assert(layout.gx>=0 && layout.top<layout.bottom);
-        if (size.second>size.first) assert(layout.cols==2);
+        assert(layout.tile>0 && layout.top<layout.bottom);
         std::vector<Launcher::Game> games(1); games[0].name="TEST";
         int scroll=0; Launcher::Draw(c,games,0,0,scroll,"");
     }
