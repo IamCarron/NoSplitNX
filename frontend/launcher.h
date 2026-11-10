@@ -912,18 +912,20 @@ inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& 
 
     // Center: Console Banner + Bold Game Title + Metadata Pills
     const int contentX = cartX + cartW + 8 * s;
-    const int rightPanelW = 68 * s;
+    const int rightPanelW = 76 * s;
     const int maxTextW = w - (contentX - x) - rightPanelW - 8 * s;
 
-    const std::string subHeader = isGba ? "GAME BOY ADVANCE  •  WIDESCREEN" : is3ds ? "NINTENDO 3DS  •  CITRA CORE" : "NINTENDO DS  •  WIDESCREEN 3D";
-    const int subFontH = std::max(12, 4 * s + 1);
+    const std::string subHeader = isGba ? ("GAME BOY ADVANCE  •  " + UiLang::Tr("WIDESCREEN"))
+                                : is3ds ? ("NINTENDO 3DS  •  " + UiLang::Tr("CITRA CORE"))
+                                : ("NINTENDO DS  •  " + UiLang::Tr("WIDESCREEN 3D"));
+    const int subFontH = std::max(14, 5 * s);
 
     std::string title = TitleCase(g.name);
-    int titleH = std::max(20, 9 * s);
-    while (titleH > 16 && ModernTextWidth(title, titleH) > maxTextW) --titleH;
+    int titleH = std::max(24, 11 * s);
+    while (titleH > 18 && ModernTextWidth(title, titleH) > maxTextW) --titleH;
 
-    const int pillH = 10 * s;
-    const int metaFontH = std::max(13, 5 * s);
+    const int pillH = 12 * s;
+    const int metaFontH = std::max(15, 5 * s + 1);
     const int totalTextH = subFontH + 2 * s + titleH + 3 * s + pillH;
     const int startY = y + (h - totalTextH) / 2;
 
@@ -995,14 +997,14 @@ inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& 
 
     // Bottom of right panel: "[ A ] Jugar" action pill
     const std::string playLabel = "A: " + ToNiceTitle(UiLang::Tr("PLAY"));
-    const int playFontH = std::max(14, 5 * s + 1);
-    const int playW = ModernTextWidth(playLabel, playFontH) + 10 * s;
-    const int playH = 10 * s;
+    const int playFontH = std::max(16, 5 * s + 2);
+    const int playW = ModernTextWidth(playLabel, playFontH) + 12 * s;
+    const int playH = 12 * s;
     const int playX = rpx + (rightPanelW - playW) / 2;
     const int playY = rpy + rph - playH - 3 * s;
     c.FillRound(playX, playY, playW, playH, 2 * s, (platAccent & 0x00FFFFFF) | 0x44000000);
     c.OutlineRound(playX, playY, playW, playH, 2 * s, 1, platAccent);
-    ModernText(c, playX + 5 * s, playY + (playH - playFontH) / 2, playLabel, playFontH, 0xFFFFFFFF, true);
+    ModernText(c, playX + 6 * s, playY + (playH - playFontH) / 2, playLabel, playFontH, 0xFFFFFFFF, true);
 }
 
 // Renders a glossy Wii U / Nintendo 3DS Channel Plaza Tile with physical cartridge & title footer
@@ -1027,18 +1029,18 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int tileW, int tileH, int
     const uint32_t badgeBg = isGba ? 0x55A855F7 : is3ds ? 0x55F43F5E : 0x5500C3FF;
     const uint32_t badgeBorder = isGba ? 0xBBA855F7 : is3ds ? 0xBBF43F5E : 0xBB00C3FF;
     const uint32_t badgeCol = isGba ? 0xFFE9D5FF : is3ds ? 0xFFFECDD3 : 0xFFBAE6FD;
-    const int badgeH = 11 * s;
-    const int badgeFontH = std::max(12, 5 * s);
-    const int badgeW = ModernTextWidth(badge, badgeFontH) + 8 * s;
+    const int badgeH = 12 * s;
+    const int badgeFontH = std::max(14, 5 * s + 1);
+    const int badgeW = ModernTextWidth(badge, badgeFontH) + 10 * s;
     const int bx = x + 4 * s, by = y + 4 * s;
     c.FillRound(bx, by, badgeW, badgeH, 2 * s, badgeBg);
     c.OutlineRound(bx, by, badgeW, badgeH, 2 * s, 1, badgeBorder);
-    ModernText(c, bx + 4 * s, by + (badgeH - badgeFontH) / 2, badge, badgeFontH, badgeCol, true);
+    ModernText(c, bx + 5 * s, by + (badgeH - badgeFontH) / 2, badge, badgeFontH, badgeCol, true);
 
     // Save status badge in top-right corner when a save file exists
     if (hasSave)
     {
-        const int dotR = std::max(2, 2 * s);
+        const int dotR = std::max(3, 2 * s + 1);
         const int dx = x + tileW - 6 * s - dotR * 2;
         const int dy = by + (badgeH - dotR * 2) / 2;
         c.FillRound(dx - s, dy - s, (dotR + s) * 2, (dotR + s) * 2, dotR + s, 0x4400E676);
@@ -1046,14 +1048,14 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int tileW, int tileH, int
     }
 
     // Physical Cartridge Silhouette in the center of the channel tile, scaling dynamically with tile size
-    const int footerH = 24 * s;
+    const int footerH = 26 * s;
     const int bodyH = tileH - footerH;
-    const int iconScale = (tileH >= 285 && tileW >= 290) ? 4 : (tileH >= 180) ? 3 : 2;
+    const int iconScale = (tileH >= 280 && tileW >= 280) ? 5 : (tileH >= 200) ? 4 : 3;
     const int iconSz = 32 * iconScale;
-    const int cartW = iconSz + 10 * s;
-    const int cartH = iconSz + 15 * s;
+    const int cartW = iconSz + 12 * s;
+    const int cartH = iconSz + 18 * s;
     const int cx = x + (tileW - cartW) / 2;
-    const int cy = y + 11 * s + (bodyH - 11 * s - cartH) / 2;
+    const int cy = y + 12 * s + (bodyH - 12 * s - cartH) / 2;
 
     const uint32_t glowCol = isGba ? 0x2AA855F7 : is3ds ? 0x2AF43F5E : 0x2A00C3FF;
     c.GlowRound(cx - 2 * s, cy - 2 * s, cartW + 4 * s, cartH + 4 * s, 4 * s, 3 * s, glowCol);
@@ -1065,7 +1067,7 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int tileW, int tileH, int
     c.Fill(x + 3 * s, fy, tileW - 6 * s, 1, sel ? badgeBorder : 0x55334155);
 
     std::string cardTitle = ShortCardTitle(name);
-    int nameFontH = std::max(15, (tileW >= 300 ? 8 : 7) * s);
+    int nameFontH = std::max(18, (tileW >= 300 ? 9 : 8) * s);
     while (cardTitle.size() > 6 && ModernTextWidth(cardTitle, nameFontH) > tileW - 8 * s)
     {
         cardTitle.pop_back();
@@ -1074,7 +1076,7 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int tileW, int tileH, int
     ModernText(c, x + (tileW - nw) / 2, fy + 3 * s, cardTitle, nameFontH, sel ? 0xFFFFFFFF : 0xFFE2E8F0, true);
 
     std::string serial = (isGba ? "AGB-" : is3ds ? "CTR-" : "NTR-") + code;
-    const int serH = std::max(11, 4 * s);
+    const int serH = std::max(13, 4 * s + 1);
     const int swidth = ModernTextWidth(serial, serH);
     ModernText(c, x + (tileW - swidth) / 2, fy + 3 * s + nameFontH + s, serial, serH, sel ? 0xFF7DD3FC : 0xFF64748B);
 }
@@ -1103,12 +1105,12 @@ inline Grid Layout(const Canvas& c)
     g.s = std::max(1, std::min(c.w, c.h) / 240); // 3 at 720 lines
     g.colGap = 9 * g.s;                          // default 27px gap
     g.labelH = 8 * g.s;                          // 24px for selection indicator pill
-    g.tabsY = 19 * g.s;                          // 57px
-    g.tabsH = 13 * g.s;                          // 39px
-    g.bannerY = g.tabsY + g.tabsH + 3 * g.s;     // 105px
-    g.bannerH = 43 * g.s;                        // 129px Upper 3DS Showcase Display
-    g.dockH = 20 * g.s;                          // 60px
-    g.bottom = c.h - g.dockH;                    // 660px
+    g.tabsY = 18 * g.s;                          // 54px
+    g.tabsH = 15 * g.s;                          // 45px
+    g.bannerY = g.tabsY + g.tabsH + 3 * g.s;     // 108px
+    g.bannerH = 44 * g.s;                        // 132px Upper 3DS Showcase Display
+    g.dockH = 22 * g.s;                          // 66px
+    g.bottom = c.h - g.dockH;                    // 654px
     g.tile = 84 * g.s;                           // default 252px card width
     g.tileH = 100 * g.s;                         // default 300px card height
     const int stageTop = g.bannerY + g.bannerH + 3 * g.s;
@@ -1294,15 +1296,15 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     const int logoH = (4 * s + 1) * 2 + std::max(1, s + 1);
     DrawDsLogo(c, 10 * s, (bandH - logoH) / 2, s, th.title);
     const std::string title = "NoSplitNX";
-    const int topFontH = std::max(16, 7 * s);
+    const int topFontH = std::max(20, 8 * s);
     c.ModernText(21 * s, (bandH - topFontH) / 2, title, topFontH, th.title, true);
 
-    // Subtle edition pill badge beside NoSplitNX
+    // Edition pill badge beside NoSplitNX
     const int titleW = c.ModernTextWidth(title, topFontH);
-    const std::string subTag = "WIDESCREEN";
-    const int tagFontH = std::max(11, 4 * s);
-    const int tagW = c.ModernTextWidth(subTag, tagFontH) + 6 * s;
-    const int tagH = 7 * s + 2;
+    const std::string subTag = UiLang::Tr("WIDESCREEN");
+    const int tagFontH = std::max(13, 5 * s);
+    const int tagW = c.ModernTextWidth(subTag, tagFontH) + 8 * s;
+    const int tagH = 8 * s + 2;
     const int tagX = 21 * s + titleW + 5 * s;
     const int tagY = (bandH - tagH) / 2;
     c.FillRound(tagX, tagY, tagW, tagH, 2 * s, 0x3300C3FF);
@@ -1367,18 +1369,18 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     c.ShadowRound(segX, segY, segW, segH, 4 * s, s, std::max(1, s / 2));
     c.FillGlass(segX, segY, segW, segH, 4 * s, 0xDD161C2A, 0xDD0D111A, 0xFF28344C, 1);
 
-    const int badgeH = 12 * s;
+    const int badgeH = 13 * s;
     c.DrawButtonBadge(segX - badgeH - 4 * s, segY + (segH - badgeH) / 2, "L", s, 0xFF222B3D, 0xFFE0E8F5, 0xFF3D4B66);
     c.DrawButtonBadge(segX + segW + 4 * s, segY + (segH - badgeH) / 2, "R", s, 0xFF222B3D, 0xFFE0E8F5, 0xFF3D4B66);
 
     for (int t = 0; t < TABS; t++)
     {
         const std::string name = (t == 0 ? UiLang::Tr("ALL") : t == 1 ? "Nintendo DS" : t == 2 ? "GBA" : "3DS");
-        const int tabH = std::max(15, 5 * s + 1);
+        const int tabH = std::max(18, 6 * s);
         const int nameW = ModernTextWidth(name, tabH);
         const int cx = TabX(c, grid, t);
         const int x = cx - nameW / 2, y = grid.tabsY + (grid.tabsH - tabH) / 2;
-        const int pillW = std::max(nameW + 14 * s, tabStep - 4 * s);
+        const int pillW = std::max(nameW + 16 * s, tabStep - 4 * s);
         const int pillX = cx - pillW / 2;
         if (t == tab)
         {
@@ -1557,8 +1559,8 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
             { "A", "PLAY" }, { "Y", "SETTINGS" }, { "X", "RANDOM" }, { "L/R", "TABS" }, { "+", "QUIT" }
         };
         const int itemCount = 5;
-        const int bh = 12 * s;
-        const int dockFontH = std::max(14, 5 * s + 1);
+        const int bh = 14 * s;
+        const int dockFontH = std::max(16, 5 * s + 2);
         int totalW = 0;
         int widths[itemCount];
         for (int i = 0; i < itemCount; i++)
@@ -1971,17 +1973,17 @@ struct SettingsPage
         const int logoH = (4 * s + 1) * 2 + std::max(1, s + 1);
         DrawDsLogo(c, 10 * s, (bandH - logoH) / 2, s, th.title);
         const std::string title = group < 0 ? ToNiceTitle(UiLang::Tr("SETTINGS")) : ToNiceTitle(UiLang::Tr("SETTINGS")) + ": " + ToNiceTitle(UiLang::Tr(SettingsGroups()[group].name));
-        const int titleH = std::max(18, 7 * s);
+        const int titleH = std::max(22, 8 * s);
         const int tw = c.ModernTextWidth(title, titleH);
         c.ModernText((c.w - tw) / 2, (bandH - titleH) / 2, title, titleH, th.title);
-        const int width = std::min(c.w - 32 * s, 1020);
+        const int width = std::min(c.w - 24 * s, 1080);
         const int x = (c.w - width) / 2;
         struct Line { std::string text, value; int item; bool name; };
         std::vector<Line> out;
         int selFirst = 0, selLast = 0;
         bool infoHeading = false;
-        const int nameFontH = std::max(16, 8 * ts);
-        const int descFontH = std::max(13, 6 * ts);
+        const int nameFontH = std::max(20, 9 * ts);
+        const int descFontH = std::max(15, 6 * ts + 1);
         for (int i = 0; i < (int)items.size(); i++)
         {
             const Setting& e = items[i];
@@ -2005,7 +2007,7 @@ struct SettingsPage
             out.push_back({ "", "", -1, false });
         }
         int top = (c.h > c.w ? 48 : 30) * s, bottom = c.h - 18 * s;
-        lineH = std::max(24, (UiLang::Tall() ? 17 : 14) * ts);
+        lineH = std::max(28, (UiLang::Tall() ? 19 : 16) * ts);
         const int fit = std::max(1, (bottom - top) / lineH);
         if (follow)
         {
@@ -2082,8 +2084,8 @@ struct SettingsPage
             { "A", "CHANGE" }, { "B", "BACK" }
         };
         const int itemCount = 2;
-        const int bh = 12 * s;
-        const int dockFontH = std::max(13, 5 * s + 1);
+        const int bh = 14 * s;
+        const int dockFontH = std::max(16, 5 * s + 2);
         int totalW = 0;
         int widths[itemCount];
         for (int i = 0; i < itemCount; i++)

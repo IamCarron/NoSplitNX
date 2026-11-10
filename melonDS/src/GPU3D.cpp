@@ -17,6 +17,7 @@
 */
 
 #include "SsrProf.h" // ssrecomp
+extern bool rc_frame_hidden; // ssrecomp: GPU.cpp
 extern bool rc_wide_render_skip; // ssrecomp: GPU.cpp
 extern bool rc_wide_publish_only;
 #include <stdio.h>
@@ -2755,7 +2756,9 @@ void GPU3D::VCount215(GPU& gpu) noexcept
         if (Wide.Owner == this && !rc_wide_render_skip) { SsrProf::Scope prof(SsrProf::WideRender); WideOnRender(gpu, true); }
         return;
     }
-    CurrentRenderer->RenderFrame(gpu);
+    const bool capturing = (gpu.GPU2D_A.CaptureCnt & (1u << 31)) != 0;
+    if (!rc_frame_hidden || capturing)
+        CurrentRenderer->RenderFrame(gpu);
     if (Wide.Owner == this && !rc_wide_render_skip) { SsrProf::Scope prof(SsrProf::WideRender); WideOnRender(gpu, false); }
 }
 

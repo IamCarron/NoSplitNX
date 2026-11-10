@@ -5899,13 +5899,20 @@ int main(int argc, char** argv)
                 // by SDL_CONTROLLERDEVICEADDED; Open takes each once.)
                 else if (ev.type == SDL_JOYDEVICEADDED || ev.type == SDL_CONTROLLERDEVICEADDED)
                 {
-                    if (pads.Open(ev.jdevice.which)) say("CONTROLLER CONNECTED");
+                    if (pads.Open(ev.jdevice.which))
+                    {
+#ifndef __SWITCH__
+                        if (frame > 60) say("CONTROLLER CONNECTED");
+#endif
+                    }
                 }
                 else if (ev.type == SDL_JOYDEVICEREMOVED && pads.Close(ev.jdevice.which))
                 {
                     // Pause rather than leave the game running with nobody at the controls.
                     if (pads.Empty() && !menu.open) toggleMenu = true;
+#ifndef __SWITCH__
                     say("CONTROLLER DISCONNECTED");
+#endif
                 }
             }
             SDL_GetMouseState(&mouseX, &mouseY);
@@ -6642,7 +6649,7 @@ int main(int argc, char** argv)
         // only shows fewer of them.
         if (!paused && (fastLock || kbFast || ps.rt > 0.5f))
 #ifdef __SWITCH__
-            speed = ffFrameMs > 0 && !opt.headless ? std::clamp((int)(33.3 / ffFrameMs), 2, 4) : 3;
+            speed = 4;
 #else
             speed = ffFrameMs > 0 && !opt.headless ? std::clamp((int)(33.3 / ffFrameMs), 2, 4) : 4; // (tests: always 4)
 #endif
@@ -8134,12 +8141,12 @@ int main(int argc, char** argv)
                               : std::string(Controls::InputName(cfg.controls.Pad(a, cfg.byLabel),
                                     Controls::StyleOf(pads.controllers.empty() ? nullptr : pads.controllers[0])));
             };
-            std::string hint = btn(Controls::A) + ": SELECT   " + btn(Controls::B) + ": BACK";
+            std::string hint = btn(Controls::A) + ": " + UiLang::Tr("SELECT") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
             const int selId = menu.selected >= 0 && menu.selected < (int)menuIds.size() ? menuIds[menu.selected] : -1;
             static const char* pageTitle[] = { "NoSplitNX", "KEYS AND BUTTONS", "SETTINGS", "GRAPHICS", "CONTROLS", "CHEATS", "RETROACHIEVEMENTS", "SOUND", "ACHIEVEMENTS", "ACHIEVEMENT", "SEARCH CHEATS", "CHEAT DETAILS", "DATABASE INFO", "SAVE BACKUPS", "RESTORE SAVE", "LOAD STATE" };
             if (menuPage == PAGE_KEYS)
             {
-                hint = btn(Controls::A) + ": CHANGE   " + btn(Controls::B) + ": BACK";
+                hint = btn(Controls::A) + ": " + UiLang::Tr("CHANGE") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
                 if (capturing >= 0) hint = ctlKeyboard ? "ESC: LEAVE IT AS IT WAS" : "OR WAIT 5 SECONDS: AS IT WAS";
                 else if (menu.selected == 0 && ctlHasKeyboard) hint = "CHANGE: KEYBOARD OR CONTROLLER";
                 else if (const char* h = Controls::ActionHint(menu.selected - ctlRow0)) hint = h;
@@ -8175,9 +8182,9 @@ int main(int argc, char** argv)
             if (selId == M_RA_LOGIN) hint = Achievements::LoggedIn() ? "FORGETS THE ACCOUNT HERE" : "YOUR USER NAME AND PASSWORD";
             if (selId == M_RA_TYPED)
                 hint = ctlHasKeyboard ? "ENTER: NEXT   ESC: CANCEL" : "TYPE IT  THEN A";
-            if (selId >= M_CHEAT0 && selId < M_ACH0) hint = btn(Controls::A) + ": ON / OFF   " + btn(Controls::B) + ": BACK";
+            if (selId >= M_CHEAT0 && selId < M_ACH0) hint = btn(Controls::A) + ": " + UiLang::Tr("ON / OFF") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
             if (selId == M_CHEAT_ON || (selId >= M_CFOLDER0 && selId < M_CFOLDER0 + (int)cheats.folders.size()))
-                hint = btn(Controls::A) + ": OPEN   " + btn(Controls::B) + ": BACK";
+                hint = btn(Controls::A) + ": " + UiLang::Tr("OPEN") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
             if (selId == M_RA_LIST) hint = "WHAT EACH ASKS FOR";
             std::string note = selId >= M_CHEAT0 && selId < M_ACH0 && selId - M_CHEAT0 < (int)cheats.items.size() ? cheats.items[selId - M_CHEAT0].note : std::string();
             if (selId >= M_CHEAT0 && selId < M_ACH0 && selId - M_CHEAT0 < (int)cheats.items.size() && cheatWhere == -3)

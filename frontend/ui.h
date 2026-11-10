@@ -712,34 +712,34 @@ struct Menu
         const uint32_t barOff = shade(Accent, [](int v) { return 35 + v * 35 / 100; });
         int scale = std::min(c.w, c.h) / 240;
         if (scale < 1) scale = 1;
-        const int itemFontH = std::max(16, 9 * scale);
-        int lineH = std::max(22, (UiLang::Tall() ? 17 : 15) * scale);
+        const int itemFontH = std::max(20, 11 * scale);
+        int lineH = std::max(28, (UiLang::Tall() ? 19 : 17) * scale);
         // (Rows closer together if they would not all fit on the screen, down to 9 * scale.)
         // With no title the box starts with the first item.
         const bool hasTitle = !title.empty();
         // (A value as drawn: translated before its arrows go round it, as the whole would not be
         // in the language's table.)
         auto shownValue = [](const MenuItem& item) { return item.info ? item.value : "< " + UiLang::Tr(item.value) + " >"; };
-        int boxW = (boxUnits > 0 ? std::max(boxUnits, 270) : 260) * scale;
+        int boxW = (boxUnits > 0 ? std::max(boxUnits, 340) : 320) * scale;
         for (const auto& item : items)
         {
             const std::string trL = ToNiceTitle(UiLang::Tr(item.label));
             const std::string v = item.value.empty() ? "" : ToNiceTitle(shownValue(item));
-            const int modernW = c.ModernTextWidth(trL, itemFontH) + (item.value.empty() ? 0 : c.ModernTextWidth(v, itemFontH) + 16 * scale) + 36 * scale;
-            const int legacyW = Canvas::TextWidth(item.label, scale) + (item.value.empty() ? 0 : Canvas::TextWidth(shownValue(item), scale)) + 24 * scale;
+            const int modernW = c.ModernTextWidth(trL, itemFontH) + (item.value.empty() ? 0 : c.ModernTextWidth(v, itemFontH) + 16 * scale) + 40 * scale;
+            const int legacyW = Canvas::TextWidth(item.label, scale) + (item.value.empty() ? 0 : Canvas::TextWidth(shownValue(item), scale)) + 28 * scale;
             boxW = std::max({boxW, modernW, legacyW});
         }
         if (hasTitle)
         {
             const std::string niceTitle = (title == "NoSplitNX") ? title : ToNiceTitle(UiLang::Tr(title));
-            const int titleFontH = std::max(18, 11 * scale);
+            const int titleFontH = std::max(22, 13 * scale);
             const int titleW = c.ModernTextWidth(niceTitle, titleFontH);
-            boxW = std::max(boxW, titleW + 48 * scale);
+            boxW = std::max(boxW, titleW + 54 * scale);
         }
         if (boxW > c.w - 16) boxW = c.w - 16;
         // The note's lines (up to 4, the last cut short), and the box moved up to make room.
         std::vector<std::string> noteLines;
-        const int noteFontH = std::max(13, 6 * scale);
+        const int noteFontH = std::max(16, 7 * scale);
         if (!note.empty())
         {
             const int maxW = boxW - 20 * scale;
@@ -787,7 +787,7 @@ struct Menu
             c.FillGradV(bx + scale, by + scale, boxW - 2 * scale, hdrH, headerCol + 0x0006080C, headerCol, std::max(1, rad - scale));
             c.Fill(bx + 6 * scale, by + hdrH, boxW - 12 * scale, std::max(1, scale / 2), 0xFF26354A);
             const int sw = 8 * scale, sh = 5 * scale, gap = scale;
-            const int titleFontH = std::max(18, 11 * scale);
+            const int titleFontH = std::max(22, 13 * scale);
             const int titleW = c.ModernTextWidth(niceTitle, titleFontH);
             const int contentW = sw + 6 * scale + titleW;
             const int startX = bx + (boxW - contentW) / 2;
@@ -846,7 +846,7 @@ struct Menu
             y += lineH;
         }
         if (!hint.empty()) c.Fill(bx + 6 * scale, y + scale, boxW - 12 * scale, std::max(1, scale / 2), 0xFF26354A);
-        const int hintFontH = std::max(14, 7 * scale);
+        const int hintFontH = std::max(16, 8 * scale);
         const std::string niceHint = ToNiceTitle(UiLang::Tr(hint));
         const int hw = c.ModernTextWidth(niceHint, hintFontH);
         const int footerAreaH = (by + boxH) - (y + scale);

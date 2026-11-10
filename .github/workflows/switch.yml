@@ -91,17 +91,21 @@ jobs:
           cat << EOF > build-sd/RELEASE_NOTES.md
           # NoSplitNX ${{ github.ref_name }}
 
-          Nintendo Switch release of **NoSplitNX** focusing on Switch Lite handheld UI legibility and true fast-forward speedup in the overworld.
+          Nintendo Switch release of **NoSplitNX** focusing on Switch Lite native handheld typography scaling, unthrottled 4x fast-forward speedup, and localization polish.
 
-          ### Switch Lite Handheld UI Scaling & Legibility Overhaul
-          - **In-game pause menu scale-up**: Enlarged menu options from 21px to 27px, row spacing from 36px to 45px, card width from 600px to 780px (~61% of display), header title to 33px, and hints to 21px for crystal clear readability on 5.5" handheld screens.
-          - **Settings page full-scale rendering**: Eliminated 2/3 downsampling (`ts` now full scale 3), increasing option titles to 24px, descriptions to 18px, and panel width to 1020px.
-          - **Launcher elements scale-up**: Category tabs scaled to 39px height with 16px font, top showcase title to 27px, cartridge card titles to 21-24px, and dock buttons to 36px with 16px font.
+          ### Switch Lite Handheld UI Scaling & Native 720p Typography
+          - **In-game pause menu scale-up**: Enlarged menu options to 33px font, row spacing to 51px, card width to 960px (~75% of screen width), header title to 39px, note font to 21px, and hint font to 24px for clear readability on 5.5" handheld screens.
+          - **Settings page full-scale rendering**: Scaled option titles to 27px, descriptions to 20px, line height to 48px, and panel width to 1080px (~84% width).
+          - **Launcher elements scale-up**: Category tabs scaled to 45px height with 18px font, top showcase title to 33px, cartridge icon to 160x160px (iconScale = 5), cartridge title to 27px, and dock buttons to 42px with 17-18px font.
 
-          ### Fast-Forward True Speed Optimisation (2.5x–4.0x)
-          - **Overworld D-pad unthrottling**: Bypassed the 250ms direction change throttle when moving in the overworld, ensuring holding ZR while moving with the D-pad runs at true accelerated speed instead of dropping to 1.0x.
-          - **Raised Switch fast-forward speed clamp**: Updated the hardware clamp from 2–3x to 2–4x (defaulting to 3x).
-          - **Redundant 3D GPU render skipping**: Added `rc_wide_publish_only` to publish widescreen front buffers without queueing redundant GPU draws on hidden frames, skipped `WideOnFlush` thread overhead on skipped frames, and skipped unchanged 256x192 DS 3D GPU passes.
+          ### Fast-Forward Unthrottling & 3D Hidden Render Skip (3x–4x Speedup)
+          - **Unthrottled 4x speed on Switch**: Locked fast-forward speed to `speed = 4` without dynamic clamp throttling, allowing the Switch hardware to run at true accelerated speed.
+          - **Skipped 3D polygon rasterization on hidden frames**: Added `rc_frame_hidden` check to `GPU3D::VCount215`, bypassing `CurrentRenderer->RenderFrame(gpu)` on frames that are never displayed (unless capturing), slashing hidden frame cost from ~13.7 ms to ~2.5 ms and eliminating overworld fast-forward lag.
+
+          ### Controller Toast Elimination & Spanish Localization
+          - **Suppressed redundant controller toast**: Disabled `"MANDO CONECTADO"` / `"CONTROLLER CONNECTED"` toast on Nintendo Switch boot and handheld operation where integrated controls are permanently attached.
+          - **Localized pause menu footer**: Wired `UiLang::Tr("SELECT")`, `UiLang::Tr("BACK")`, `UiLang::Tr("CHANGE")`, `UiLang::Tr("OPEN")`, and `UiLang::Tr("ON / OFF")` directly into pause menu hints so they cleanly display `"A: Elegir   B: Volver"` in Spanish across all controller types.
+          - **Spanish translation additions**: Added proper translations for `"SELECT"` -> `"ELEGIR"`, `"WIDESCREEN"` -> `"PANORÁMICA"`, `"WIDESCREEN 3D"` -> `"3D PANORÁMICO"`, and `"CITRA CORE"` -> `"NÚCLEO CITRA"`.
 
           ### Installation & Updating
           - **From console:** Open \`SETTINGS (Y)\` -> \`CHECK FOR UPDATES\` and press \`A\` to install.

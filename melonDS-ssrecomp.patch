@@ -1825,11 +1825,12 @@ diff --git a/src/GPU3D.cpp b/src/GPU3D.cpp
 index 1204741..22f58ea 100644
 --- a/src/GPU3D.cpp
 +++ b/src/GPU3D.cpp
-@@ -16,6 +16,9 @@
+@@ -16,6 +16,10 @@
      with melonDS. If not, see http://www.gnu.org/licenses/.
  */
  
 +#include "SsrProf.h" // ssrecomp
++extern bool rc_frame_hidden; // ssrecomp: GPU.cpp
 +extern bool rc_wide_render_skip; // ssrecomp: GPU.cpp
 +extern bool rc_wide_publish_only;
  #include <stdio.h>
@@ -2226,7 +2227,10 @@ index 1204741..22f58ea 100644
 +        if (Wide.Owner == this && !rc_wide_render_skip) { SsrProf::Scope prof(SsrProf::WideRender); WideOnRender(gpu, true); }
 +        return;
 +    }
-     CurrentRenderer->RenderFrame(gpu);
+-    CurrentRenderer->RenderFrame(gpu);
++    const bool capturing = (gpu.GPU2D_A.CaptureCnt & (1u << 31)) != 0;
++    if (!rc_frame_hidden || capturing)
++        CurrentRenderer->RenderFrame(gpu);
 +    if (Wide.Owner == this && !rc_wide_render_skip) { SsrProf::Scope prof(SsrProf::WideRender); WideOnRender(gpu, false); }
  }
  
