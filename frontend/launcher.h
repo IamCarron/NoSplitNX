@@ -1452,22 +1452,12 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     const int topFontH = std::max(20, 8 * s);
     c.ModernText(21 * s, (bandH - topFontH) / 2, title, topFontH, th.title, true);
 
-    // Edition pill badge beside NoSplitNX
     const int titleW = c.ModernTextWidth(title, topFontH);
-    const std::string subTag = UiLang::Tr("WIDESCREEN");
-    const int tagFontH = std::max(13, 5 * s);
-    const int tagW = c.ModernTextWidth(subTag, tagFontH) + 8 * s;
-    const int tagH = 8 * s + 2;
-    const int tagX = 21 * s + titleW + 5 * s;
-    const int tagY = (bandH - tagH) / 2;
-    c.FillRound(tagX, tagY, tagW, tagH, 2 * s, 0x3300C3FF);
-    c.OutlineRound(tagX, tagY, tagW, tagH, 2 * s, 1, 0x8000C3FF);
-    c.ModernText(tagX + (tagW - c.ModernTextWidth(subTag, tagFontH)) / 2, tagY + (tagH - tagFontH) / 2, subTag, tagFontH, 0xFF7DD3FC);
 
     // Quick-access Settings pill in top-right beside the Clock widget (touch & visual shortcut)
     {
         int sx = 0, sy = 0, sw = 0, sh = 0;
-        if (SettingsPillRect(c, sx, sy, sw, sh) && sx > tagX + tagW + 8 * s)
+        if (SettingsPillRect(c, sx, sy, sw, sh) && sx > 21 * s + titleW + 8 * s)
         {
             const std::string settLabel = "Y: " + ToNiceTitle(UiLang::Tr("SETTINGS"));
             const int settFontH = std::max(12, 5 * s - 1);
@@ -2073,21 +2063,25 @@ struct SettingsPage
         follow = true;
         if (selected + d >= 0 && selected + d < (int)items.size()) selected += d;
     }
-    // The chosen option's next (d 1) or previous (d -1) value, written to the file. Returns its
-    // key, or nullptr.
-    const char* Change(int d)
+    enum ControlKind { CTRL_NONE, CTRL_GROUP, CTRL_ACTION, CTRL_TOGGLE, CTRL_CHOICE };
+    static ControlKind KindOf(const Setting& s)
+    {
+        if (!s.key) return CTRL_NONE;
+        if (!strncmp(s.key, "!group", 6)) return CTRL_GROUP;
+        if (s.key[0] == '!') return CTRL_ACTION;
+        if (s.values.size() == 2 && s.values[0].first == "1" && s.values[1].first == "0") return CTRL_TOGGLE;
+        return s.values.size() > 1 ? CTRL_CHOICE : CTRL_ACTION;
+    }
+
+    // Stores value index `idx` for the selected option and persists the file. Returns its key.
+    const char* SelectIndex(int idx)
     {
         if (selected < 0 || selected >= (int)items.size() || !items[selected].key) return nullptr;
         const Setting& s = items[selected];
-        if (!strncmp(s.key, "!group", 6))
-        {
-            if (d > 0) Enter(atoi(s.key + 6));
-            return nullptr;
-        }
-        if (s.key[0] == '!') return s.key; // (done by the caller)
+        if (s.key[0] == '!') return s.key;
         const int n = (int)s.values.size();
-        const int i = ValueIndex(s);
-        const int next = i < 0 ? (d > 0 ? 0 : n - 1) : (i + d + n) % n;
+        if (n <= 0) return nullptr;
+        const int next = std::clamp(idx, 0, n - 1);
         const std::string line = std::string(s.key) + "=" + s.values[next].first;
         bool found = false;
         for (std::string& l : lines)
@@ -2130,6 +2124,24 @@ struct SettingsPage
             if (!ok || ec) fprintf(stderr, "[launcher] cannot save settings: %s\n", path.c_str());
         }
         return s.key;
+    }
+
+    // The chosen option's next (d 1) or previous (d -1) value, written to the file. Returns its
+    // key, or nullptr.
+    const char* Change(int d)
+    {
+        if (selected < 0 || selected >= (int)items.size() || !items[selected].key) return nullptr;
+        const Setting& s = items[selected];
+        if (!strncmp(s.key, "!group", 6))
+        {
+            if (d > 0) Enter(atoi(s.key + 6));
+            return nullptr;
+        }
+        if (s.key[0] == '!') return s.key; // (done by the caller)
+        const int n = (int)s.values.size();
+        const int i = ValueIndex(s);
+        const int next = i < 0 ? (d > 0 ? 0 : n - 1) : (i + d + n) % n;
+        return SelectIndex(next);
     }
 
     static std::vector<std::string> WrapModern(const Canvas& c, const std::string& text, int fontH, int maxPx)
@@ -2261,14 +2273,15 @@ struct SettingsPage
             }
             if (i == selected) selFirst = (int)out.size();
             const std::string value = e.key ? Shown(e) : "";
-            const bool arrows = !value.empty() && i == selected && e.key && strncmp(e.key, "!group", 6);
-            const std::string niceVal = ToNiceTitle(UiLang::Tr(value));
-            const std::string drawnValue = arrows ? "< " + niceVal + " >" : niceVal;
+            const ControlKind kind = KindOf(e);
+            const std::string niceVal = kind == CTRL_GROUP ? "" : ToNiceTitle(UiLang::Tr(value));
             const std::string niceName = ToNiceTitle(UiLang::Tr(e.name));
-            const int valReserve = value.empty() ? 0 : (c.ModernTextWidth(drawnValue, nameFontH) + 28 * ts);
+            const int extraCtrlW = kind == CTRL_TOGGLE ? 19 * ts : (kind == CTRL_CHOICE || kind == CTRL_ACTION ? 8 * ts : 0);
+            const int ctrlW = value.empty() ? 0 : (kind == CTRL_GROUP ? 14 * ts : c.ModernTextWidth(niceVal, nameFontH) + 14 * ts + extraCtrlW);
+            const int valReserve = ctrlW + (ctrlW > 0 ? 12 * ts : 0);
             const bool stacked = c.ModernTextWidth(niceName, nameFontH) + valReserve + 14 * ts > width;
             out.push_back({ niceName, stacked ? "" : value, i, true, lineH });
-            if (stacked && !value.empty())
+            if (stacked && !value.empty() && kind != CTRL_GROUP)
                 for (const std::string& l : WrapModern(c, niceVal, descFontH, descMaxPx))
                     out.push_back({ l, "", i, false, descLineH });
             const std::string descTr = UiLang::Tr(e.text);
@@ -2392,20 +2405,87 @@ struct SettingsPage
                 c.ModernText(x + 6 * ts, y + (l.h - nameFontH) / 2, l.text, nameFontH, info ? th.hint : sel ? th.nameSel : th.subSel);
                 if (!l.value.empty())
                 {
-                    const bool isGroup = !strncmp(items[l.item].key, "!group", 6);
-                    const std::string v = sel && !isGroup ? "< " + ToNiceTitle(UiLang::Tr(l.value)) + " >" : ToNiceTitle(UiLang::Tr(l.value));
-                    const int valW = c.ModernTextWidth(v, nameFontH);
-                    const int pillPadX = 6 * ts;
-                    const int pillW = valW + 2 * pillPadX;
+                    const Setting& item = items[l.item];
+                    const ControlKind kind = KindOf(item);
                     const int pillH = std::max(nameFontH + 4 * ts, l.h - 4 * ts);
-                    const int pillX = x + width - pillW - 2 * ts;
                     const int pillY = y + (l.h - pillH) / 2;
-                    const int pillRad = std::max(3, pillH / 3);
-                    const uint32_t pillBg = sel ? 0xFF2A4268 : (isGroup ? 0xB01C263B : 0xA8162033);
-                    const uint32_t pillBd = sel ? 0xB000E5FF : 0x80324464;
-                    c.FillRound(pillX, pillY, pillW, pillH, pillRad, pillBg);
-                    c.OutlineRound(pillX, pillY, pillW, pillH, pillRad, 1, pillBd);
-                    c.ModernText(pillX + pillPadX, y + (l.h - nameFontH) / 2, v, nameFontH, sel ? 0xFFFFFFFF : th.name);
+                    const int pillPadX = 6 * ts;
+                    const int chevS = std::max(1, ts);
+                    auto drawRightChevron = [&](int cx, int cy, uint32_t col) {
+                        for (int r = -2; r <= 2; r++)
+                            c.Fill(cx + (2 - std::abs(r)) * chevS, cy + r * chevS, chevS, chevS, col);
+                    };
+                    auto drawDownCaret = [&](int cx, int cy, uint32_t col) {
+                        c.Fill(cx, cy - chevS, 5 * chevS, chevS, col);
+                        c.Fill(cx + chevS, cy, 3 * chevS, chevS, col);
+                        c.Fill(cx + 2 * chevS, cy + chevS, chevS, chevS, col);
+                    };
+
+                    if (kind == CTRL_GROUP)
+                    {
+                        const int pillW = 12 * ts;
+                        const int pillX = x + width - pillW - 2 * ts;
+                        const int pillRad = std::max(3, pillH / 3);
+                        c.FillRound(pillX, pillY, pillW, pillH, pillRad, sel ? MixArgb(0xFF223656u, th.frame, 35, 100) : 0xB01C263Bu);
+                        c.OutlineRound(pillX, pillY, pillW, pillH, pillRad, 1, sel ? th.frame : 0x80324464u);
+                        drawRightChevron(pillX + pillW / 2 - (3 * chevS) / 2, pillY + pillH / 2, sel ? 0xFFFFFFFFu : th.subSel);
+                    }
+                    else if (kind == CTRL_TOGGLE)
+                    {
+                        const std::string v = ToNiceTitle(UiLang::Tr(l.value));
+                        const int valW = c.ModernTextWidth(v, nameFontH);
+                        const int trackW = 15 * ts;
+                        const int trackH = std::max(7 * ts, std::min(pillH - 3 * ts, 9 * ts));
+                        const int trackGap = 5 * ts;
+                        const int pillW = pillPadX + valW + trackGap + trackW + pillPadX;
+                        const int pillX = x + width - pillW - 2 * ts;
+                        const int pillRad = std::max(3, pillH / 3);
+                        const bool isOn = (l.value == "ON");
+                        const bool isOff = (l.value == "OFF");
+                        const uint32_t pillBg = sel ? 0xFF22324Cu : 0xA8162033u;
+                        const uint32_t pillBd = sel ? MixArgb(0xFFFFFFFFu, th.frame, 60, 100) : 0x80324464u;
+                        c.FillRound(pillX, pillY, pillW, pillH, pillRad, pillBg);
+                        c.OutlineRound(pillX, pillY, pillW, pillH, pillRad, 1, pillBd);
+                        c.ModernText(pillX + pillPadX, y + (l.h - nameFontH) / 2, v, nameFontH, isOn ? 0xFFFFFFFFu : sel ? 0xFFE2E8F0u : th.subSel);
+                        const int tx = pillX + pillPadX + valW + trackGap;
+                        const int ty = pillY + (pillH - trackH) / 2;
+                        const uint32_t trkCol = isOn ? 0xFF10B981u : isOff ? 0xFF334155u : 0xFF2B5B84u;
+                        c.FillRound(tx, ty, trackW, trackH, trackH / 2, trkCol);
+                        c.OutlineRound(tx, ty, trackW, trackH, trackH / 2, 1, isOn ? 0xFF34D399u : 0xFF475569u);
+                        const int knob = std::max(4, trackH - 3 * std::max(1, ts / 2));
+                        const int kx = isOn ? (tx + trackW - knob - (trackH - knob) / 2) : isOff ? (tx + (trackH - knob) / 2) : (tx + (trackW - knob) / 2);
+                        c.FillRound(kx, ty + (trackH - knob) / 2, knob, knob, knob / 2, isOn ? 0xFFFFFFFFu : 0xFFCBD5E1u);
+                    }
+                    else if (kind == CTRL_ACTION)
+                    {
+                        const std::string v = ToNiceTitle(UiLang::Tr(l.value));
+                        const int valW = c.ModernTextWidth(v, nameFontH);
+                        const int chevGap = 5 * ts;
+                        const int pillW = pillPadX + valW + chevGap + 3 * chevS + pillPadX;
+                        const int pillX = x + width - pillW - 2 * ts;
+                        const int pillRad = std::max(3, pillH / 3);
+                        const uint32_t pillBg = sel ? MixArgb(0xFF0A4A7Au, th.frame, 55, 100) : 0xB01C2942u;
+                        const uint32_t pillBd = sel ? 0xFFFFFFFFu : MixArgb(0xFF385074u, th.frame, 45, 100);
+                        c.FillRound(pillX, pillY, pillW, pillH, pillRad, pillBg);
+                        c.OutlineRound(pillX, pillY, pillW, pillH, pillRad, 1, pillBd);
+                        c.ModernText(pillX + pillPadX, y + (l.h - nameFontH) / 2, v, nameFontH, sel ? 0xFFFFFFFFu : 0xFFE2E8F0u, sel);
+                        drawRightChevron(pillX + pillPadX + valW + chevGap, pillY + pillH / 2, sel ? 0xFFFFFFFFu : th.frame);
+                    }
+                    else
+                    {
+                        const std::string v = ToNiceTitle(UiLang::Tr(l.value));
+                        const int valW = c.ModernTextWidth(v, nameFontH);
+                        const int caretGap = 5 * ts;
+                        const int pillW = pillPadX + valW + caretGap + 5 * chevS + pillPadX;
+                        const int pillX = x + width - pillW - 2 * ts;
+                        const int pillRad = std::max(3, pillH / 3);
+                        const uint32_t pillBg = sel ? MixArgb(0xFF1F3354u, th.frame, 30, 100) : 0xA8162033u;
+                        const uint32_t pillBd = sel ? th.frame : 0x80324464u;
+                        c.FillRound(pillX, pillY, pillW, pillH, pillRad, pillBg);
+                        c.OutlineRound(pillX, pillY, pillW, pillH, pillRad, 1, pillBd);
+                        c.ModernText(pillX + pillPadX, y + (l.h - nameFontH) / 2, v, nameFontH, sel ? 0xFFFFFFFFu : th.name);
+                        drawDownCaret(pillX + pillPadX + valW + caretGap, pillY + pillH / 2, sel ? th.frame : th.subSel);
+                    }
                 }
             }
             else if (!l.text.empty())

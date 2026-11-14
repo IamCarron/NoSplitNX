@@ -266,6 +266,8 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
     int keysCapture = -1;
     u64 keysUntil = 0;
     Menu keysMenu;
+    Menu choiceMenu;
+    std::string choiceTitle;
     auto keysBuild = [&]() {
         keysMenu.items.clear();
         for (int a = 0; a < Controls::COUNT; a++)
@@ -339,8 +341,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
         (*static_cast<decltype(&onUpdaterStatus)>(user))(st);
     }, &onUpdaterStatus);
 #endif
-    auto change = [&](int d) {
-        const char* key = page.Change(d);
+    auto applySettingKey = [&](const char* key) {
         if (key && !strncmp(key, "list_", 5))
         {
             theme = Launcher::ThemeNamed(page.Stored("list_colour"));
@@ -380,6 +381,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
         (void)key;
 #endif
     };
+    auto change = [&](int d) { applySettingKey(page.Change(d)); };
     while (appletMainLoop())
     {
 #ifdef SSR_ALL_GAMES
@@ -464,9 +466,9 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
         padUpdate(&pad);
         const u64 down = padGetButtonsDown(&pad), now = padGetButtons(&pad);
 #ifdef SSR_UPDATER
-        const bool modalActive = !modalMsg.empty() || updateMenu.open;
+        const bool modalActive = !modalMsg.empty() || keysOpen || choiceMenu.open || updateMenu.open;
 #else
-        const bool modalActive = !modalMsg.empty();
+        const bool modalActive = !modalMsg.empty() || keysOpen || choiceMenu.open;
 #endif
         const int s = std::max(1, canvas.h / 240);
         int tapX = -1, tapY = -1;
@@ -623,19 +625,64 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                 keysBuild();
             }
         }
-        // Y: the settings page: up and down choose, left, right and A change, B or Y go back.
+        else if (guide && choiceMenu.open)
+        {
+            const bool step = held == 1 || (held > 20 && held % 6 == 0);
+            MenuInput nav;
+            nav.up = step && up;
+            nav.down = step && dn;
+            nav.accept = (down & HidNpadButton_A) != 0;
+            if ((down & (HidNpadButton_B | HidNpadButton_Y)) || tapBack) choiceMenu.open = false;
+            if (tapX >= 0 && !tapBack)
+            {
+                const int row = choiceMenu.ItemAt(tapX, tapY);
+                if (row >= 0) { choiceMenu.selected = row; nav.accept = true; }
+                else if (row == -2) choiceMenu.open = false;
+            }
+            int dir = 0;
+            const int hit = choiceMenu.Update(nav, dir);
+            if (hit >= 0)
+            {
+                applySettingKey(page.SelectIndex(hit));
+                choiceMenu.open = false;
+            }
+            if (down & HidNpadButton_Plus) break;
+        }
+        // Y: the settings page: up and down choose; A/tap toggles switches, runs actions, or opens multi-choice lists.
         else if (guide)
         {
             const bool step = held == 1 || (held > 20 && held % 6 == 0);
             if (step && (up || dn)) page.Move(up ? -1 : 1);
-            if (step && (lf || rt)) change(lf ? -1 : 1);
-            if (down & HidNpadButton_A) change(1);
+            auto canSide = [&]() {
+                if (page.selected < 0 || page.selected >= (int)page.items.size()) return false;
+                const auto kind = Launcher::SettingsPage::KindOf(page.items[page.selected]);
+                return kind == Launcher::SettingsPage::CTRL_TOGGLE || kind == Launcher::SettingsPage::CTRL_CHOICE;
+            };
+            auto activate = [&]() {
+                if (page.selected < 0 || page.selected >= (int)page.items.size()) return;
+                const Launcher::Setting& st = page.items[page.selected];
+                if (Launcher::SettingsPage::KindOf(st) == Launcher::SettingsPage::CTRL_CHOICE)
+                {
+                    choiceMenu.items.clear();
+                    for (const auto& v : st.values) choiceMenu.items.push_back({ v.second, "" });
+                    const int cur = page.ValueIndex(st);
+                    choiceMenu.selected = cur >= 0 ? cur : 0;
+                    choiceTitle = st.name;
+                    choiceMenu.open = true;
+                }
+                else
+                {
+                    change(1);
+                }
+            };
+            if (step && (lf || rt) && canSide()) change(lf ? -1 : 1);
+            if (down & HidNpadButton_A) activate();
             // (B: from a group back to the groups first; Y closes the page.)
             if (((down & HidNpadButton_B) || tapBack) && !page.Back()) guide = false;
             else if (tapX >= 0 && !tapBack)
             {
                 const int row = page.ItemAt(tapY);
-                if (row >= 0) { page.selected = row; change(1); }
+                if (row >= 0) { page.selected = row; activate(); }
             }
             if (down & HidNpadButton_Y) guide = false;
             if (down & HidNpadButton_Plus) break;
@@ -778,6 +825,10 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             if (keysCapture < 0)
                 if (const char* h = Controls::ActionHint(keysMenu.selected)) kh = h;
             keysMenu.Draw(canvas, "KEYS AND BUTTONS", kh);
+        }
+        else if (guide && choiceMenu.open)
+        {
+            choiceMenu.Draw(canvas, choiceTitle, "A: CHOOSE    B: BACK");
         }
 #ifdef SSR_UPDATER
         if (updateMenu.open)
