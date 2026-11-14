@@ -23,6 +23,12 @@
 #include "thirdparty/stb_image.h"
 #undef STB_IMAGE_IMPLEMENTATION
 #include "launcher.h"
+#if __has_include(<SDL.h>)
+#include <SDL.h>
+#else
+#include <SDL2/SDL.h>
+#endif
+#include "rom_music.h"
 #include "ui_lang_sdl.h"
 #include "controls.h"
 #ifdef SSR_GBA
@@ -67,6 +73,131 @@ std::vector<char*> g_argv;
 // A test run from test.txt (testrun.h), and the .nro to start again for the next one.
 TestRun::State g_test;
 std::string g_self;
+
+// Owns the SDL audio output device cleanly while PickGame is on screen and closes it
+// before handing off to the main emulator loop (which initialises SDL on its own).
+struct MusicAudioSession
+{
+    static int ParseVolume(const std::string& s)
+    {
+        return s.empty() ? 100 : std::clamp(atoi(s.c_str()), 0, 100);
+    }
+
+    RomMusic::Player player;
+    SDL_AudioDeviceID dev = 0;
+    bool sdlOwned = false;
+    int pendingIdx = -1;
+    int loadedIdx = -1;
+    int settleFrames = 0;
+    float bands[RomMusic::Player::kBandCount] = {};
+    bool bandsActive = false;
+    std::vector<int16_t> mixBuf;
+
+    MusicAudioSession(bool enable, int initialVol)
+    {
+        player.SetVolume(initialVol);
+        if (!enable) return;
+        const uint32_t had = SDL_WasInit(SDL_INIT_AUDIO);
+        if (!(had & SDL_INIT_AUDIO))
+        {
+            if (SDL_InitSubSystem(SDL_INIT_AUDIO) == 0) sdlOwned = true;
+            else return;
+        }
+        SDL_AudioSpec want;
+        SDL_zero(want);
+        want.freq = RomMusic::Player::kSampleRate;
+        want.format = AUDIO_S16SYS;
+        want.channels = 2;
+        want.samples = 1024;
+        dev = SDL_OpenAudioDevice(nullptr, 0, &want, nullptr, 0);
+        if (dev)
+        {
+            SDL_PauseAudioDevice(dev, 0);
+            mixBuf.resize(1024 * 2);
+        }
+    }
+
+    ~MusicAudioSession() { Shutdown(); }
+
+    void Shutdown()
+    {
+        if (dev)
+        {
+            SDL_PauseAudioDevice(dev, 1);
+            SDL_ClearQueuedAudio(dev);
+            SDL_CloseAudioDevice(dev);
+            dev = 0;
+        }
+        if (sdlOwned)
+        {
+            SDL_QuitSubSystem(SDL_INIT_AUDIO);
+            sdlOwned = false;
+        }
+        player.Clear();
+        bandsActive = false;
+    }
+
+    void Update(const std::vector<Launcher::Game>& games, int selectedIdx, int volPct)
+    {
+        player.SetVolume(volPct);
+        if (!dev) return;
+
+        const int targetIdx = (selectedIdx >= 0 && selectedIdx < (int)games.size() &&
+                               !games[selectedIdx].comingSoon && !games[selectedIdx].rom.empty())
+                            ? selectedIdx : -1;
+
+        if (targetIdx != pendingIdx)
+        {
+            pendingIdx = targetIdx;
+            settleFrames = 9; // ~150 ms debounce so fast carousel scrolling stays fluid
+            if (targetIdx != loadedIdx)
+            {
+                player.Clear();
+                SDL_ClearQueuedAudio(dev);
+                bandsActive = false;
+                std::fill(std::begin(bands), std::end(bands), 0.0f);
+            }
+        }
+
+        if (pendingIdx != loadedIdx)
+        {
+            if (settleFrames > 0) --settleFrames;
+            if (settleFrames == 0)
+            {
+                loadedIdx = pendingIdx;
+                if (loadedIdx >= 0 && volPct > 0)
+                    player.LoadFromRom(games[loadedIdx].rom, games[loadedIdx].platform, games[loadedIdx].code);
+                else
+                    player.Clear();
+            }
+        }
+        else if (loadedIdx >= 0 && volPct > 0 && !player.IsLoaded())
+        {
+            player.LoadFromRom(games[loadedIdx].rom, games[loadedIdx].platform, games[loadedIdx].code);
+        }
+
+        if (volPct <= 0 || !player.IsLoaded())
+        {
+            if (SDL_GetQueuedAudioSize(dev) > 0) SDL_ClearQueuedAudio(dev);
+            bandsActive = false;
+            for (float& b : bands) b *= 0.80f;
+            return;
+        }
+
+        const int targetQueuedFrames = 3200; // ~66 ms buffer at 48 kHz
+        int queuedFrames = (int)(SDL_GetQueuedAudioSize(dev) / 4);
+        int safety = 0;
+        while (queuedFrames < targetQueuedFrames && safety++ < 4)
+        {
+            const int chunkFrames = 800; // ~16.7 ms
+            if ((int)mixBuf.size() < chunkFrames * 2) mixBuf.resize((size_t)chunkFrames * 2);
+            player.Mix(mixBuf.data(), chunkFrames);
+            SDL_QueueAudio(dev, mixBuf.data(), (Uint32)(chunkFrames * 4));
+            queuedFrames += chunkFrames;
+        }
+        player.GetBands(bands, bandsActive);
+    }
+};
 
 // Shows a message on the console's screen until + is pressed. Used only before SDL starts.
 void ShowMessage(const std::string& text)
@@ -268,6 +399,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
     Menu keysMenu;
     Menu choiceMenu;
     std::string choiceTitle;
+    MusicAudioSession music(autoFrames == 0, MusicAudioSession::ParseVolume(page.Stored("volume")));
     auto keysBuild = [&]() {
         keysMenu.items.clear();
         for (int a = 0; a < Controls::COUNT; a++)
@@ -320,7 +452,8 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             page.Draw(canvas, page.group < 0 ? "UP / DOWN: CHOOSE    A: OPEN    B: BACK"
                                              : "UP / DOWN: CHOOSE    LEFT / RIGHT / A: CHANGE    B: BACK", theme);
         }
-        else Launcher::Draw(canvas, games, tab, onSettings || onTabs ? -1 : selected, scroll, note, std::string(), theme, followScroll, onTabs);
+        else Launcher::Draw(canvas, games, tab, onSettings || onTabs ? -1 : selected, scroll, note, std::string(), theme, followScroll, onTabs,
+                            music.bandsActive ? music.bands : nullptr);
     };
     auto showStatusModal = [&](const std::string& title, const std::string& msg, const std::string& detail,
                                const std::string& hint, bool busy, int progressPct = -1) {
@@ -818,6 +951,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
         }
         // (The game list only when the settings page is not open: drawn over it, the page was
         // hidden while it took the buttons, and the list seemed frozen.)
+        music.Update(games, selected, MusicAudioSession::ParseVolume(page.Stored("volume")));
         drawBackdrop();
         if (guide && keysOpen)
         {
@@ -850,6 +984,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
         }
 #endif
     }
+    music.Shutdown();
     {
         u32 stride;
         if (u32* out = (u32*)framebufferBegin(&fb, &stride))

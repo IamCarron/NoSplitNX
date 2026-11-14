@@ -921,7 +921,7 @@ inline uint32_t GameAccentTint(const std::string& name, int platform)
     return platform == GBA ? 0xFFA855F7 : 0xFF00C3FF;
 }
 
-inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& g, int s, uint32_t accent, int gameIdx = 0, int totalGames = 0)
+inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& g, int s, uint32_t accent, int gameIdx = 0, int totalGames = 0, const float* musicBands = nullptr)
 {
     const bool isGba = (g.platform == GBA);
     const bool is3ds = false; // (no 3DS games: the 3DS tab was removed)
@@ -1030,7 +1030,8 @@ inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& 
         ModernText(c, rpx + (rightPanelW - cw) / 2, rpy + 3 * s, countStr, countFontH, 0xFFCBD5E1, true);
     }
 
-    // Animated 3DS-style sound wave bars in the middle of the right panel
+    // Live 9-band audio visualiser driven by the selected ROM soundtrack when active,
+    // falling back to a calm idle pulse when silent or muted.
     const int barsCount = 9;
     const int barW = 2 * s, barGap = s;
     const int barsTotalW = barsCount * barW + (barsCount - 1) * barGap;
@@ -1038,9 +1039,12 @@ inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& 
     const int barsBaseY = rpy + rph / 2 + 2 * s;
     for (int b = 0; b < barsCount; b++)
     {
-        const float wave = 0.45f + 0.55f * fabsf(sinf(t * 3.8f + b * 0.65f));
-        const int bh = std::max(2 * s, (int)(wave * 7 * s));
-        c.FillRound(barsX + b * (barW + barGap), barsBaseY - bh, barW, bh, 1, platAccent);
+        const float wave = musicBands
+            ? std::clamp(musicBands[b], 0.08f, 1.0f)
+            : (0.45f + 0.55f * fabsf(sinf(t * 3.8f + b * 0.65f)));
+        const int bh = std::max(2 * s, (int)(wave * (musicBands ? 9 : 7) * s));
+        const uint32_t barCol = (musicBands && wave > 0.62f) ? MixArgb(platAccent, 0xFFFFFFFFu, 32, 100) : platAccent;
+        c.FillRound(barsX + b * (barW + barGap), barsBaseY - bh, barW, bh, 1, barCol);
     }
 
     // Bottom of right panel: "[ A ] Jugar" action pill
@@ -1421,7 +1425,8 @@ inline int FirstIn(const View& v) { return v.spots.empty() ? -1 : v.spots[0].gam
 // hint: the line along the bottom (the Switch's buttons when empty). onTabs: the tabs are chosen
 // (up from the first row of games; left and right then change the tab), the shown one framed.
 inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selected, int& scroll, const std::string& note,
-                 const std::string& hintText = std::string(), const Theme& th = Theme(), bool follow = true, bool onTabs = false)
+                 const std::string& hintText = std::string(), const Theme& th = Theme(), bool follow = true, bool onTabs = false,
+                 const float* musicBands = nullptr)
 {
     const View v = MakeView(c, games, tab);
     const Grid& grid = v.g;
@@ -1513,7 +1518,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     {
         const int spotIdx = v.SpotOf(selected);
         DrawDsiTopBanner(c, 24 * s, grid.bannerY, c.w - 48 * s, grid.bannerH, games[selected], s, heroAccent,
-                         spotIdx >= 0 ? spotIdx : 0, (int)v.spots.size());
+                         spotIdx >= 0 ? spotIdx : 0, (int)v.spots.size(), musicBands);
     }
 
     // Segmented pill bar for console tabs (ALL, DS, GBA, 3DS) with tactile L / R bumper badges.
