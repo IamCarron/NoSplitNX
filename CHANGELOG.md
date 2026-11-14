@@ -3,6 +3,9 @@
 
 ## Unreleased
 
+
+## v1.0.0-beta.10 — ROM Audio Quality, Softer UI Palette, Streamlined Pause Menu & Clean Updates
+
 - **Game list soundtrack quality**: fixed GBA MP2K gate-time decoding, fixed-frequency PCM samples, 4-bit CGB wave RAM playback, hardware square/ADSR curves and MEMACC commands, fixed DS SDAT open-track reallocation glitches, noise pitching, sustain-127 envelopes and loop drift, added live volume/panning updates and a stereo DC blocker, and increased Switch audio queue headroom so previews play smoothly without crackles or dropouts.
 - **Softer, unified launcher and menu palette**: balanced theme accents and game tints so they blend naturally instead of clashing across tiles, softened DS/GBA cartridge cards to share one cohesive dark-glass surface, replaced stacked selection rings with a single refined focus border, and matched pause-menu and settings highlights cleanly to the active theme colour.
 - **Streamlined pause menu**: simplified the top-level pause menu and organised video/display and sound options cleanly into **Settings -> Graphics** and **Settings -> Sound** (alongside **Controls**, **Save backups** and **RetroAchievements**).
