@@ -38,6 +38,17 @@ int main()
     auto [nb, rb] = pacer.Pick(7.7, 4.4, 16.68, true, true);
     assert(na == nb && ra == rb);
 
+    // A change waits for the hold to run out: a lighter scene right after a switch does not
+    // move the batch, but the same scene 40 batches later does.
+    pacer.Reset();
+    auto [nh, rh] = pacer.Pick(11.5, 6.2, 16.68, true, true); // heavy: 6 in 3 refreshes
+    assert(nh == 6 && rh == 3);
+    auto [nl, rl] = pacer.Pick(5.8, 3.2, 16.68, true, true);  // light, but held
+    assert(nl == 6);
+    for (int i = 0; i < SwitchFastForwardPacer::HoldBatches; i++) pacer.Pick(5.8, 3.2, 16.68, true, true);
+    auto [nr, rr] = pacer.Pick(5.8, 3.2, 16.68, true, true);
+    assert(nr == 3 && rr == 1);
+
     puts("Switch FF pacer: >=2.0x batch selection and hysteresis verified");
     return 0;
 }

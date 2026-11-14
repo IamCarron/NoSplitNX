@@ -4915,7 +4915,9 @@ int main(int argc, char** argv)
             add(M_RESUME, "RESUME", "");
             add(M_SAVESTATE, "SAVE STATE", "");
             add(M_LOADSTATE, "LOAD STATE", "");
+#ifndef __SWITCH__
             add(M_FAST, "FAST FORWARD", onOff(fastLock));
+#endif
             add(M_SETTINGS, "SETTINGS", "");
             add(M_CONTROLMENU, "CONTROLS", "");
             add(M_CHEATS, "CHEATS", cheats.On() ? std::to_string(cheats.On()) + " ON" : "");
@@ -5108,7 +5110,9 @@ int main(int argc, char** argv)
         else if (menuPage == PAGE_CONTROLS)
         {
             add(M_CONTROLS, "KEYS AND BUTTONS", "");
+#ifndef __SWITCH__
             add(M_FASTBTN, "FAST FORWARD BUTTON", cfg.fastButtonToggle ? "TOGGLE" : "HOLD");
+#endif
             add(M_BACK, "BACK", "");
         }
     };
@@ -5835,7 +5839,8 @@ int main(int argc, char** argv)
                 }
                 if (perfDsFrames > (uint64_t)perfN)
                 {
-                    snprintf(extra, sizeof(extra), "; fast forward: %.2f DS frames a frame", (double)perfDsFrames / perfN);
+                    snprintf(extra, sizeof(extra), "; fast forward: %.2f DS frames a frame (batch %d in %d refreshes; shown %.1f hidden %.1f ms)",
+                        (double)perfDsFrames / perfN, speed, ffRefreshes, ffShownMs, ffHiddenMs);
                     tail += extra;
                 }
                 perfDsFrames = 0;
@@ -6809,9 +6814,12 @@ int main(int argc, char** argv)
             cfg.fastLock = fastLock;
             cfg.Save(opt.config);
         }
-        const bool fastRequested = fastButton.Requested(cfg.fastButtonToggle, fastDown, fastLock);
 #ifdef __SWITCH__
-        if (!opt.headless) SwitchPlatform::SetFastForwardBoost(cfg.cpuBoost && !paused && fastRequested);
+        // Fast forward is off on the Switch for now (it did not hold 2x there, and the processor
+        // clocks it raised are gone with it: nothing here changes the console's clocks).
+        const bool fastRequested = false;
+#else
+        const bool fastRequested = fastButton.Requested(cfg.fastButtonToggle, fastDown, fastLock);
 #endif
         if (!paused && fastRequested)
         {

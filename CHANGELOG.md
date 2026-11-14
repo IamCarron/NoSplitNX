@@ -4,6 +4,11 @@
 ## Unreleased
 
 
+## v1.0.0-beta.8 — Switch fast forward turned off
+
+- **Nintendo Switch**: fast forward is turned off (it did not hold 2x there). The program no longer changes the console's processor or memory clocks at any time, and the fast-forward options are gone from the Switch's pause menu.
+
+
 ## v1.0.0-beta.7 — Switch Fast-Forward Fixes & 3DS Tab Removed
 
 - **Launcher**: removed the 3DS tab and the "Pokémon Omega Ruby – coming soon" tile; the list now has ALL, DS and GBA.

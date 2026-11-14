@@ -32,7 +32,9 @@ class SwitchFastForwardTests(unittest.TestCase):
         # Switch fast-forward keeps 360-line low-res cap (no 192p pixelation) and uses FF clock boost.
         self.assertNotIn('WideLinesNow = std::min(WideLinesNow, 192)', main_cpp)
         self.assertIn('SwitchFastForwardPacer', main_cpp)
-        self.assertIn('SwitchPlatform::SetFastForwardBoost(', main_cpp)
+        # Fast forward is off on the Switch: nothing may change the console's clocks.
+        self.assertNotIn('SwitchPlatform::SetFastForwardBoost(', main_cpp)
+        self.assertIn('const bool fastRequested = false;', main_cpp)
 
         # Switch clock boost must close every clkrst session immediately and never touch GPU or APM boost.
         self.assertNotIn('appletSetCpuBoostMode', sw_plat)

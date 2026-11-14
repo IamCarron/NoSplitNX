@@ -11,8 +11,10 @@
 struct SwitchFastForwardPacer
 {
     int chosen = 4;
+    int hold = 0;
+    static constexpr int HoldBatches = 40;
 
-    void Reset() { chosen = 4; }
+    void Reset() { chosen = 4; hold = 0; }
 
     std::pair<int, int> Pick(double shownMs, double hiddenMs, double refreshMs, bool ahead, bool measured)
     {
@@ -41,8 +43,21 @@ struct SwitchFastForwardPacer
         }
         const auto [curRate, curRef] = score(chosen, 0.97);
         const auto [realRate, realRef] = score(chosen, 1.0);
-        if (curRate <= 0.0 || bestRate > curRate + 0.25 || (realRef > curRef && bestRate > realRate + 0.25) || bestRef < curRef)
+        // A batch that no longer fits in 3 refreshes is left at once. Otherwise a change waits
+        // for HoldBatches batches since the last one: a scene's cost moves a few ms from one
+        // moment to the next, and following it every time made the speed jump up and down.
+        if (hold > 0) hold--;
+        if (curRate <= 0.0)
+        {
             chosen = bestN;
+            hold = HoldBatches;
+        }
+        else if (hold == 0 && chosen != bestN &&
+                 (bestRate > curRate + 0.25 || (realRef > curRef && bestRate > realRate + 0.25) || bestRef < curRef))
+        {
+            chosen = bestN;
+            hold = HoldBatches;
+        }
         return { chosen, std::clamp(score(chosen, 1.0).second, 1, 3) };
     }
 };
