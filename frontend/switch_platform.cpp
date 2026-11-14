@@ -108,14 +108,8 @@ struct MusicAudioSession
         int16_t* dst = static_cast<int16_t*>(buf.buffer);
         {
             std::lock_guard<std::mutex> lock(mtx);
-            if (player.IsLoaded() && player.Volume() > 0)
-                player.Mix(dst, (int)kBufFrames);
-            else
-            {
-                std::fill(dst, dst + kBufFrames * 2, (int16_t)0);
-                // Keep band meters decaying smoothly even while paused/fading.
-                player.Mix(dst, (int)kBufFrames);
-            }
+            // Mix zeroes output and decays band meters automatically when paused or muted.
+            player.Mix(dst, (int)kBufFrames);
         }
         armDCacheFlush(buf.buffer, kBufBytes);
     }
@@ -178,8 +172,11 @@ struct MusicAudioSession
             if (R_SUCCEEDED(threadStart(&audioThread))) threadStarted = true;
             else threadClose(&audioThread);
         }
+        AudioOutState state = AudioOutState_Stopped;
+        (void)audoutGetAudioOutState(&state);
         fprintf(stderr, "[music] audout started (rate=%u ch=%u state=%u thread=%d)\n",
-                audoutGetSampleRate(), audoutGetChannelCount(), (unsigned)audoutGetAudioOutState(), (int)threadStarted);
+                (unsigned)audoutGetSampleRate(), (unsigned)audoutGetChannelCount(),
+                (unsigned)state, (int)threadStarted);
     }
 
     ~MusicAudioSession() { Shutdown(); }
