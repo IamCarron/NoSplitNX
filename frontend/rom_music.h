@@ -13,12 +13,20 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
 
 namespace RomMusic
 {
+
+inline bool HasTag(const std::vector<uint8_t>& buf, size_t off, const char (&tag)[5])
+{
+    if (off + 4 > buf.size()) return false;
+    return buf[off + 0] == (uint8_t)tag[0] && buf[off + 1] == (uint8_t)tag[1] &&
+           buf[off + 2] == (uint8_t)tag[2] && buf[off + 3] == (uint8_t)tag[3];
+}
 
 inline uint16_t RdU16(const uint8_t* p, size_t len, size_t off)
 {
@@ -273,7 +281,7 @@ inline bool FindSdatInNds(FILE* f, uint64_t fsz, uint64_t& sdatOff, uint32_t& sd
                     if (tag == 0) break;
                     const uint8_t nameLen = tag & 0x7F;
                     if (pos + nameLen > fnt.size()) break;
-                    std::string fname((const char*)&fnt[pos], nameLen);
+                    std::string fname = nameLen ? std::string((const char*)(fnt.data() + pos), nameLen) : std::string();
                     pos += nameLen;
                     if (tag & 0x80)
                     {
@@ -496,7 +504,7 @@ public:
     void Mix(int16_t* stereoOut, int frames)
     {
         if (!stereoOut || frames <= 0) return;
-        std::memset(stereoOut, 0, (size_t)frames * 2 * sizeof(int16_t));
+        std::fill_n(stereoOut, (size_t)frames * 2, int16_t(0));
         if (!active_ || mode_ == SeqMode::None || volumePct_ <= 0)
         {
             for (int b = 0; b < kBandCount; b++) bands_[b] *= 0.80f;
@@ -514,7 +522,7 @@ public:
         for (int b = 0; b < kBandCount; b++)
         {
             const float w = 2.0f * 3.14159265f * kBandHz[b] / (float)kSampleRate;
-            coeff[b] = 2.0f * cosf(w);
+            coeff[b] = 2.0f * std::cos(w);
         }
 
         const double volScale = (volumePct_ / 100.0) * (masterVol_ / 127.0) * 0.42;
@@ -567,7 +575,7 @@ public:
         for (int b = 0; b < kBandCount; b++)
         {
             const float p = q1[b] * q1[b] + q2[b] * q2[b] - coeff[b] * q1[b] * q2[b];
-            float mag = sqrtf(std::max(0.0f, p)) * norm * 5.5f;
+            float mag = std::sqrt(std::max(0.0f, p)) * norm * 5.5f;
             // Weight upper bands slightly higher so treble melodies shine alongside bass.
             mag *= (1.0f + 0.14f * (float)b);
             mag = std::clamp(mag, 0.0f, 1.0f);
@@ -693,7 +701,7 @@ private:
         if (ps.type == 16 && note >= ps.lowNote && note <= ps.highNote)
         {
             const int idx = note - ps.lowNote;
-            if (idx >= 0 && idx < ps.subCount)
+            if (idx >= 0 && idx < ps.subCount && ps.subBase >= 0 && ps.subBase + idx < (int)keySplitMap_.size())
             {
                 const int ii = keySplitMap_[ps.subBase + idx];
                 if (ii >= 0 && ii < (int)insts_.size()) return &insts_[ii];
@@ -705,8 +713,11 @@ private:
             {
                 if (note <= ps.splitUpper[r])
                 {
-                    const int ii = keySplitMap_[ps.subBase + r];
-                    if (ii >= 0 && ii < (int)insts_.size()) return &insts_[ii];
+                    if (ps.subBase >= 0 && ps.subBase + r < (int)keySplitMap_.size())
+                    {
+                        const int ii = keySplitMap_[ps.subBase + r];
+                        if (ii >= 0 && ii < (int)insts_.size()) return &insts_[ii];
+                    }
                     break;
                 }
             }
@@ -1052,7 +1063,7 @@ private:
             {
                 if (tr.pc + 3 > n) { tr.active = false; break; }
                 const uint32_t off = RdU24(d, n, tr.pc); tr.pc += 3;
-                if (exec && off < n && tr.callSp < 4)
+                if (exec && off < n && tr.callSp >= 0 && tr.callSp < 4)
                 {
                     tr.callStack[tr.callSp++] = tr.pc;
                     tr.pc = off;
@@ -1140,7 +1151,7 @@ private:
             }
             if (cmd == 0xFD) // return
             {
-                if (exec && tr.callSp > 0) tr.pc = tr.callStack[--tr.callSp];
+                if (exec && tr.callSp > 0 && tr.callSp <= 4) tr.pc = tr.callStack[--tr.callSp];
                 continue;
             }
             if (cmd == 0xFE) { tr.pc += 2; continue; } // alloctrack bitmask
@@ -1181,7 +1192,7 @@ private:
                 size_t off = 0;
                 if (resolveSeqPtr(rawPtr, off))
                 {
-                    if (op == 0xB3 && tr.callSp < 4) tr.callStack[tr.callSp++] = tr.pc;
+                    if (op == 0xB3 && tr.callSp >= 0 && tr.callSp < 4) tr.callStack[tr.callSp++] = tr.pc;
                     const bool backward = (off < tr.pc);
                     tr.pc = off;
                     if (op == 0xB2 && backward && ++loopJumps >= 8) { tr.waitTicks = 1; break; }
@@ -1191,7 +1202,7 @@ private:
             }
             if (op == 0xB4)
             {
-                if (tr.callSp > 0) tr.pc = tr.callStack[--tr.callSp];
+                if (tr.callSp > 0 && tr.callSp <= 4) tr.pc = tr.callStack[--tr.callSp];
                 continue;
             }
             if (op == 0xB5)
@@ -1298,7 +1309,7 @@ private:
 
         std::vector<uint8_t> hdr;
         if (!ReadFileSlice(f, sdatOff, std::min<uint32_t>(sdatSize, 0x40), hdr)) return false;
-        if (memcmp(hdr.data(), "SDAT", 4) != 0) return false;
+        if (hdr.size() < 0x40 || !HasTag(hdr, 0, "SDAT")) return false;
 
         const uint32_t symbOff = RdU32(hdr.data(), hdr.size(), 0x10);
         const uint32_t symbSize = RdU32(hdr.data(), hdr.size(), 0x14);
@@ -1312,7 +1323,9 @@ private:
 
         std::vector<uint8_t> symb, info, fat;
         if (symbOff != 0 && symbSize >= 0x28 && (uint64_t)symbOff + symbSize <= sdatSize && symbSize <= 8u * 1024u * 1024u)
-            ReadFileSlice(f, sdatOff + symbOff, symbSize, symb);
+        {
+            if (!ReadFileSlice(f, sdatOff + symbOff, symbSize, symb)) symb.clear();
+        }
         if (!ReadFileSlice(f, sdatOff + infoOff, infoSize, info)) return false;
         if (!ReadFileSlice(f, sdatOff + fatOff, fatSize, fat)) return false;
 
@@ -1384,17 +1397,15 @@ private:
             std::vector<uint8_t> sseqBuf, sbnkBuf;
             if (!ReadFileSlice(f, sdatOff + sseqOff, sseqLen, sseqBuf)) continue;
             if (!ReadFileSlice(f, sdatOff + sbnkOff, sbnkLen, sbnkBuf)) continue;
-            if (sseqBuf.size() < 0x20 || memcmp(sseqBuf.data(), "SSEQ", 4) != 0) continue;
-            if (sbnkBuf.size() < 0x40 || memcmp(sbnkBuf.data(), "SBNK", 4) != 0) continue;
+            if (sseqBuf.size() < 0x20 || !HasTag(sseqBuf, 0, "SSEQ")) continue;
+            if (sbnkBuf.size() < 0x40 || !HasTag(sbnkBuf, 0, "SBNK")) continue;
 
             const uint32_t dataStart = RdU32(sseqBuf.data(), sseqBuf.size(), 0x18);
             if (dataStart >= sseqBuf.size()) continue;
 
             // Load SWARs for the 4 slots (map [slot][swavIdx] -> samples_ index)
             samples_.clear();
-            int swarMap[4][512];
-            for (int w = 0; w < 4; w++)
-                for (int j = 0; j < 512; j++) swarMap[w][j] = -1;
+            std::vector<int> swarMap(4 * 512, -1);
 
             for (int w = 0; w < 4; w++)
             {
@@ -1406,7 +1417,7 @@ private:
                 if (!readFatRange(swarFid, woff, wlen) || wlen > 16u * 1024u * 1024u) continue;
                 std::vector<uint8_t> swarBuf;
                 if (!ReadFileSlice(f, sdatOff + woff, wlen, swarBuf) || swarBuf.size() < 0x40) continue;
-                if (memcmp(swarBuf.data(), "SWAR", 4) != 0) continue;
+                if (!HasTag(swarBuf, 0, "SWAR")) continue;
 
                 const uint32_t nWaves = std::min<uint32_t>(512, RdU32(swarBuf.data(), swarBuf.size(), 0x38));
                 for (uint32_t si = 0; si < nWaves; si++)
@@ -1416,9 +1427,9 @@ private:
                     const uint32_t nextOff = (si + 1 < nWaves) ? RdU32(swarBuf.data(), swarBuf.size(), 0x3C + (si + 1) * 4) : (uint32_t)swarBuf.size();
                     const size_t avail = (nextOff > soff && nextOff <= swarBuf.size()) ? (nextOff - soff) : (swarBuf.size() - soff);
                     Sample smp;
-                    if (Nitro::DecodeSwav(&swarBuf[soff], avail, smp))
+                    if (Nitro::DecodeSwav(swarBuf.data() + soff, avail, smp))
                     {
-                        swarMap[w][si] = (int)samples_.size();
+                        swarMap[w * 512 + si] = (int)samples_.size();
                         samples_.push_back(std::move(smp));
                     }
                 }
@@ -1443,10 +1454,10 @@ private:
                 outInst.pan = sbnkBuf[off + 9];
                 if (recType == 2) { outInst.kind = WaveKind::Pulse; outInst.duty = (uint8_t)(swav & 7); return true; }
                 if (recType == 3) { outInst.kind = WaveKind::Noise; return true; }
-                if ((recType == 1 || recType == 4) && slot < 4 && swav < 512 && swarMap[slot][swav] >= 0)
+                if ((recType == 1 || recType == 4) && slot < 4 && swav < 512 && swarMap[slot * 512 + swav] >= 0)
                 {
                     outInst.kind = WaveKind::Pcm;
-                    outInst.sampleIndex = swarMap[slot][swav];
+                    outInst.sampleIndex = swarMap[slot * 512 + swav];
                     return true;
                 }
                 return false;
@@ -1525,7 +1536,7 @@ private:
             const size_t seqLen = sseqBuf.size() - (size_t)dataStart;
             if (seqLen == 0) continue;
             seqData_.resize(seqLen);
-            std::memcpy(seqData_.data(), sseqBuf.data() + dataStart, seqLen);
+            for (size_t i = 0; i < seqLen; i++) seqData_[i] = sseqBuf[dataStart + i];
 
             mode_ = SeqMode::NitroSseq;
             tracks_.assign(kMaxTracks, Track{});
@@ -1740,7 +1751,7 @@ private:
                     {
                         if (subVgOff + (n + 1) * 12 > rsz) { keySplitMap_.push_back(-1); continue; }
                         Instrument ins;
-                        if (parseVoiceEntry(&rom[subVgOff + n * 12], ins))
+                        if (parseVoiceEntry(rom.data() + subVgOff + n * 12, ins))
                         {
                             keySplitMap_.push_back((int)insts_.size());
                             insts_.push_back(ins);
@@ -1763,7 +1774,7 @@ private:
                         const uint8_t subIdx = rom[mapOff + n];
                         if (subVgOff + ((uint32_t)subIdx + 1) * 12 > rsz) { keySplitMap_.push_back(-1); continue; }
                         Instrument ins;
-                        if (parseVoiceEntry(&rom[subVgOff + subIdx * 12], ins))
+                        if (parseVoiceEntry(rom.data() + subVgOff + subIdx * 12, ins))
                         {
                             keySplitMap_.push_back((int)insts_.size());
                             insts_.push_back(ins);
@@ -1802,7 +1813,7 @@ private:
             const size_t spanSize = std::min<size_t>(512u * 1024u, spanEnd - spanStart);
             if (minOff < spanStart || maxOff >= spanStart + spanSize) continue;
             seqData_.resize(spanSize);
-            std::memcpy(seqData_.data(), rom.data() + spanStart, spanSize);
+            for (size_t i = 0; i < spanSize; i++) seqData_[i] = rom[spanStart + i];
             seqBaseRomOff_ = (uint32_t)spanStart;
             gbaRomLimit_ = (uint32_t)rsz;
 

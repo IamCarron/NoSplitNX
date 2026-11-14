@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -38,11 +39,25 @@ void PutU32(std::vector<uint8_t>& b, size_t off, uint32_t v)
 void AppendU16(std::vector<uint8_t>& b, uint16_t v) { const size_t p = b.size(); PutU16(b, p, v); }
 void AppendU32(std::vector<uint8_t>& b, uint32_t v) { const size_t p = b.size(); PutU32(b, p, v); }
 void AppendTag(std::vector<uint8_t>& b, const char (&t)[5]) { for (int i = 0; i < 4; i++) b.push_back((uint8_t)t[i]); }
+void PutTag(std::vector<uint8_t>& b, size_t off, const char (&t)[5])
+{
+    if (off + 4 > b.size()) b.resize(off + 4, 0);
+    for (int i = 0; i < 4; i++) b[off + i] = (uint8_t)t[i];
+}
 void AppendBytes(std::vector<uint8_t>& b, const void* src, size_t len)
 {
     const auto* p = static_cast<const uint8_t*>(src);
     b.reserve(b.size() + len);
     for (size_t i = 0; i < len; i++) b.push_back(p[i]);
+}
+void AppendVec(std::vector<uint8_t>& b, const std::vector<uint8_t>& src)
+{
+    AppendBytes(b, src.data(), src.size());
+}
+void PutVec(std::vector<uint8_t>& b, size_t off, const std::vector<uint8_t>& src)
+{
+    if (off + src.size() > b.size()) b.resize(off + src.size(), 0);
+    for (size_t i = 0; i < src.size(); i++) b[off + i] = src[i];
 }
 void Pad4(std::vector<uint8_t>& b) { while (b.size() & 3) b.push_back(0); }
 
@@ -57,7 +72,7 @@ std::vector<uint8_t> BuildSseq(const std::vector<uint8_t>& code)
     AppendTag(s, "DATA");
     AppendU32(s, 8 + (uint32_t)code.size());
     AppendU32(s, 0x1C);
-    s.insert(s.end(), code.begin(), code.end());
+    AppendVec(s, code);
     Pad4(s);
     PutU32(s, 8, (uint32_t)s.size());
     return s;
@@ -94,17 +109,17 @@ std::vector<uint8_t> BuildSwar()
         w1.push_back((i % 32 < 16) ? 0x33 : 0xBB);
 
     std::vector<uint8_t> swar(0x3C + 8, 0);
-    std::memcpy(&swar[0], "SWAR", 4);
+    PutTag(swar, 0, "SWAR");
     PutU32(swar, 4, 0x0100FEFFu);
     PutU16(swar, 12, 0x10);
     PutU16(swar, 14, 1);
-    std::memcpy(&swar[0x10], "DATA", 4);
+    PutTag(swar, 0x10, "DATA");
     PutU32(swar, 0x38, 2);
     PutU32(swar, 0x3C, (uint32_t)swar.size());
-    swar.insert(swar.end(), w0.begin(), w0.end());
+    AppendVec(swar, w0);
     Pad4(swar);
     PutU32(swar, 0x40, (uint32_t)swar.size());
-    swar.insert(swar.end(), w1.begin(), w1.end());
+    AppendVec(swar, w1);
     Pad4(swar);
     PutU32(swar, 8, (uint32_t)swar.size());
     PutU32(swar, 0x14, (uint32_t)swar.size() - 0x10);
@@ -114,11 +129,11 @@ std::vector<uint8_t> BuildSwar()
 std::vector<uint8_t> BuildSbnk()
 {
     std::vector<uint8_t> b(0x3C + 16, 0);
-    std::memcpy(&b[0], "SBNK", 4);
+    PutTag(b, 0, "SBNK");
     PutU32(b, 4, 0x0100FEFFu);
     PutU16(b, 12, 0x10);
     PutU16(b, 14, 1);
-    std::memcpy(&b[0x10], "DATA", 4);
+    PutTag(b, 0x10, "DATA");
     PutU32(b, 0x38, 4);
 
     auto addInst = [&](uint32_t slot, uint8_t recType, uint16_t swav, uint16_t swarSlot, uint8_t baseNote) {
@@ -164,7 +179,7 @@ std::vector<uint8_t> BuildSyntheticNds()
         0xC7, 0x01,       // note wait on
     };
     const uint32_t loop0 = (uint32_t)seqCode.size();
-    seqCode.insert(seqCode.end(), {
+    const uint8_t loopBody[] = {
         0x45, 115, 24,    // A4, dur 24
         0x49, 115, 24,    // C#5, dur 24
         0x4C, 115, 24,    // E5, dur 24
@@ -172,7 +187,8 @@ std::vector<uint8_t> BuildSyntheticNds()
         0x48, 95, 12,
         0x81, 0x00,       // prg 0
         0x94
-    });
+    };
+    AppendBytes(seqCode, loopBody, sizeof(loopBody));
     PutU24(seqCode, loop0);
     const uint32_t trk1Off = (uint32_t)seqCode.size();
     seqCode[5] = (uint8_t)(trk1Off & 0xFF);
@@ -182,7 +198,7 @@ std::vector<uint8_t> BuildSyntheticNds()
     trk1[trk1.size() - 3] = (uint8_t)(trk1Loop & 0xFF);
     trk1[trk1.size() - 2] = (uint8_t)((trk1Loop >> 8) & 0xFF);
     trk1[trk1.size() - 1] = (uint8_t)((trk1Loop >> 16) & 0xFF);
-    seqCode.insert(seqCode.end(), trk1.begin(), trk1.end());
+    AppendVec(seqCode, trk1);
 
     const auto fSfx = BuildSseq({ 0x45, 100, 4, 0xFF });
     const auto fTitle = BuildSseq(seqCode);
@@ -191,7 +207,7 @@ std::vector<uint8_t> BuildSyntheticNds()
 
     // SYMB block
     std::vector<uint8_t> symb(8 + 32, 0);
-    std::memcpy(&symb[0], "SYMB", 4);
+    PutTag(symb, 0, "SYMB");
     PutU32(symb, 8, (uint32_t)symb.size()); // recOff[0] = SEQ list
     const uint32_t sListOff = (uint32_t)symb.size();
     AppendU32(symb, 2); // 2 seq names
@@ -208,7 +224,7 @@ std::vector<uint8_t> BuildSyntheticNds()
 
     // INFO block: rec0=SEQ(2), rec2=BANK(1), rec3=SWAR(1)
     std::vector<uint8_t> info(8 + 32, 0);
-    std::memcpy(&info[0], "INFO", 4);
+    PutTag(info, 0, "INFO");
     const uint32_t seqRecOff = (uint32_t)info.size();
     PutU32(info, 8 + 0 * 4, seqRecOff);
     AppendU32(info, 2);
@@ -246,24 +262,24 @@ std::vector<uint8_t> BuildSyntheticNds()
     const std::vector<const std::vector<uint8_t>*> files = { &fSfx, &fTitle, &fBank, &fSwar };
 
     std::vector<uint8_t> fat(fatSize, 0);
-    std::memcpy(&fat[0], "FAT ", 4);
+    PutTag(fat, 0, "FAT ");
     PutU32(fat, 4, fatSize);
     PutU32(fat, 8, 4);
 
     std::vector<uint8_t> fileBlk(8, 0);
-    std::memcpy(&fileBlk[0], "FILE", 4);
+    PutTag(fileBlk, 0, "FILE");
     for (size_t i = 0; i < files.size(); i++)
     {
         const uint32_t relOff = fileOff + (uint32_t)fileBlk.size();
         PutU32(fat, 12 + i * 16, relOff);
         PutU32(fat, 12 + i * 16 + 4, (uint32_t)files[i]->size());
-        fileBlk.insert(fileBlk.end(), files[i]->begin(), files[i]->end());
+        AppendVec(fileBlk, *files[i]);
         Pad4(fileBlk);
     }
     PutU32(fileBlk, 4, (uint32_t)fileBlk.size());
 
     std::vector<uint8_t> sdat(0x40, 0);
-    std::memcpy(&sdat[0], "SDAT", 4);
+    PutTag(sdat, 0, "SDAT");
     PutU32(sdat, 4, 0x0100FEFFu);
     PutU16(sdat, 12, 0x40);
     PutU16(sdat, 14, 4);
@@ -271,10 +287,10 @@ std::vector<uint8_t> BuildSyntheticNds()
     PutU32(sdat, 0x18, infoOff); PutU32(sdat, 0x1C, (uint32_t)info.size());
     PutU32(sdat, 0x20, fatOff);  PutU32(sdat, 0x24, fatSize);
     PutU32(sdat, 0x28, fileOff); PutU32(sdat, 0x2C, (uint32_t)fileBlk.size());
-    sdat.insert(sdat.end(), symb.begin(), symb.end());
-    sdat.insert(sdat.end(), info.begin(), info.end());
-    sdat.insert(sdat.end(), fat.begin(), fat.end());
-    sdat.insert(sdat.end(), fileBlk.begin(), fileBlk.end());
+    AppendVec(sdat, symb);
+    AppendVec(sdat, info);
+    AppendVec(sdat, fat);
+    AppendVec(sdat, fileBlk);
     PutU32(sdat, 8, (uint32_t)sdat.size());
 
     // Build minimal Nitro .nds container (0x200 header + FNT + FAT + SDAT payload)
@@ -297,10 +313,10 @@ std::vector<uint8_t> BuildSyntheticNds()
     PutU32(nds, 0x44, (uint32_t)fnt.size());
     PutU32(nds, 0x48, ndsFatOff);
     PutU32(nds, 0x4C, 8);
-    std::memcpy(&nds[ndsFntOff], fnt.data(), fnt.size());
+    PutVec(nds, ndsFntOff, fnt);
     PutU32(nds, ndsFatOff + 0, ndsSdatOff);
     PutU32(nds, ndsFatOff + 4, ndsSdatOff + (uint32_t)sdat.size());
-    nds.insert(nds.end(), sdat.begin(), sdat.end());
+    AppendVec(nds, sdat);
     return nds;
 }
 
@@ -406,12 +422,15 @@ double ComputeRms(const std::vector<int16_t>& buf)
 void WriteBytes(const std::filesystem::path& p, const std::vector<uint8_t>& data)
 {
     FILE* f = fopen(p.c_str(), "wb");
-    assert(f);
+    if (!f) std::abort();
     if (!data.empty())
     {
         const size_t n = fwrite(data.data(), 1, data.size(), f);
-        (void)n;
-        assert(n == data.size());
+        if (n != data.size())
+        {
+            fclose(f);
+            std::abort();
+        }
     }
     fclose(f);
 }
