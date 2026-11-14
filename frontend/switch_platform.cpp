@@ -237,8 +237,9 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
     // The touch screen (handheld): SETTINGS at the right of the title band, BACK at its left in
     // the settings, as on a PC or a phone (pc_launcher.cpp). A tap counts as the finger lifts.
     hidInitializeTouchScreen();
-    bool touching = false;
-    int touchX = 0, touchY = 0;
+    bool touching = false, touchMoved = false;
+    int touchX = 0, touchY = 0, touchStartX = 0, touchStartY = 0, touchLastX = 0, touchLastY = 0;
+    bool followScroll = true;
     // SETTINGS or the tabs chosen with the D-pad: up from the first row of games the tabs (left
     // and right change the tab), up again SETTINGS.
     bool onSettings = false, onTabs = false;
@@ -317,7 +318,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             page.Draw(canvas, page.group < 0 ? "UP / DOWN: CHOOSE    A: OPEN    B: BACK"
                                              : "UP / DOWN: CHOOSE    LEFT / RIGHT / A: CHANGE    B: BACK", theme);
         }
-        else Launcher::Draw(canvas, games, tab, onSettings || onTabs ? -1 : selected, scroll, note, std::string(), theme, true, onTabs);
+        else Launcher::Draw(canvas, games, tab, onSettings || onTabs ? -1 : selected, scroll, note, std::string(), theme, followScroll, onTabs);
     };
     auto showStatusModal = [&](const std::string& title, const std::string& msg, const std::string& detail,
                                const std::string& hint, bool busy, int progressPct = -1) {
@@ -462,23 +463,69 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
 #endif
         padUpdate(&pad);
         const u64 down = padGetButtonsDown(&pad), now = padGetButtons(&pad);
+#ifdef SSR_UPDATER
+        const bool modalActive = !modalMsg.empty() || updateMenu.open;
+#else
+        const bool modalActive = !modalMsg.empty();
+#endif
+        const int s = std::max(1, canvas.h / 240);
         int tapX = -1, tapY = -1;
         {
             HidTouchScreenState ts = {};
             if (hidGetTouchScreenStates(&ts, 1) && ts.count > 0)
             {
-                touching = true;
                 touchX = (int)ts.touches[0].x;
                 touchY = (int)ts.touches[0].y;
+                if (!touching)
+                {
+                    touching = true;
+                    touchMoved = false;
+                    touchStartX = touchLastX = touchX;
+                    touchStartY = touchLastY = touchY;
+                }
+                else
+                {
+                    // Treat movements beyond 16px as a swipe/drag so lifting the finger does not fire a tap.
+                    if (!touchMoved && (std::abs(touchX - touchStartX) > 16 || std::abs(touchY - touchStartY) > 16))
+                        touchMoved = true;
+                    if (touchMoved && !modalActive)
+                    {
+                        if (guide && !keysOpen)
+                        {
+                            const int stepPx = std::max(24, 14 * s);
+                            while (touchLastY - touchY >= stepPx) { page.Move(1); touchLastY -= stepPx; }
+                            while (touchY - touchLastY >= stepPx) { page.Move(-1); touchLastY += stepPx; }
+                            touchLastX = touchX;
+                        }
+                        else if (!guide)
+                        {
+                            const int maxSc = Launcher::MaxScroll(view());
+                            if (maxSc > 0)
+                            {
+                                scroll = std::max(0, std::min(scroll - (touchX - touchLastX), maxSc));
+                                followScroll = false;
+                            }
+                            touchLastX = touchX;
+                            touchLastY = touchY;
+                        }
+                    }
+                    else
+                    {
+                        touchLastX = touchX;
+                    }
+                }
             }
             else if (touching)
             {
                 touching = false;
-                tapX = touchX;
-                tapY = touchY;
+                if (!touchMoved)
+                {
+                    tapX = touchX;
+                    tapY = touchY;
+                }
+                touchMoved = false;
             }
         }
-        const int s = std::max(1, canvas.h / 240);
         const int bandH = 22 * s;
         const bool tapSettings = Launcher::TapInSettingsPill(canvas, tapX, tapY);
         const bool tapBack = Launcher::TapInSettingsBack(canvas, tapX, tapY) || (tapY >= 0 && tapY < bandH && tapX < canvas.w / 4);
@@ -610,6 +657,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             auto setTab = [&](int by) {
                 tab = (tab + by + Launcher::TABS) % Launcher::TABS;
                 scroll = 0;
+                followScroll = true;
                 const Launcher::View v = view();
                 if (v.SpotOf(selected) < 0) selected = Launcher::FirstIn(v);
                 if (Launcher::FirstIn(v) < 0) onTabs = true; // (no games: left and right go on)
@@ -625,6 +673,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                 {
                     tab = hitTab;
                     scroll = 0;
+                    followScroll = true;
                     const Launcher::View v = view();
                     if (v.SpotOf(selected) < 0) selected = Launcher::FirstIn(v);
                     onTabs = (Launcher::FirstIn(v) < 0);
@@ -635,6 +684,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                 {
                     onTabs = false;
                     onSettings = false;
+                    followScroll = true;
                     const int to = Launcher::Step(view(), selected, arr < 0 ? 1 : 2);
                     if (to >= 0) { selected = to; note.clear(); }
                 }
@@ -648,6 +698,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                 {
                     onTabs = false;
                     onSettings = false;
+                    followScroll = true;
                     if (tile == selected)
                     {
                         if (Playable(games[selected])) { result = selected; break; }
@@ -661,6 +712,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             const int dir = !step ? 0 : lf ? 1 : rt ? 2 : up ? 3 : dn ? 4 : 0;
             const bool aDown = (down & (ctl.PadCustom() ? action(Controls::A) : (u64)HidNpadButton_A)) != 0;
             const bool wasNav = onSettings || onTabs; // (A there is not a game's: it is not played as well)
+            if (dir) followScroll = true;
             if (onSettings)
             {
                 // (Down from SETTINGS: the tabs.)
@@ -677,6 +729,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                 else if ((dir == 4 || aDown) && Launcher::FirstIn(view()) >= 0)
                 {
                     onTabs = false;
+                    followScroll = true;
                     if (view().SpotOf(selected) < 0) selected = Launcher::FirstIn(view());
                 }
             }
@@ -700,6 +753,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                 if (!playable.empty())
                 {
                     selected = playable[rand() % playable.size()];
+                    followScroll = true;
                     note.clear();
                 }
             }
@@ -723,13 +777,11 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             std::string kh = keysCapture >= 0 ? "OR WAIT 5 SECONDS: AS IT WAS" : "A: CHANGE   B: BACK";
             if (keysCapture < 0)
                 if (const char* h = Controls::ActionHint(keysMenu.selected)) kh = h;
-            canvas.FillBlend(0, 0, canvas.w, canvas.h, 0xB8050812);
             keysMenu.Draw(canvas, "KEYS AND BUTTONS", kh);
         }
 #ifdef SSR_UPDATER
         if (updateMenu.open)
         {
-            canvas.FillBlend(0, 0, canvas.w, canvas.h, 0xB8050812);
             updateMenu.Draw(canvas, Updater::PopupTitle(), "A: CHOOSE    B: LATER",
                             Updater::PopupNote(Updater::Get().canInstall));
         }

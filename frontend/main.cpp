@@ -4928,7 +4928,7 @@ int main(int argc, char** argv)
 #endif
             add(M_SETTINGS, "SETTINGS", "");
             add(M_CONTROLMENU, "CONTROLS", "");
-            add(M_CHEATS, "CHEATS", cheats.On() ? std::to_string(cheats.On()) + " ON" : "", true);
+            add(M_CHEATS, "CHEATS", cheats.On() == 1 ? std::string("1 ENABLED") : cheats.On() ? std::to_string(cheats.On()) + " ACTIVE" : "", true);
             add(M_RESET, "RESET GAME", "");
             add(M_QUIT, "QUIT", "");
         }

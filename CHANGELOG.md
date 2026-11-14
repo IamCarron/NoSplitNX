@@ -3,8 +3,8 @@
 
 ## Unreleased
 
-- **Game list, settings and updater**: fixed vertical gradients fading to black/transparent, fixed cartridge badge/save-dot overlap and UTF-8 title truncation, added top-header **Settings** and **Back** pill shortcuts, added full Switch touchscreen tap controls, and added a frosted-glass modal overlay so updates and Home Menu icon installation stay clearly in front.
-- **Languages**: fixed accented characters (`àèìòùâêîôûäëïöüçßŒœ`) and Japanese/Korean rendering in `ModernText`, completed missing translations across the launcher, updater, pause menu, RetroAchievements and save restore screens, and fixed German/French/Spanish translation mismatches.
+- **Game list, settings and updater**: fixed vertical gradients fading to black/transparent, added per-game accent colours across the background mesh, showcase banner, active tab, selection halo and cartridges, fixed cartridge badge/save-dot overlap and UTF-8 title truncation, added top-header **Settings** and **Back** pill shortcuts, added Switch touchscreen tap, swipe-to-scroll carousel and settings scrolling without accidental taps, and added a crisp frosted-glass modal overlay (with single-layer dimming) so updates and Home Menu icon installation stay clearly in front.
+- **Languages**: fixed accented characters (`àèìòùâêîôûäëïöüçßŒœ`), prevented lowercase `i`/`j` dot collisions under accents, fixed clipped `m` and `W` letter spacing, fixed the pause-menu cheats counter (`1 active` / `N active`), switched overlay hints/notes to natural sentence casing, and completed/refined translations across Spanish, Italian, French, German, Japanese and Korean.
 - **Nintendo Switch fast forward (experimental)**: added an **Experimental** fast-forward option in **Settings -> Graphics** (off by default; never alters console clocks) that temporarily switches widescreen 3D to standard DS resolution while fast forwarding so speed stays steady outdoors without surging.
 
 

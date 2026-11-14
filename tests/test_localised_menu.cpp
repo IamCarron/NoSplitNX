@@ -29,8 +29,14 @@ int main(int argc, char** argv) {
         if (!allowed) { std::cerr << "Missing Italian: " << entry.first << "\n"; ++missing; }
     }
     assert(missing == 0);
+    assert(LauncherFont[109 * 768 + 16 * 24 + 22] > 128); // 'm' keeps its 3rd stem without clipping.
+    assert(FontMetrics['W'].left == 2 && FontMetrics['W'].width == 22 && FontMetrics['W'].advance == 24);
     for (const char* language : {"en", "es", "it"}) {
         UiLang::Set(language);
+        if (UiLang::lang) {
+            assert(UiLang::Tr("1 ENABLED") != "1 " + UiLang::Tr("ON"));
+            assert(UiLang::Tr("2 ACTIVE") != "2 " + UiLang::Tr("ON"));
+        }
         for (const auto& prefix : language == std::string("it") ? UiLang::ItalianPrefixes() : UiLang::SpanishPrefixes()) {
             const auto text = prefix.first + "PLAYER42";
             assert(UiLang::Tr(text) == (UiLang::lang ? prefix.second + "PLAYER42" : text));
@@ -60,5 +66,11 @@ int main(int argc, char** argv) {
             if (argc>1) Save(c,std::string(argv[1])+"/"+language+"-launcher-"+std::to_string(c.w)+"x"+std::to_string(c.h)+".ppm");
         }
     }
+    Canvas wide; wide.Resize(1280, 720);
+    std::vector<Launcher::Game> oneGame(1); oneGame[0].name = "TEST";
+    assert(Launcher::MaxScroll(Launcher::MakeView(wide, oneGame, 0)) == 0);
+    std::vector<Launcher::Game> manyGames(6);
+    for (size_t i = 0; i < manyGames.size(); ++i) manyGames[i].name = "GAME " + std::to_string(i);
+    assert(Launcher::MaxScroll(Launcher::MakeView(wide, manyGames, 0)) > 0);
     std::cout << "Translation coverage, prefixes, rendered option values, spacing and touch rows passed\n";
 }

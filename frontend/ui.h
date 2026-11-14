@@ -368,6 +368,12 @@ struct Canvas
                     int count = 0;
                     for (int sy = sy0; sy < sy1; ++sy)
                     {
+                        // Suppress the built-in dot on lowercase i/j when drawing a diacritic above the stem.
+                        if (mark != 0 && (ch == 'i' || ch == 'j') && sy < 8)
+                        {
+                            count += (sx1 - sx0);
+                            continue;
+                        }
                         const int rowOffset = ch * 768 + sy * 24;
                         for (int sx = sx0; sx < sx1; ++sx)
                         {
@@ -805,7 +811,7 @@ struct Menu
         {
             const int maxW = boxW - 20 * scale;
             const int maxChars = std::max(10, maxW / (7 * scale));
-            noteLines = UiLang::Wrap(UiLang::Tr(note), maxChars * 6);
+            noteLines = UiLang::Wrap(ToNiceSentence(UiLang::Tr(note)), maxChars * 6);
             if (noteLines.size() > 4) { noteLines.resize(4); noteLines[3] = UiLang::Elide(noteLines[3] + "...", maxChars); }
         }
         const int noteH = noteLines.empty() ? 0 : (int)noteLines.size() * (noteFontH + 3 * scale) + 8 * scale;
@@ -916,7 +922,7 @@ struct Menu
         }
         if (!hint.empty()) c.Fill(bx + 6 * scale, y + scale, boxW - 12 * scale, std::max(1, scale / 2), 0xFF26354A);
         const int hintFontH = std::max(16, 8 * scale);
-        const std::string niceHint = ToNiceTitle(UiLang::Tr(hint));
+        const std::string niceHint = ToNiceSentence(UiLang::Tr(hint));
         const int footerAreaH = (by + boxH) - (y + scale);
         struct HintBadge { std::string key, label; };
         std::vector<HintBadge> badges;
@@ -932,8 +938,10 @@ struct Menu
                 std::string part = (nextSep == std::string::npos) ? trRaw.substr(pos) : trRaw.substr(pos, nextSep - pos);
                 pos = (nextSep == std::string::npos) ? trRaw.size() : nextSep;
                 size_t colon = part.find(':');
-                if (colon == std::string::npos || colon == 0 || colon > 5) { badges.clear(); break; }
+                if (colon == std::string::npos || colon == 0) { badges.clear(); break; }
                 std::string k = part.substr(0, colon);
+                while (!k.empty() && k.back() == ' ') k.pop_back();
+                if (k.empty() || k.size() > 5) { badges.clear(); break; }
                 std::string l = part.substr(colon + 1);
                 size_t ls = l.find_first_not_of(' ');
                 if (ls == std::string::npos) { badges.clear(); break; }

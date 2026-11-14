@@ -204,7 +204,7 @@ struct List
             if (c.category == name && c.on) { one = &c; n++; }
         if (n == 0) return "";
         if (n == 1 && one->name.size() <= 12) return one->name;
-        return std::to_string(n) + " ON";
+        return n == 1 ? std::string("1 ENABLED") : std::to_string(n) + " ACTIVE";
     }
 
     void Load(const std::string& cheatFolder, const std::string& gameCode, const unsigned char* romHeader)
