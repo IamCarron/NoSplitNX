@@ -28,13 +28,24 @@ It is **not a native PC/console port**; it is the original game presented the wa
 | **Screens** | Two 256×192 DS screens, stacked or side by side with large borders | **One unified 16:9 widescreen display**, the touch screen's controls tucked beside the action |
 | **3D World** | 4:3 at original DS resolution | **16:9 widescreen**, skies and scenery carried all the way to the edges, hardware-accelerated by the Switch GPU (deko3D) |
 | **Frame rate** | The game's native 30 fps 3D | **60 fps**, with smooth in-between frame interpolation |
-| **Performance** | Generic emulation overhead | **Switch-optimised**: smart 3D pass skipping in 2D menus, zero-copy buffer handling, and automatic handheld 720p scaling |
+| **Performance** | Generic emulation overhead | **Switch-optimised**: lazy 3D pass skipping during fast-forward and 2D menus (`3x–6x` speeds), zero-copy deko3D buffers, and a console-native interface scaled for Switch Lite 5.5" displays |
 
 ---
 
 ## On the Nintendo Switch
 
-![The Switch game list: the DS games, the GBA games and Omega Ruby (COMING SOON) under their headings, with tabs for each console](docs/screenshots/game-list.gif)
+![NoSplitNX Nintendo Switch Launcher: 3DS/DSi upper showcase screen, physical DS/GBA/3DS cartridge cards, and Switch Lite scaled typography](docs/screenshots/switch-launcher.png)
+
+| In-Game Pause Menu (Switch Lite 720p Scale) | Console Settings Page |
+|---|---|
+| ![NoSplitNX In-Game Pause Menu](docs/screenshots/switch-pause-menu.png) | ![NoSplitNX Settings Page](docs/screenshots/switch-settings.png) |
+
+### Console-Native Interface & Switch Lite Handheld Scaling
+
+- **Nintendo 3DS / DSi Upper Showcase Screen:** Displays the focused game with stereo speaker grilles, a 3D floating cartridge preview, platform and serial badges (`NTR-` / `AGB-`), a save status indicator (`Save Found` / `New Game`), and animated equalizer bars.
+- **Physical Molded Cartridge Cards:** 32×32 ROM banner icons are framed inside authentic DS, GBA, and 3DS cartridge shells complete with printed sticker borders, colour-coded console headers, gold PCB contact pins, and glowing 3DS corner selection brackets. Carousel cards dynamically expand when fewer games are installed so the 1280×720 screen never looks empty.
+- **Switch Lite 5.5" Handheld Legibility:** Enlarged native 720p typography across the launcher (`160×160` cartridge icons, `27px` card titles, `33px` showcase header), the `960px`-wide in-game pause menu (`33px` options, `51px` row height), and the `1080px`-wide settings panel (`27px` option titles, `19px` descriptions).
+- **Automatic System Language Detection:** Reads the console's language directly from Horizon OS (`libnx`) to present the launcher, settings, and pause menu in **English, Spanish, Italian, French, German, Japanese, or Korean** automatically.
 
 ### Quick Setup
 
@@ -59,11 +70,11 @@ To carry on from an emulator or a flash cart, copy your save in under that name.
 | **A / B** | DS A / B buttons | Confirm (**A**) / Back (**B**) |
 | **X / Y** | DS X / Y buttons | **Y**: Open Settings |
 | **L / R** | DS L / R shoulder buttons | Switch console tabs (ALL, DS, GBA) |
-| **ZR (Hold)** | **Fast Forward** | - |
+| **ZR (Hold / Toggle)** | **Fast Forward** (configurable Hold or Toggle in Controls) | - |
 | **+ (Plus)** | Open Pause Menu | Exit to Homebrew Menu |
 | **- (Minus)** | DS SELECT button | - |
-| **Touchscreen** | Tap directly (Handheld mode) | - |
-| **Right Stick** | Move touch cursor (Docked / Controller) | - |
+| **Touchscreen** | Tap directly (Handheld mode) | Tap / swipe tabs, cards, and settings |
+| **Right Stick** | Move touch cursor (Docked / Controller, auto-enabled in touch-only mini-games like Ruins of Alph puzzle & Trainer Card signature) | - |
 | **ZL** | Touch / Click cursor at current position | - |
 | **R3 (Click Right Stick)**| Swap / show secondary bottom screen | - |
 
@@ -201,9 +212,10 @@ Earn [RetroAchievements](https://retroachievements.org) on your Switch:
 - **Hardware Acceleration:** The 3D world is drawn directly by the Switch Tegra X1 GPU using Nintendo Switch deko3D.
 - **Fast Execution:** melonDS FAST JIT runs ARM9 instructions with minimal overhead.
 - **NoSplitNX Optimisations:**
-  - Automatically skips invisible 3D rendering passes during 2D menus or secondary screen views (`rc_wide_render_skip`).
-  - Zero-copy buffer assignment: eliminates redundant CPU framebuffer allocations when wide geometry is idle.
-  - Portable handheld mode detection clamping resolution to 720p native for optimal battery life and framerate stability.
+  - Automatically skips hidden 2D/3D rendering passes during `3x–6x` fast-forward and 2D menus (`rc_3d_render_skip`, `WideGpuDSLazy`), plus real-time downsampled fast-forward audio playback without popping.
+  - Pre-allocated 720p `deko3D` render targets and block-linear copy paths for crash-free resolution transitions.
+  - Guaranteed network socket/cURL and ARM64 JIT memory cleanup (`userAppExit` / `SsrJitRelease`) when returning to the Homebrew Menu.
+  - Portable handheld mode detection clamping resolution to 720p native and scaling UI typography for 5.5" Switch Lite screens.
 
 ---
 

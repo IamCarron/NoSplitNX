@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 #include <cctype>
+#include <cstring>
 
 struct GlyphMetric { uint8_t left, width, advance; };
 inline const GlyphMetric FontMetrics[128] = {
@@ -165,6 +166,94 @@ inline std::string ToNiceTitle(const std::string& s)
             if (c >= 'A' && c <= 'Z') c = (unsigned char)(c - 'A' + 'a');
             res.push_back((char)c);
         }
+        i++;
+    }
+    return res;
+}
+
+inline std::string ToNiceSentence(const std::string& s)
+{
+    if (!IsAllUpper(s)) return s;
+    static const char* const acronyms[] = {
+        "GBA", "3DS", "GPU", "CPU", "FPS", "ROM", "F11", "HDMI", "USB", "HDR",
+        "DS", "PC", "SD", "TV", "2K", "4K", "3D", "F5", "F8", "ZR", "ZL"
+    };
+    auto isWordEnd = [&](size_t end) {
+        if (end >= s.size()) return true;
+        unsigned char u = (unsigned char)s[end];
+        return !std::isalnum(u) && u != 0xC3;
+    };
+    std::string res;
+    res.reserve(s.size());
+    bool capNext = true;
+    bool wordStart = true;
+    for (size_t i = 0; i < s.size(); )
+    {
+        unsigned char c = (unsigned char)s[i];
+        if (c == 0xC3 && i + 1 < s.size())
+        {
+            unsigned char c2 = (unsigned char)s[i + 1];
+            if (capNext)
+            {
+                if (c2 >= 0xA0 && c2 <= 0xBF) c2 -= 0x20;
+                capNext = false;
+            }
+            else if (c2 >= 0x80 && c2 <= 0x9F) c2 += 0x20;
+            res.push_back((char)c);
+            res.push_back((char)c2);
+            wordStart = false;
+            i += 2;
+            continue;
+        }
+        if (c == '.' || c == '!' || c == '?')
+        {
+            capNext = true;
+            wordStart = true;
+            res.push_back((char)c);
+            i++;
+            continue;
+        }
+        if (c == ' ' || c == '/' || c == '-' || c == '(' || c == '<' || c == '>' || c == ':' || c == ',')
+        {
+            wordStart = true;
+            res.push_back((char)c);
+            i++;
+            continue;
+        }
+        if (wordStart)
+        {
+            bool matchedAcronym = false;
+            for (const char* acr : acronyms)
+            {
+                size_t len = strlen(acr);
+                if (i + len <= s.size() && s.compare(i, len, acr) == 0 && isWordEnd(i + len))
+                {
+                    res.append(acr, len);
+                    i += len;
+                    capNext = false;
+                    wordStart = false;
+                    matchedAcronym = true;
+                    break;
+                }
+            }
+            if (matchedAcronym) continue;
+        }
+        if (std::isalpha(c))
+        {
+            if (capNext)
+            {
+                if (c >= 'a' && c <= 'z') c = (unsigned char)(c - 'a' + 'A');
+                capNext = false;
+            }
+            else if (c >= 'A' && c <= 'Z') c = (unsigned char)(c - 'A' + 'a');
+            wordStart = false;
+        }
+        else if (std::isdigit(c))
+        {
+            wordStart = false;
+            capNext = false;
+        }
+        res.push_back((char)c);
         i++;
     }
     return res;

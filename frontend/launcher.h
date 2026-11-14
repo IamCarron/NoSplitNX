@@ -1563,7 +1563,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
             { "A", "PLAY" }, { "Y", "SETTINGS" }, { "X", "RANDOM" }, { "L/R", "TABS" }, { "+", "QUIT" }
         };
         const int itemCount = 5;
-        const int bh = 14 * s;
+        const int bh = 12 * s;
         const int dockFontH = std::max(16, 5 * s + 2);
         int totalW = 0;
         int widths[itemCount];
@@ -1572,7 +1572,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
             const std::string trLabel = (strcmp(items[i].label, "RANDOM") == 0)
                 ? (UiLang::lang == 1 ? "Aleatorio" : UiLang::lang == 2 ? "Casuale" : UiLang::lang == 3 ? "Aléatoire" : UiLang::lang == 4 ? "Zufall" : "Random")
                 : ToNiceTitle(UiLang::Tr(items[i].label));
-            const int bw = (strlen(items[i].badge) > 1) ? bh * 16 / 10 : bh;
+            const int bw = c.ButtonBadgeWidth(items[i].badge, s);
             widths[i] = bw + ModernTextWidth(trLabel, dockFontH) + 6 * s;
             totalW += widths[i];
         }
@@ -1588,7 +1588,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
                 const std::string trLabel = (strcmp(items[i].label, "RANDOM") == 0)
                     ? (UiLang::lang == 1 ? "Aleatorio" : UiLang::lang == 2 ? "Casuale" : UiLang::lang == 3 ? "Aléatoire" : UiLang::lang == 4 ? "Zufall" : "Random")
                     : ToNiceTitle(UiLang::Tr(items[i].label));
-                const int bw = (strlen(items[i].badge) > 1) ? bh * 16 / 10 : bh;
+                const int bw = c.ButtonBadgeWidth(items[i].badge, s);
                 c.DrawButtonBadge(dx, by, items[i].badge, s, 0xFF222B3D, 0xFFFFFFFF, 0xFF3D4B66);
                 ModernText(c, dx + bw + 5 * s, by + (bh - dockFontH) / 2, trLabel, dockFontH, 0xFFD8E2F0, true);
                 dx += widths[i] + itemGap;
@@ -1780,6 +1780,7 @@ struct SettingsPage
     // option's name line is and how tall a line is.
     bool follow = true;
     int lineH = 20;
+    int lastCardBottom = 0;
     std::vector<std::pair<int, int>> rows; // (option, the top of its name line)
 
     // The option whose part of the page (its name and the lines below it) is at y, or -1.
@@ -1788,7 +1789,8 @@ struct SettingsPage
         int found = -1;
         for (const auto& r : rows)
             if (r.second - lineH / 4 <= y) found = r.first;
-        if (found >= 0 && !rows.empty() && y > rows.back().second + 6 * lineH) return -1;
+        const int bound = lastCardBottom > 0 ? lastCardBottom : (rows.empty() ? 0 : rows.back().second + 6 * lineH);
+        if (found >= 0 && !rows.empty() && y > bound) return -1;
         return found;
     }
 
@@ -1957,6 +1959,60 @@ struct SettingsPage
         return s.key;
     }
 
+    static std::vector<std::string> WrapModern(const Canvas& c, const std::string& text, int fontH, int maxPx)
+    {
+        std::vector<std::string> out;
+        if (text.empty()) return out;
+        size_t pos = 0;
+        std::string cur;
+        auto pushCur = [&]() {
+            if (!cur.empty()) { out.push_back(cur); cur.clear(); }
+        };
+        while (pos < text.size())
+        {
+            while (pos < text.size() && text[pos] == ' ') pos++;
+            if (pos >= text.size()) break;
+            size_t end = pos;
+            while (end < text.size() && text[end] != ' ') end++;
+            const std::string word = text.substr(pos, end - pos);
+            pos = end;
+            if (cur.empty())
+            {
+                if (c.ModernTextWidth(word, fontH) <= maxPx) cur = word;
+                else
+                {
+                    std::string chunk;
+                    for (size_t k = 0; k < word.size(); )
+                    {
+                        size_t next = k + 1;
+                        while (next < word.size() && ((unsigned char)word[next] & 0xC0) == 0x80) next++;
+                        const std::string ch = word.substr(k, next - k);
+                        if (!chunk.empty() && c.ModernTextWidth(chunk + ch, fontH) > maxPx)
+                        {
+                            out.push_back(chunk);
+                            chunk.clear();
+                        }
+                        chunk += ch;
+                        k = next;
+                    }
+                    cur = chunk;
+                }
+            }
+            else if (c.ModernTextWidth(cur + " " + word, fontH) <= maxPx)
+            {
+                cur += " " + word;
+            }
+            else
+            {
+                pushCur();
+                if (c.ModernTextWidth(word, fontH) <= maxPx) cur = word;
+                else out.push_back(word);
+            }
+        }
+        pushCur();
+        return out;
+    }
+
     // Over the whole canvas: the options with their values (the chosen one marked), each with
     // what it does below it, kept in view as the choice moves.
     void Draw(Canvas& c, const std::string& hint, const Theme& th = Theme())
@@ -1982,20 +2038,41 @@ struct SettingsPage
         const int titleH = std::max(22, 8 * s);
         const int tw = c.ModernTextWidth(title, titleH);
         c.ModernText((c.w - tw) / 2, (bandH - titleH) / 2, title, titleH, th.title);
+        if (!items.empty() && c.w >= 480)
+        {
+            const std::string countStr = std::to_string(selected + 1) + " / " + std::to_string(items.size());
+            const int cntFontH = std::max(14, 5 * s + 1);
+            const int cntW = c.ModernTextWidth(countStr, cntFontH);
+            const int pillW = cntW + 10 * s;
+            const int pillH = 12 * s;
+            const int px = c.w - pillW - 10 * s;
+            const int py = (bandH - pillH) / 2;
+            if (px > (c.w + tw) / 2 + 8 * s)
+            {
+                c.FillRound(px, py, pillW, pillH, pillH / 2, 0xCC1E283C);
+                c.OutlineRound(px, py, pillW, pillH, pillH / 2, 1, 0xFF394966);
+                c.ModernText(px + 5 * s, py + (pillH - cntFontH) / 2, countStr, cntFontH, th.subSel, false);
+            }
+        }
         const int width = std::min(c.w - 24 * s, 1080);
         const int x = (c.w - width) / 2;
-        struct Line { std::string text, value; int item; bool name; };
+        struct Line { std::string text, value; int item; bool name; int h; };
         std::vector<Line> out;
         int selFirst = 0, selLast = 0;
         bool infoHeading = false;
         const int nameFontH = std::max(20, 9 * ts);
         const int descFontH = std::max(15, 6 * ts + 1);
+        lineH = std::max(28, (UiLang::Tall() ? 18 : 16) * ts);
+        const int descLineH = descFontH + std::max(4, 2 * ts);
+        const int cardPadBot = std::max(3, 2 * ts);
+        const int gapH = std::max(8, 5 * ts);
+        const int descMaxPx = std::max(80, width - 22 * ts);
         for (int i = 0; i < (int)items.size(); i++)
         {
             const Setting& e = items[i];
             if (!e.key && !infoHeading)
             {
-                out.push_back({ "", "", -1, false });
+                out.push_back({ "", "", -1, false, gapH });
                 infoHeading = true;
             }
             if (i == selected) selFirst = (int)out.size();
@@ -2004,44 +2081,102 @@ struct SettingsPage
             const std::string niceVal = ToNiceTitle(UiLang::Tr(value));
             const std::string drawnValue = arrows ? "< " + niceVal + " >" : niceVal;
             const std::string niceName = ToNiceTitle(UiLang::Tr(e.name));
-            const bool stacked = c.ModernTextWidth(niceName, nameFontH) + c.ModernTextWidth(drawnValue, nameFontH) + 16 * ts > width;
-            out.push_back({ niceName, stacked ? "" : value, i, true });
+            const int valReserve = value.empty() ? 0 : (c.ModernTextWidth(drawnValue, nameFontH) + 28 * ts);
+            const bool stacked = c.ModernTextWidth(niceName, nameFontH) + valReserve + 14 * ts > width;
+            out.push_back({ niceName, stacked ? "" : value, i, true, lineH });
             if (stacked && !value.empty())
-                for (const std::string& l : Wrap(niceVal, width / (6 * ts) - 2)) out.push_back({ l, "", i, false });
-            for (const std::string& l : Wrap(ToNiceTitle(UiLang::Tr(e.text)), width / (6 * ts) - 2)) out.push_back({ l, "", i, false });
+                for (const std::string& l : WrapModern(c, niceVal, descFontH, descMaxPx))
+                    out.push_back({ l, "", i, false, descLineH });
+            const std::string descTr = UiLang::Tr(e.text);
+            const std::string niceDesc = group < 0 ? ToNiceTitle(descTr) : ToNiceSentence(descTr);
+            for (const std::string& l : WrapModern(c, niceDesc, descFontH, descMaxPx))
+                out.push_back({ l, "", i, false, descLineH });
+            out.push_back({ "", "", i, false, cardPadBot });
             if (i == selected) selLast = (int)out.size() - 1;
-            out.push_back({ "", "", -1, false });
+            if (i + 1 < (int)items.size())
+                out.push_back({ "", "", -1, false, gapH });
         }
-        int top = (c.h > c.w ? 48 : 30) * s, bottom = c.h - 18 * s;
-        lineH = std::max(28, (UiLang::Tall() ? 19 : 16) * ts);
-        const int fit = std::max(1, (bottom - top) / lineH);
-        if (follow)
+        int top = (c.h > c.w ? 48 : 30) * s;
+        const int dockH = 18 * s;
+        const int bottom = c.h - dockH - 3 * s;
+        const int availH = std::max(lineH, bottom - top);
+        if (follow && !out.empty())
         {
             if (selFirst < scroll) scroll = selFirst;
-            if (selLast >= scroll + fit) scroll = selLast - fit + 1;
+            auto spanH = [&](int a, int b) {
+                int sum = 0;
+                for (int k = a; k <= b && k < (int)out.size(); k++) sum += out[k].h;
+                return sum;
+            };
+            while (scroll < selFirst && spanH(scroll, selLast) > availH)
+            {
+                const int curIt = out[scroll].item;
+                while (scroll < selFirst && out[scroll].item == curIt) scroll++;
+                while (scroll < selFirst && out[scroll].item < 0) scroll++;
+            }
+            if (spanH(scroll, selLast) > availH && selFirst > scroll) scroll = selFirst;
         }
-        if (group < 0 && (int)out.size() < fit)
+        int totalH = 0;
+        for (const Line& l : out) totalH += l.h;
+        if (group < 0 && totalH < availH)
         {
-            const int totalH = (int)out.size() * lineH;
-            top = top + std::max(0, (bottom - top - totalH) / 2);
+            top = top + std::max(0, (availH - totalH) / 2);
+            scroll = 0;
         }
-        scroll = std::max(0, std::min(scroll, (int)out.size() - fit));
+        else if (!out.empty())
+        {
+            scroll = std::clamp(scroll, 0, (int)out.size() - 1);
+            // Pull scroll up if the tail leaves unused space at the bottom.
+            while (scroll > 0)
+            {
+                int prev = scroll - 1;
+                while (prev > 0 && out[prev].item < 0) prev--;
+                const int prevIt = out[prev].item;
+                while (prev > 0 && out[prev - 1].item == prevIt) prev--;
+                int rem = 0;
+                for (int k = prev; k < (int)out.size(); k++) rem += out[k].h;
+                if (rem <= availH) scroll = prev;
+                else break;
+            }
+        }
         rows.clear();
+        lastCardBottom = 0;
 
         // Draw elevated frosted glass cards behind each visible item group before drawing text.
         const int cardRad = std::max(3, 4 * ts);
         const float t = AnimTime();
         const float pulse = 0.5f + 0.5f * sinf(t * 3.5f);
+        int scanY = top;
+        int endIdx = scroll;
         for (int i = scroll; i < (int)out.size(); )
         {
-            const int y0 = top + (i - scroll) * lineH;
-            if (y0 + lineH > bottom) break;
+            if (out[i].item < 0)
+            {
+                if (scanY + out[i].h > bottom) break;
+                scanY += out[i].h;
+                i++;
+                endIdx = i;
+                continue;
+            }
             const int it = out[i].item;
-            if (it < 0) { i++; continue; }
             int j = i;
-            while (j < (int)out.size() && out[j].item == it && top + (j - scroll + 1) * lineH <= bottom) j++;
-            const int cardY = y0 - 2 * ts;
-            const int cardH = (j - i) * lineH + ts;
+            int cardTextH = 0;
+            while (j < (int)out.size() && out[j].item == it)
+            {
+                cardTextH += out[j].h;
+                j++;
+            }
+            if (scanY + cardTextH > bottom && i > scroll) break;
+            if (scanY + out[i].h > bottom) break;
+            int visJ = i;
+            int visH = 0;
+            while (visJ < j && scanY + visH + out[visJ].h <= bottom)
+            {
+                visH += out[visJ].h;
+                visJ++;
+            }
+            const int cardY = scanY - 2 * ts;
+            const int cardH = visH + 2 * ts;
             const bool sel = it == selected;
             if (sel)
             {
@@ -2054,11 +2189,15 @@ struct SettingsPage
             {
                 c.FillGlass(x - 6 * ts, cardY, width + 12 * ts, cardH, cardRad, 0xC0171D2A, 0xC010141F, 0xFF242C3F, 1);
             }
+            lastCardBottom = cardY + cardH;
+            scanY += visH;
+            endIdx = visJ;
             i = j;
+            if (visJ < j) break;
         }
 
         int y = top;
-        for (int i = scroll; i < (int)out.size() && y + lineH <= bottom; i++, y += lineH)
+        for (int i = scroll; i < endIdx; y += out[i].h, i++)
         {
             const Line& l = out[i];
             if (l.name) rows.push_back({ l.item, y });
@@ -2066,23 +2205,32 @@ struct SettingsPage
             if (l.name)
             {
                 const bool info = !items[l.item].key;
-                c.ModernText(x + 4 * ts, y + (lineH - nameFontH) / 2, l.text, nameFontH, info ? th.hint : sel ? th.nameSel : th.subSel);
+                c.ModernText(x + 6 * ts, y + (l.h - nameFontH) / 2, l.text, nameFontH, info ? th.hint : sel ? th.nameSel : th.subSel);
                 if (!l.value.empty())
                 {
-                    const bool group = !strncmp(items[l.item].key, "!group", 6);
-                    const std::string v = sel && !group ? "< " + ToNiceTitle(UiLang::Tr(l.value)) + " >" : ToNiceTitle(l.value);
+                    const bool isGroup = !strncmp(items[l.item].key, "!group", 6);
+                    const std::string v = sel && !isGroup ? "< " + ToNiceTitle(UiLang::Tr(l.value)) + " >" : ToNiceTitle(UiLang::Tr(l.value));
                     const int valW = c.ModernTextWidth(v, nameFontH);
-                    c.ModernText(x + width - valW - 4 * ts, y + (lineH - nameFontH) / 2, v, nameFontH, sel ? th.nameSel : th.name);
+                    const int pillPadX = 6 * ts;
+                    const int pillW = valW + 2 * pillPadX;
+                    const int pillH = std::max(nameFontH + 4 * ts, l.h - 4 * ts);
+                    const int pillX = x + width - pillW - 2 * ts;
+                    const int pillY = y + (l.h - pillH) / 2;
+                    const int pillRad = std::max(3, pillH / 3);
+                    const uint32_t pillBg = sel ? 0xFF2A4268 : (isGroup ? 0xB01C263B : 0xA8162033);
+                    const uint32_t pillBd = sel ? 0xB000E5FF : 0x80324464;
+                    c.FillRound(pillX, pillY, pillW, pillH, pillRad, pillBg);
+                    c.OutlineRound(pillX, pillY, pillW, pillH, pillRad, 1, pillBd);
+                    c.ModernText(pillX + pillPadX, y + (l.h - nameFontH) / 2, v, nameFontH, sel ? 0xFFFFFFFF : th.name);
                 }
             }
             else if (!l.text.empty())
             {
-                c.ModernText(x + 10 * ts, y + (lineH - descFontH) / 2, l.text, descFontH, sel ? th.name : th.sub);
+                c.ModernText(x + 12 * ts, y + (l.h - descFontH) / 2, l.text, descFontH, sel ? 0xFFD8E4F8 : th.sub);
             }
         }
-        if (scroll > 0) c.FillRound(c.w / 2 - 10 * s, top - 4 * s, 20 * s, s + 1, std::max(1, s / 2), th.frame);
-        if (scroll + fit < (int)out.size()) c.FillRound(c.w / 2 - 10 * s, bottom + s, 20 * s, s + 1, std::max(1, s / 2), th.frame);
-        const int dockH = 18 * s;
+        if (scroll > 0) c.FillRound(c.w / 2 - 12 * s, top - 4 * s, 24 * s, s + 1, std::max(1, s / 2), th.frame);
+        if (endIdx < (int)out.size()) c.FillRound(c.w / 2 - 12 * s, bottom + s, 24 * s, s + 1, std::max(1, s / 2), th.frame);
         c.FillGlass(0, c.h - dockH, c.w, dockH, 0, 0xFA141926, 0xFA0B0E16, 0xFF28344C, 1);
 
         struct DockItem { const char* badge; const char* label; };
@@ -2090,14 +2238,15 @@ struct SettingsPage
             { "A", "CHANGE" }, { "B", "BACK" }
         };
         const int itemCount = 2;
-        const int bh = 14 * s;
+        const int bh = 12 * s;
         const int dockFontH = std::max(16, 5 * s + 2);
         int totalW = 0;
         int widths[itemCount];
         for (int i = 0; i < itemCount; i++)
         {
             const std::string niceLabel = ToNiceTitle(UiLang::Tr(dockItems[i].label));
-            widths[i] = bh + c.ModernTextWidth(niceLabel, dockFontH) + 6 * s;
+            const int bw = c.ButtonBadgeWidth(dockItems[i].badge, s);
+            widths[i] = bw + c.ModernTextWidth(niceLabel, dockFontH) + 6 * s;
             totalW += widths[i];
         }
         const int itemGap = 16 * s;
@@ -2111,7 +2260,8 @@ struct SettingsPage
             {
                 c.DrawButtonBadge(dx, by, dockItems[i].badge, s, 0xFF222B3D, 0xFFFFFFFF, 0xFF3D4B66);
                 const std::string niceLabel = ToNiceTitle(UiLang::Tr(dockItems[i].label));
-                c.ModernText(dx + bh + 4 * s, by + (bh - dockFontH) / 2, niceLabel, dockFontH, th.hint);
+                const int bw = c.ButtonBadgeWidth(dockItems[i].badge, s);
+                c.ModernText(dx + bw + 5 * s, by + (bh - dockFontH) / 2, niceLabel, dockFontH, 0xFFD8E2F0);
                 dx += widths[i] + itemGap;
             }
         }

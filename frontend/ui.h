@@ -449,14 +449,23 @@ struct Canvas
         }
     }
 
-    void DrawButtonBadge(int x, int y, const std::string& label, int scale, uint32_t badgeColor = 0xFF2A344A, uint32_t textCol = 0xFFFFFFFF, uint32_t borderCol = 0xFF455577)
+    int ButtonBadgeWidth(const std::string& label, int scale) const
     {
         const int s = std::max(1, scale);
         const int fontH = std::max(12, 5 * s + 1);
         const int tw = ModernTextWidth(label, fontH);
         const bool single = label.size() <= 1 || label == "+" || label == "-";
         const int bh = 12 * s;
-        const int bw = single ? bh : tw + 8 * s;
+        return single ? bh : tw + 8 * s;
+    }
+
+    void DrawButtonBadge(int x, int y, const std::string& label, int scale, uint32_t badgeColor = 0xFF2A344A, uint32_t textCol = 0xFFFFFFFF, uint32_t borderCol = 0xFF455577)
+    {
+        const int s = std::max(1, scale);
+        const int fontH = std::max(12, 5 * s + 1);
+        const int tw = ModernTextWidth(label, fontH);
+        const int bh = 12 * s;
+        const int bw = ButtonBadgeWidth(label, s);
         const int rad = bh / 2;
         const uint32_t topBevel = (((badgeColor >> 16) & 0xFF) + 30 <= 255 ? badgeColor + 0x001E1E1E : 0xFFFFFFFF);
         const uint32_t botBevel = (((badgeColor >> 16) & 0xFF) >= 25 ? badgeColor - 0x00191919 : badgeColor);
@@ -823,14 +832,22 @@ struct Menu
             if (!items[i].value.empty())
             {
                 const std::string v = ToNiceTitle(shownValue(items[i]));
-                const int valW = c.ModernTextWidth(items[i].slider >= 0 ? "< 100% >" : v, itemFontH);
+                const int textW = c.ModernTextWidth(v, itemFontH);
+                const int valW = items[i].slider >= 0 ? c.ModernTextWidth("< 100% >", itemFontH) : textW;
                 const int vx = rx + rw - 10 * scale - valW;
-                const int textVx = items[i].slider >= 0 ? rx + rw - 10 * scale - c.ModernTextWidth(v, itemFontH) : vx;
-                c.ModernText(textVx, ry + (rh - itemFontH) / 2, v, itemFontH, col);
+                const int textVx = items[i].slider >= 0 ? rx + rw - 10 * scale - textW : vx;
+                const int pillW = textW + 10 * scale;
+                const int pillX = textVx - 5 * scale;
+                const int pillY = ry + 2 * scale;
+                const int pillH = rh - 4 * scale;
+                const int pillRad = std::max(3, pillH / 3);
+                c.FillRound(pillX, pillY, pillW, pillH, pillRad, sel ? 0xFF284166 : 0xB0182438);
+                c.OutlineRound(pillX, pillY, pillW, pillH, pillRad, 1, sel ? 0x9900E5FF : 0x802E3F5A);
+                c.ModernText(textVx, ry + (rh - itemFontH) / 2, v, itemFontH, sel ? 0xFFFFFFFF : 0xFFD0DCF0);
                 if (items[i].slider >= 0)
                 {
                     barStep = 6 * scale;
-                    barX = vx - 6 * scale - 10 * barStep;
+                    barX = vx - 8 * scale - 10 * barStep;
                     const int barW = 10 * barStep - scale;
                     const int barH = 8 * scale;
                     const_cast<Canvas&>(c).DrawSliderBar(barX, ry + (rh - barH) / 2, barW, barH, items[i].slider, 10, sel ? 0xFFFFFFFF : Accent, sel);
@@ -841,9 +858,60 @@ struct Menu
         if (!hint.empty()) c.Fill(bx + 6 * scale, y + scale, boxW - 12 * scale, std::max(1, scale / 2), 0xFF26354A);
         const int hintFontH = std::max(16, 8 * scale);
         const std::string niceHint = ToNiceTitle(UiLang::Tr(hint));
-        const int hw = c.ModernTextWidth(niceHint, hintFontH);
         const int footerAreaH = (by + boxH) - (y + scale);
-        c.ModernText(bx + (boxW - hw) / 2, y + scale + std::max(2 * scale, (footerAreaH - hintFontH) / 2), niceHint, hintFontH, hintCol);
+        struct HintBadge { std::string key, label; };
+        std::vector<HintBadge> badges;
+        if (!hint.empty())
+        {
+            const std::string trRaw = UiLang::Tr(hint);
+            size_t pos = 0;
+            while (pos < trRaw.size())
+            {
+                while (pos < trRaw.size() && trRaw[pos] == ' ') pos++;
+                if (pos >= trRaw.size()) break;
+                size_t nextSep = trRaw.find("  ", pos);
+                std::string part = (nextSep == std::string::npos) ? trRaw.substr(pos) : trRaw.substr(pos, nextSep - pos);
+                pos = (nextSep == std::string::npos) ? trRaw.size() : nextSep;
+                size_t colon = part.find(':');
+                if (colon == std::string::npos || colon == 0 || colon > 5) { badges.clear(); break; }
+                std::string k = part.substr(0, colon);
+                std::string l = part.substr(colon + 1);
+                size_t ls = l.find_first_not_of(' ');
+                if (ls == std::string::npos) { badges.clear(); break; }
+                badges.push_back({ k, ToNiceTitle(l.substr(ls)) });
+            }
+        }
+        const int badgeScale = std::max(1, scale - (scale >= 3 ? 1 : 0));
+        const int bh = 12 * badgeScale;
+        bool drewBadges = false;
+        if (badges.size() >= 2 && footerAreaH >= bh + 2 * scale)
+        {
+            int totalW = 0;
+            const int gap = 14 * scale;
+            for (size_t i = 0; i < badges.size(); i++)
+            {
+                totalW += c.ButtonBadgeWidth(badges[i].key, badgeScale) + 4 * scale + c.ModernTextWidth(badges[i].label, hintFontH);
+                if (i + 1 < badges.size()) totalW += gap;
+            }
+            if (totalW <= boxW - 16 * scale)
+            {
+                int hx = bx + (boxW - totalW) / 2;
+                const int hy = y + scale + (footerAreaH - bh) / 2;
+                for (size_t i = 0; i < badges.size(); i++)
+                {
+                    const int bw = c.ButtonBadgeWidth(badges[i].key, badgeScale);
+                    const_cast<Canvas&>(c).DrawButtonBadge(hx, hy, badges[i].key, badgeScale, 0xFF222B3D, 0xFFFFFFFF, 0xFF3D4B66);
+                    c.ModernText(hx + bw + 4 * scale, y + scale + (footerAreaH - hintFontH) / 2, badges[i].label, hintFontH, hintCol);
+                    hx += bw + 4 * scale + c.ModernTextWidth(badges[i].label, hintFontH) + gap;
+                }
+                drewBadges = true;
+            }
+        }
+        if (!drewBadges)
+        {
+            const int hw = c.ModernTextWidth(niceHint, hintFontH);
+            c.ModernText(bx + (boxW - hw) / 2, y + scale + std::max(2 * scale, (footerAreaH - hintFontH) / 2), niceHint, hintFontH, hintCol);
+        }
         if (!noteLines.empty())
         {
             const int ny = by + boxH + 4 * scale;
