@@ -17,7 +17,7 @@
 */
 
 #include "SsrProf.h" // ssrecomp
-extern bool rc_wide_render_skip; // ssrecomp: GPU.cpp
+extern bool rc_wide_render_skip, rc_wide_publish_only, rc_3d_interp_skip; // ssrecomp: GPU.cpp
 #include <stdio.h>
 #include <string.h>
 #include <algorithm>
@@ -41,6 +41,7 @@ void WideOnFlush(GPU3D& g, bool interpolate);
 bool WideListsOnHelper();
 bool WideReplayPaired(GPU3D& g, Vertex* vram, Polygon* pram, Polygon** list, u32& numPolys, u32& matched, size_t& frameSize);
 void WideOnRender(GPU& gpu, bool showingInterp);
+void WideOnPublish();
 void WideGpuSendJoin(int slot);
 void WideWaitForTextures();
 void WideReplay(GPU3D& g, bool interpolate, Vertex* vram, Polygon* pram, Polygon** list,
@@ -217,6 +218,7 @@ void GPU3D::Reset() noexcept
     memset(ExecParams, 0, 32*4);
     ExecParamCount = 0;
     ExecCommand = 0xFF;
+    WideFlushPending = false;
 
     CycleCount = 0;
     VertexPipeline = 0;
@@ -385,7 +387,11 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
 
     file->VarArray(ExecParams, 32*4);
     file->Var32(&ExecParamCount);
-    if (!file->Saving) ExecCommand = 0xFF;
+    if (!file->Saving)
+    {
+        ExecCommand = 0xFF;
+        WideFlushPending = false;
+    }
     file->Var32((u32*)&CycleCount);
     file->Var64(&Timestamp);
 
@@ -2635,25 +2641,30 @@ void GPU3D::VBlank() noexcept
                 RenderFrameIdentical = false;
 
                 // ssrecomp: interpolate only on a steady every-other-frame cadence, and never
-                // while the 3D image is being captured into video memory.
+                // while the 3D image is being captured into video memory (or skipped in fast forward).
                 InterpPending = false;
                 InterpShowReal = false;
-                if (InterpolationEnabled || Wide.Owner == this)
+                const bool doInterp = InterpolationEnabled && !rc_3d_interp_skip;
+                if (doInterp || Wide.Owner == this)
                 {
                     const bool capturing = (NDS.GPU.GPU2D_A.CaptureCnt & (1u << 31)) != 0;
-                    const bool interpolate = InterpolationEnabled && VBlankCount - LastFlushVBlank == 2 && !capturing;
+                    const bool interpolate = doInterp && VBlankCount - LastFlushVBlank == 2 && !capturing;
                     // (A game drawing at 60 frames a second needs none: a gap of 1 is not logged.)
-                    if (InterpolationEnabled && !interpolate && VBlankCount - LastFlushVBlank != 1)
+                    if (doInterp && !interpolate && VBlankCount - LastFlushVBlank != 1)
                         InterpSkipLog(capturing ? "the screen is being captured" : "gap", VBlankCount - LastFlushVBlank, 0);
                     // ssrecomp: the wide view's lists are built on a helper thread where there is
                     // one (WideListsOnHelper), started first so that they are ready by the time
                     // the in-between frame is drawn; they are built with the in-between lists
                     // whenever one may be needed, as the DS-resolution one decides below.
-                    const bool helper = Wide.Owner == this && WideListsOnHelper();
+                    // Skip list building/pairing on skipped fast-forward frames until a rendered frame
+                    // consumes the latched polygons (preserving 30fps scenes whose flush occurred earlier).
+                    const bool deferWide = Wide.Owner == this && rc_wide_render_skip;
+                    const bool helper = Wide.Owner == this && !deferWide && WideListsOnHelper();
                     if (helper)
                     {
                         SsrProf::Scope prof(SsrProf::WideFlush);
                         WideOnFlush(*this, interpolate);
+                        WideFlushPending = false;
                     }
                     if (interpolate && helper)
                         InterpDeferred = true; // built when it is drawn, from the helper's pairs
@@ -2664,12 +2675,20 @@ void GPU3D::VBlank() noexcept
                     }
                     if (Wide.Owner == this && !helper)
                     {
-                        SsrProf::Scope prof(SsrProf::WideFlush);
-                        WideOnFlush(*this, InterpPending);
+                        if (deferWide)
+                            WideFlushPending = true;
+                        else
+                        {
+                            SsrProf::Scope prof(SsrProf::WideFlush);
+                            WideOnFlush(*this, InterpPending);
+                            WideFlushPending = false;
+                        }
                     }
                     RawPrevious.swap(RawCurrent);
                     RawCurrent.clear();
                 }
+                else
+                    WideFlushPending = false;
                 LastFlushVBlank = VBlankCount;
             }
             else
@@ -2737,6 +2756,25 @@ void GPU3D::VCount215(GPU& gpu) noexcept
     // rendering a frame is about to bring up to date. (Not one drawn by the graphics chip
     // through GPU3D_WideGpu.h: its data was copied when it was sent.)
     WideWaitForTextures();
+    auto finishWide = [&](bool showingInterp) {
+        if (Wide.Owner != this) return;
+        if (!rc_wide_render_skip)
+        {
+            if (WideFlushPending)
+            {
+                SsrProf::Scope profFlush(SsrProf::WideFlush);
+                WideOnFlush(*this, false);
+                WideFlushPending = false;
+            }
+            SsrProf::Scope profWide(SsrProf::WideRender);
+            WideOnRender(gpu, showingInterp);
+        }
+        else if (rc_wide_publish_only)
+        {
+            SsrProf::Scope profWide(SsrProf::WideRender);
+            WideOnPublish();
+        }
+    };
     if (InterpPending && InterpolationEnabled)
     {
         // ssrecomp: draw the in-between frame now; the real one follows on the next display frame.
@@ -2750,11 +2788,11 @@ void GPU3D::VCount215(GPU& gpu) noexcept
         InterpPending = false;
         InterpShowReal = true;
         InterpolatedFrames++;
-        if (Wide.Owner == this && !rc_wide_render_skip) { SsrProf::Scope prof(SsrProf::WideRender); WideOnRender(gpu, true); }
+        finishWide(true);
         return;
     }
     CurrentRenderer->RenderFrame(gpu);
-    if (Wide.Owner == this && !rc_wide_render_skip) { SsrProf::Scope prof(SsrProf::WideRender); WideOnRender(gpu, false); }
+    finishWide(false);
 }
 
 void GPU3D::SetRenderXPos(u16 xpos) noexcept

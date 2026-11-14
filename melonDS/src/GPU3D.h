@@ -368,6 +368,7 @@ public:
     bool InterpShowReal = false;  // the real frame must be drawn on the next display frame
     bool InterpDeferred = false;  // ssrecomp: the in-between frame is built at VCount215 (from the
                                   // pairs the wide view's helper thread works out, GPU3D_Wide.cpp)
+    bool WideFlushPending = false; // ssrecomp: defer WideOnFlush on skipped fast-forward frames until a rendered frame needs it
     std::vector<Vertex> InterpVertexRAM;
     std::vector<Polygon> InterpPolygonRAM;
     std::array<Polygon*,2048> InterpRenderPolygonRAM {};

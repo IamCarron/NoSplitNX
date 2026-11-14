@@ -581,7 +581,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                     result = selected;
                     break;
                 }
-                note = games[selected].comingSoon ? games[selected].name + ": COMING SOON"
+                note = games[selected].comingSoon ? games[selected].name + ToNiceTitle(UiLang::Tr(": COMING SOON"))
                      : games[selected].known ? "THIS DOWNLOAD DOES NOT HAVE THIS GAME" : "THIS GAME IS NOT ONE THAT THIS PLAYS";
             }
             if (down & (HidNpadButton_Plus | (ctl.PadCustom() ? action(Controls::B) : (u64)HidNpadButton_B))) break;

@@ -1379,7 +1379,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
 
     for (int t = 0; t < TABS; t++)
     {
-        const std::string name = (t == 0 ? UiLang::Tr("ALL") : t == 1 ? "Nintendo DS" : t == 2 ? "GBA" : "3DS");
+        const std::string name = (t == 0 ? ToNiceTitle(UiLang::Tr("ALL")) : t == 1 ? "Nintendo DS" : t == 2 ? "GBA" : "3DS");
         const int tabH = std::max(18, 6 * s);
         const int nameW = ModernTextWidth(name, tabH);
         const int cx = TabX(c, grid, t);
@@ -1413,7 +1413,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     // Empty state card if the chosen tab has no ROMs installed
     if (v.spots.empty())
     {
-        const std::string none = UiLang::Tr("NO GAMES FOUND") + " (" + PlatformName(tab <= 0 ? DS : tab - 1) + ")";
+        const std::string none = ToNiceSentence(UiLang::Tr("NO GAMES FOUND")) + " (" + PlatformName(tab <= 0 ? DS : tab - 1) + ")";
         const int ew = ModernTextWidth(none, 14) + 24 * s;
         const int eh = 24 * s;
         const int ex = (c.w - ew) / 2, ey = grid.carouselY + (tileH - eh) / 2;
@@ -1547,14 +1547,15 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
 
     if (!note.empty())
     {
+        const std::string trNote = ToNiceSentence(UiLang::Tr(note));
         int noteH = 14;
-        while (noteH > 10 && ModernTextWidth(note, noteH) > c.w - 32 * s) --noteH;
-        const int nw = ModernTextWidth(note, noteH) + 16 * s;
+        while (noteH > 10 && ModernTextWidth(trNote, noteH) > c.w - 32 * s) --noteH;
+        const int nw = ModernTextWidth(trNote, noteH) + 16 * s;
         const int nh = 14 * s;
         const int nx = (c.w - nw) / 2, ny = c.h - dockH + (dockH - nh) / 2;
         c.FillRound(nx, ny, nw, nh, 3 * s, 0xEE1E2638);
         c.OutlineRound(nx, ny, nw, nh, 3 * s, 1, th.frame);
-        ModernText(c, nx + 8 * s, ny + (nh - noteH) / 2, note, noteH, th.title, true);
+        ModernText(c, nx + 8 * s, ny + (nh - noteH) / 2, trNote, noteH, th.title, true);
     }
     else
     {
@@ -1569,9 +1570,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
         int widths[itemCount];
         for (int i = 0; i < itemCount; i++)
         {
-            const std::string trLabel = (strcmp(items[i].label, "RANDOM") == 0)
-                ? (UiLang::lang == 1 ? "Aleatorio" : UiLang::lang == 2 ? "Casuale" : UiLang::lang == 3 ? "Aléatoire" : UiLang::lang == 4 ? "Zufall" : "Random")
-                : ToNiceTitle(UiLang::Tr(items[i].label));
+            const std::string trLabel = ToNiceTitle(UiLang::Tr(items[i].label));
             const int bw = c.ButtonBadgeWidth(items[i].badge, s);
             widths[i] = bw + ModernTextWidth(trLabel, dockFontH) + 6 * s;
             totalW += widths[i];
@@ -1585,9 +1584,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
             const int by = c.h - dockH + (dockH - bh) / 2;
             for (int i = 0; i < itemCount; i++)
             {
-                const std::string trLabel = (strcmp(items[i].label, "RANDOM") == 0)
-                    ? (UiLang::lang == 1 ? "Aleatorio" : UiLang::lang == 2 ? "Casuale" : UiLang::lang == 3 ? "Aléatoire" : UiLang::lang == 4 ? "Zufall" : "Random")
-                    : ToNiceTitle(UiLang::Tr(items[i].label));
+                const std::string trLabel = ToNiceTitle(UiLang::Tr(items[i].label));
                 const int bw = c.ButtonBadgeWidth(items[i].badge, s);
                 c.DrawButtonBadge(dx, by, items[i].badge, s, 0xFF222B3D, 0xFFFFFFFF, 0xFF3D4B66);
                 ModernText(c, dx + bw + 5 * s, by + (bh - dockFontH) / 2, trLabel, dockFontH, 0xFFD8E2F0, true);
@@ -1596,7 +1593,12 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
         }
         else
         {
-            const std::string hint = !hintText.empty() ? hintText : "A: PLAY   Y: SETTINGS   X: RANDOM   L / R: TABS   +: QUIT";
+            const std::string fallbackHint = "A: " + ToNiceTitle(UiLang::Tr("PLAY"))
+                + "   Y: " + ToNiceTitle(UiLang::Tr("SETTINGS"))
+                + "   X: " + ToNiceTitle(UiLang::Tr("RANDOM"))
+                + "   L / R: " + ToNiceTitle(UiLang::Tr("TABS"))
+                + "   +: " + ToNiceTitle(UiLang::Tr("QUIT"));
+            const std::string hint = !hintText.empty() ? ToNiceSentence(UiLang::Tr(hintText)) : fallbackHint;
             int hintH = 13;
             while (hintH > 9 && ModernTextWidth(hint, hintH) > c.w - 16 * s) --hintH;
             ModernText(c, (c.w - ModernTextWidth(hint, hintH)) / 2, c.h - 13 * s, hint, hintH, th.hint);
@@ -2234,8 +2236,8 @@ struct SettingsPage
         c.FillGlass(0, c.h - dockH, c.w, dockH, 0, 0xFA141926, 0xFA0B0E16, 0xFF28344C, 1);
 
         struct DockItem { const char* badge; const char* label; };
-        static const DockItem dockItems[] = {
-            { "A", "CHANGE" }, { "B", "BACK" }
+        const DockItem dockItems[] = {
+            { "A", group < 0 ? "OPEN" : "CHANGE" }, { "B", "BACK" }
         };
         const int itemCount = 2;
         const int bh = 12 * s;
@@ -2268,7 +2270,7 @@ struct SettingsPage
         else
         {
             const int hintH = std::max(11, 4 * s);
-            const std::string niceHint = ToNiceTitle(hint);
+            const std::string niceHint = ToNiceTitle(UiLang::Tr(hint));
             const int hw = c.ModernTextWidth(niceHint, hintH);
             c.ModernText((c.w - hw) / 2, c.h - dockH + (dockH - hintH) / 2, niceHint, hintH, th.pokemon ? 0xFFDBE9FAu : th.hint);
         }

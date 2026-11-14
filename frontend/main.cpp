@@ -283,7 +283,7 @@ static void Bw2DexCover(Scene& sc, float viewWidth, const ScreenImage* screens)
 
 // Defined in the 2D renderer: layers not to draw, per engine (see GPU2D_Soft.cpp).
 extern unsigned rc_hide_layers[2];
-extern bool rc_frame_hidden, rc_wide_render_skip, rc_3d_render_skip; // melonDS/src/GPU.cpp
+extern bool rc_frame_hidden, rc_wide_render_skip, rc_wide_publish_only, rc_3d_interp_skip, rc_3d_render_skip; // melonDS/src/GPU.cpp
 
 using namespace melonDS;
 
@@ -5213,6 +5213,7 @@ int main(int argc, char** argv)
     double audioSlow = 1.0;
     // Sound made while fast forwarding, played at its own speed (FastForwardAudio).
     FastForwardAudio ffAudio;
+    double ffLastMs = 0;
     bool ffInBattle = false;
     bool audioWasFastForward = false;
     bool running = true;
@@ -5427,7 +5428,11 @@ int main(int argc, char** argv)
         {
             // (The widescreen world drawn during a frame is shown after the next one.)
             rc_frame_hidden = !ffFull && emuSpeed > 1 && i < emuSpeed - 1;
-            rc_wide_render_skip = !ffFull && emuSpeed > 1 && i < emuSpeed - 2;
+            // Draw the widescreen world once (at i == emuSpeed - 2, matching the DS 3D frame)
+            // and only wait/publish it into Wide.Front on the shown frame (i == emuSpeed - 1).
+            rc_wide_render_skip = !ffFull && emuSpeed > 1 && i != emuSpeed - 2;
+            rc_wide_publish_only = !ffFull && emuSpeed > 1 && i == emuSpeed - 1;
+            rc_3d_interp_skip = !ffFull && emuSpeed > 1;
             // (The DS-resolution 3D picture on the graphics chip, drawn at the end of this frame
             // for the next: only the one the shown frame takes, see WideGpuDSLazy.)
             melonDS::WideGpuDSLazy = rc_3d_render_skip = !ffFull && emuSpeed > 1 && i != emuSpeed - 2;
@@ -5452,7 +5457,7 @@ int main(int argc, char** argv)
             }
         }
         emuGot = filled;
-        rc_frame_hidden = rc_wide_render_skip = false;
+        rc_frame_hidden = rc_wide_render_skip = rc_wide_publish_only = rc_3d_interp_skip = false;
         melonDS::WideGpuDSLazy = rc_3d_render_skip = false;
         emuMs = perfNow() - t0;
     };
@@ -6809,7 +6814,40 @@ int main(int argc, char** argv)
         if (!paused && fastRequested)
         {
 #ifdef __SWITCH__
-            speed = 6;
+            // Switch OpenGL ES syncs SDL_RenderPresent to 60 Hz refreshes (~16.7 ms).
+            // Hardcoding speed=6 pushed batches past 3 refreshes (15-20 FPS, ~1.5x or slower).
+            // Pick the DS-frame batch (2..5) that maximizes net speedup within at most 3
+            // refreshes (>=20 FPS floor, preferring 30/60 FPS when close), with hysteresis.
+            speed = 3;
+            static int swSpeed = 3;
+            if (ffShownMs > 0 && ffHiddenMs > 0 && !opt.headless)
+            {
+                const double refreshMs = frameTime * 1000.0;
+                auto scoreSpeed = [&](int n, double slack) -> std::pair<double, int> {
+                    const double total = (ffShownMs + (n - 1) * ffHiddenMs) * slack + 2.8;
+                    const int refreshes = std::max(1, (int)std::ceil(total / refreshMs));
+                    return { refreshes <= 3 ? (double)n / refreshes : 0.0, refreshes };
+                };
+                int bestN = 3;
+                double bestRate = 0.0;
+                int bestRef = 4;
+                for (int n = 2; n <= 5; n++)
+                {
+                    const auto [rate, ref] = scoreSpeed(n, 1.04);
+                    if (rate > bestRate + 0.05 || (std::abs(rate - bestRate) <= 0.05 && ref < bestRef))
+                    {
+                        bestN = n;
+                        bestRate = rate;
+                        bestRef = ref;
+                    }
+                }
+                const auto [curRate, curRef] = scoreSpeed(swSpeed, 0.96);
+                if (curRate <= 0.0 || bestRate > curRate + 0.25 || bestRef < curRef)
+                    swSpeed = bestN;
+                speed = swSpeed;
+                ffRefreshes = std::clamp(scoreSpeed(speed, 1.0).second, 1, 3);
+            }
+            else ffRefreshes = 2;
 #else
             speed = ffFrameMs > 0 && !opt.headless ? std::clamp((int)(33.3 / ffFrameMs), 2, 4) : 4; // (tests: always 4)
             static int oneRefresh = 0;
@@ -7004,7 +7042,11 @@ int main(int argc, char** argv)
             // outdoor overworld fast-forward runs smoothly; deko3D targets are pre-allocated at
             // 1280x720 so changing WxH never reallocates GPU memory).
             if (speed > 1 && !opt.headless && cfg.ffLowRes)
+#ifdef __SWITCH__
+                WideLinesNow = std::min(WideLinesNow, 192);
+#else
                 WideLinesNow = std::min(WideLinesNow, 360);
+#endif
 #ifdef __SWITCH__
             // In handheld mode the console's screen is 1280x720: drawing more than 720 lines is
             // never seen on it and wastes fragment shading and memory bandwidth.
@@ -8060,6 +8102,7 @@ int main(int argc, char** argv)
             audioStretch.Reset();
             audioSlow = 1.0;
             audioTick = 0;
+            ffLastMs = 0;
             audioWasFastForward = audioFastForward;
         }
         const bool inBattle = std::strncmp(scene.name, "battle", 6) == 0;
@@ -8071,10 +8114,18 @@ int main(int argc, char** argv)
         ffInBattle = inBattle;
         if (speed > 1)
         {
+            const double nowMs = perfNow();
+            double ffSec = ffLastMs > 0 ? (nowMs - ffLastMs) / 1000.0 : frameTime;
+            ffLastMs = nowMs;
+            if (ffSec < frameTime || ffSec > 0.1) ffSec = frameTime;
             ffAudio.Push(audioBuf.data(), got, 48000);
-            got = ffAudio.Pull(audioBuf.data(), frameTime, 48000, (int)(audioBuf.size() / 2));
+            got = ffAudio.Pull(audioBuf.data(), ffSec, 48000, (int)(audioBuf.size() / 2));
         }
-        else if (!ffAudio.Empty()) ffAudio.Clear();
+        else
+        {
+            if (!ffAudio.Empty()) ffAudio.Clear();
+            ffLastMs = 0;
+        }
 
         if (audio && got > 0)
         {

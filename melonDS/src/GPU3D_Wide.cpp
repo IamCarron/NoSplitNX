@@ -1405,6 +1405,21 @@ struct WideAccess
 
     // Called where the 3D renderer draws a frame. The image drawn here belongs to the
     // display frame after this one, like the 3D renderer's own, so it is published one
+    static void PublishPending()
+    {
+        if (PendingPublish)
+        {
+            if (!DrawingOnWideGpu || SentOk) Publish();
+            PendingPublish = false;
+        }
+    }
+
+    static void OnPublish()
+    {
+        Wait();
+        PublishPending();
+    }
+
     // call later.
     static void OnRender(GPU& gpu, bool showingInterp)
     {
@@ -1424,11 +1439,7 @@ struct WideAccess
             return;
         }
         Wait();
-        if (PendingPublish)
-        {
-            if (!DrawingOnWideGpu || SentOk) Publish();
-            PendingPublish = false;
-        }
+        PublishPending();
         // The lists built on the helper thread (ListHelper): the in-between frame's for it, or
         // both.
         ListHelper::Join(showingInterp ? 1 : 2);
@@ -2133,6 +2144,7 @@ bool WideReplayPaired(GPU3D& g, Vertex* vram, Polygon* pram, Polygon** list, u32
     return WideAccess::ReplayPaired(g, vram, pram, list, numPolys, matched, frameSize);
 }
 void WideOnRender(GPU& gpu, bool showingInterp) { WideAccess::OnRender(gpu, showingInterp); }
+void WideOnPublish() { WideAccess::OnPublish(); }
 void WideReplay(GPU3D& g, bool interpolate, Vertex* vram, Polygon* pram, Polygon** list,
     u32& numPolys, u32& matched)
 {

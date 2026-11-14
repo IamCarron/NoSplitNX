@@ -4,6 +4,18 @@
 ## Unreleased
 
 
+## v1.0.0-beta.6 — Switch Fast-Forward Performance & Complete Menu Localisations
+
+- **Nintendo Switch Fast-Forward Overhaul**:
+  - **Adaptive batch pacing (`2x–5x` within 20–60 FPS)**: replaced the fixed `speed = 6` Switch fast-forward batch size (which pushed batches past 3 VSync refreshes down to ~15–20 FPS) with an adaptive batch selector calibrated from live shown/hidden frame timings so batches finish within `<= 3` 60 Hz refreshes.
+  - **Eliminated duplicate GPU drawing & skipped redundant 3D work**: fast-forward now draws the widescreen GPU frame at most once per batch instead of twice, publishes the final hidden frame buffer via a lightweight publish-only path, defers `WideOnFlush` across skipped fast-forward VBlanks until the drawn frame, and skips 60 FPS frame interpolation while fast-forwarding.
+  - **Lower world detail & synced audio in fast-forward**: capped Switch fast-forward widescreen height to `192` lines when **Lower detail on fast-forward** is enabled, and paced fast-forward audio pulls (`ffAudio.Pull`) using real elapsed batch time so multi-refresh batches stay gap-free.
+
+- **Complete UI Localisations (Launcher, Settings & Pause Menu)**:
+  - **Switch launcher & dock localisation**: localised the `All` tab, `No games found` notice, bottom bar fallback hints and status/update banners (`Checking...`, `Downloading...`, `Up to date`, `New version...`), unified `Random`, `Open`/`Change` dock labels in `SettingsPage::Draw`, and `: Coming soon` game labels across all supported languages.
+  - **Spanish & multi-language fixes**: normalised `Tabs` (`Pestañas`) in Spanish and added missing translations across all six non-English language tables (`es`, `it`, `fr`, `de`, `ja`, `ko`) for `Random`, `On / Off`, the `NoSplitNX` update banner, and the `Audio, video and system options` pause-menu hint.
+
+
 ## v1.0.0-beta.5 — Upstream Improvements, Fast-Forward Refinement & Console UI Polish
 
 - **Upstream Port & Emulation Refinements**:

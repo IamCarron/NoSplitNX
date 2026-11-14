@@ -26,6 +26,13 @@ bool rc_frame_hidden = false;
 // ssrecomp: the widescreen view drawn at line 215 of this frame would not be shown either (it is
 // shown after the next frame), so it is not drawn (GPU3D::VCount215).
 bool rc_wide_render_skip = false;
+// ssrecomp: set on the shown frame of a fast-forward batch (i == emuSpeed - 1) so VCount215
+// still publishes the wide frame drawn on i == emuSpeed - 2 into Wide.Front without drawing a
+// second unused wide frame.
+bool rc_wide_publish_only = false;
+// ssrecomp: set during fast forward so 60 fps 3D interpolation and polygon pairing do not run on
+// skipped frames.
+bool rc_3d_interp_skip = false;
 // ssrecomp: set while a hidden frame takes its 3D lines without looking at them (see skip2D), so
 // that a renderer with nothing to count out need not draw that picture (GPU3D_WideGpu.cpp).
 bool rc_3d_line_unseen = false;
