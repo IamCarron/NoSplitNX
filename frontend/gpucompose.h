@@ -184,6 +184,11 @@ public:
             Uploads++;
             DrawPiece(tex, dst, el);
         }
+        if (!useWide && scene.edgeFill && !scene.items.empty() && scene.items[0].screen >= 0 && scene.items[0].screen < 2 && screens[scene.items[0].screen].pixels)
+        {
+            DrawEdgeCover(screens[scene.items[0].screen], v);
+            if (scene.wideBox[0] >= 0) DrawWideBox(screens[scene.items[0].screen], v, scene.wideBox[0], scene.wideBox[1], smooth);
+        }
     }
 
 private:
@@ -271,8 +276,8 @@ private:
         {
             const auto t0 = std::chrono::steady_clock::now();
             const uint32_t* px = wide.placed ? wide.pixels
-                : MergedFillWideHoles(wide, (int)std::floor(v.originX * wide.w / outW),
-                      (int)std::ceil((v.originX + 256 * v.unit) * wide.w / outW), WideFilled);
+                : MergedFillWideHoles(wide, (int)std::floor(MergedWideX(v.originX, wide.w, outW, outH)),
+                      (int)std::ceil(MergedWideX(v.originX + 256 * v.unit, wide.w, outW, outH)), WideFilled);
             if (!px) return;
             SDL_UpdateTexture(tex, nullptr, px, wide.w * 4);
             WideUploadMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -291,7 +296,10 @@ private:
         int k = 255;
         if (wide.fadeMode == 2) k = 255 * (16 - wide.fade) / 16;
         SDL_SetTextureColorMod(tex, k, k, k);
-        SDL_RenderCopy(R, tex, nullptr, nullptr);
+        int x0, x1;
+        MergedViewColumns(outW, outH, x0, x1);
+        const SDL_Rect worldRect = { x0, 0, x1 - x0, outH };
+        SDL_RenderCopy(R, tex, nullptr, &worldRect);
         if (wide.fadeMode == 1 && wide.fade)
         {
             SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_BLEND);
@@ -348,10 +356,11 @@ private:
                 uint32_t* row = &Edge[y * 16];
                 if (c.pattern)
                 {
-                    if (inner && top.pixels) inPx = (EdgeCustomFailed ? 0xFF000000u : 0u) | (top.pixels[y * 256 + (side ? 239 : 16)] & 0xFFFFFF);
+                    const int from = c.row >= 0 ? c.row : y; // (another of the band's rows where a sprite is over this one's edge)
+                    if (inner && top.pixels) inPx = (EdgeCustomFailed ? 0xFF000000u : 0u) | (top.pixels[from * 256 + (side ? 239 : 16)] & 0xFFFFFF);
                     for (int k = 0; k < 16; k++)
                     {
-                        row[k] = (EdgeCustomFailed ? 0xFF000000u : 0u) | (top.pixels ? (top.pixels[y * 256 + (side ? 240 : 0) + k] & 0xFFFFFF) : 0u);
+                        row[k] = (EdgeCustomFailed ? 0xFF000000u : 0u) | (top.pixels ? (top.pixels[from * 256 + (side ? 240 : 0) + k] & 0xFFFFFF) : 0u);
                         edgeSig = (edgeSig ^ row[k]) * 1099511628211ULL;
                     }
                     std::fill(&EdgeIn[y * 8], &EdgeIn[y * 8] + 8, inPx);
@@ -563,6 +572,82 @@ private:
         }
     }
 
+    // After the screen: its own black outermost columns beside an edge fill take the bar's
+    // colour (EdgeFillInset, as MergedCompose does), two columns a side, the rest left clear.
+    void DrawEdgeCover(const ScreenImage& top, const MergedView& v)
+    {
+        const int left = (int)v.originX, right = (int)(v.originX + 256 * v.unit);
+        if (left <= 0) return;
+        const int y0 = (int)v.originY, h = (int)(192 * v.unit + 0.5f), w = (int)(2 * v.unit + 0.5f);
+        for (int side = 0; side < 2; side++)
+        {
+            bool any = false;
+            uint64_t coverSig = 1469598103934665603ULL;
+            for (int y = 0; y < 192; y++)
+            {
+                const int inset = EdgeFillInset(top, y, side);
+                const uint32_t c = EdgeFillColour(top, y, side) & 0xFFFFFF;
+                for (int x = 0; x < 2; x++)
+                {
+                    // Column 0 is the screen's column 0 on the left side, its column 254 on the right.
+                    const bool on = side ? x >= 2 - inset : x < inset;
+                    const uint32_t px = on ? 0xFF000000 | c : 0;
+                    Cover[y * 8 + x] = px;
+                    coverSig = (coverSig ^ px) * 1099511628211ULL;
+                    any |= on;
+                }
+            }
+            if (!any) continue;
+            SDL_Texture* t = Make(CoverTex[side], 8, 192);
+            if (!t) continue;
+            SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
+            if (!CoverTex[side].hasSig || CoverTex[side].sig != coverSig)
+            {
+                SDL_UpdateTexture(t, nullptr, Cover, 8 * 4);
+                CoverTex[side].sig = coverSig;
+                CoverTex[side].hasSig = true;
+            }
+            const SDL_Rect src = { 0, 0, 2, 192 };
+            const SDL_Rect dst = side == 0 ? SDL_Rect { left, y0, w, h } : SDL_Rect { right - w, y0, w, h };
+            SDL_RenderCopy(R, t, &src, &dst);
+        }
+    }
+
+    // A text box widened to the view (Scene::wideBox), over the screen: its rows as WideBoxPixel
+    // gives them, one texture from `shift` columns left of the screen to as far right of it.
+    void DrawWideBox(const ScreenImage& top, const MergedView& v, int y0, int y1, bool smooth)
+    {
+        const int shift = WideBoxShift(v.originX, v.unit);
+        if (shift <= 0 || y0 < 0 || y1 >= 192 || y1 < y0) return;
+        const int w = 256 + 2 * shift, h = y1 - y0 + 1;
+        BoxBuf.resize((size_t)w * h);
+        uint64_t boxSig = 1469598103934665603ULL ^ ((uint64_t)w << 32 | (uint32_t)h);
+        for (int y = 0; y < h; y++)
+        {
+            const WideBoxRow f = WideBoxFill(top, y0 + y);
+            for (int x = 0; x < w; x++)
+            {
+                const uint32_t px = 0xFF000000 | WideBoxPixel(top, y0 + y, x - shift, shift, f);
+                BoxBuf[(size_t)y * w + x] = px;
+                boxSig = (boxSig ^ px) * 1099511628211ULL;
+            }
+        }
+        SDL_Texture* t = Make(BoxTex, w, h);
+        if (!t) return;
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
+        SDL_SetTextureScaleMode(t, smooth ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+        if (!BoxTex.hasSig || BoxTex.sig != boxSig)
+        {
+            SDL_UpdateTexture(t, nullptr, BoxBuf.data(), w * 4);
+            BoxTex.sig = boxSig;
+            BoxTex.hasSig = true;
+        }
+        const SDL_Rect dst = { (int)(v.originX - shift * v.unit), (int)(v.originY + y0 * v.unit),
+                               (int)(w * v.unit + 0.5f), (int)(h * v.unit + 0.5f) };
+        SDL_RenderCopy(R, t, nullptr, &dst);
+    }
+
 public:
     // Time spent handing the widescreen picture to the renderer (for the frontend's timing line).
     double WideUploadMs = 0;
@@ -577,8 +662,11 @@ private:
     SDL_BlendMode Premultiplied;
     std::vector<Tex> Slots;
     std::vector<bool> CachedPremul; // (each slot's last blend mode, for a texture not uploaded again)
-    Tex WideTex, EdgeTex[2], EdgeInTex[2], FillTex[2], NarrowTex[2], WeatherTex[2];
+    Tex WideTex, EdgeTex[2], EdgeInTex[2], FillTex[2], CoverTex[2], NarrowTex[2], WeatherTex[2];
     uint32_t Fill[16 * 192];
+    uint32_t Cover[8 * 192];
+    Tex BoxTex;
+    std::vector<uint32_t> BoxBuf;
     std::vector<SDL_Rect> Spans;
     std::vector<uint32_t> Buf, WideFilled;
     uint32_t Edge[16 * 192];

@@ -286,7 +286,7 @@ index a9489ca..3907990 100644
      if (numLiterals)
      {
 diff --git a/src/ARMJIT_A64/ARMJIT_Compiler.cpp b/src/ARMJIT_A64/ARMJIT_Compiler.cpp
-index e5355f2..1db2041 100644
+index e5355f2..3515d14 100644
 --- a/src/ARMJIT_A64/ARMJIT_Compiler.cpp
 +++ b/src/ARMJIT_A64/ARMJIT_Compiler.cpp
 @@ -16,6 +16,10 @@
@@ -319,7 +319,10 @@ index e5355f2..1db2041 100644
  namespace melonDS
  {
  
-@@ -209,6 +220,40 @@ void Compiler::PopRegs(bool saveHiRegs, bool saveRegsToBeChanged)
+@@ -206,9 +217,43 @@ void Compiler::PopRegs(bool saveHiRegs, bool saveRegsToBeChanged)
+     }
+ }
+ 
 +#ifdef __SWITCH__
 +// (The code memory's two mappings, kept so that they can be given back at the program's end even if
 +// the compiler is never destroyed: the Homebrew Menu cannot take the memory back while they are
@@ -391,7 +394,7 @@ index e5355f2..1db2041 100644
  
      virtmemUnlock();
  
-@@ -453,17 +506,9 @@ Compiler::Compiler(melonDS::NDS& nds) : Arm64Gen::ARM64XEmitter(), NDS(nds)
+@@ -453,17 +506,10 @@ Compiler::Compiler(melonDS::NDS& nds) : Arm64Gen::ARM64XEmitter(), NDS(nds)
  Compiler::~Compiler()
  {
  #ifdef __SWITCH__
@@ -1171,10 +1174,10 @@ index 8db1cca..15bdc00 100644
      else          return Run7();
  }
 diff --git a/src/GPU.cpp b/src/GPU.cpp
-index e1c7ddc..d6869c3 100644
+index e1c7ddc..57e0b7a 100644
 --- a/src/GPU.cpp
 +++ b/src/GPU.cpp
-@@ -16,6 +16,19 @@
+@@ -16,6 +16,23 @@
      with melonDS. If not, see http://www.gnu.org/licenses/.
  */
  
@@ -1185,16 +1188,20 @@ index e1c7ddc..d6869c3 100644
 +// (GPU3D::VCount215), so that fast forward goes faster and shows more frames. Not while the
 +// game captures the picture into video memory or shows it from main memory, which it reads.
 +bool rc_frame_hidden = false;
-+// ssrecomp: the widescreen world drawn at line 215 of this frame would not be shown either (it is
++// ssrecomp: the widescreen view drawn at line 215 of this frame would not be shown either (it is
 +// shown after the next frame), so it is not drawn (GPU3D::VCount215).
 +bool rc_wide_render_skip = false;
-+// ssrecomp: the last frame of a fast-forward batch: its line 215 only publishes the widescreen
-+// picture drawn by the frame before it without starting a new GPU draw for the next hidden frame.
-+bool rc_wide_publish_only = false;
++// ssrecomp: set while a hidden frame takes its 3D lines without looking at them (see skip2D), so
++// that a renderer with nothing to count out need not draw that picture (GPU3D_WideGpu.cpp).
++bool rc_3d_line_unseen = false;
++// ssrecomp: fast forward, set by the frontend around a frame whose 3D picture (drawn at its end,
++// taken by the next frame) goes to a frame nobody sees: the software renderer does not draw it
++// (GPU3D_Soft.cpp). Drawing it cost about 4 ms a frame on a Pixel 9 Pro, four for every frame shown.
++bool rc_3d_render_skip = false;
  #include <string.h>
  #include "NDS.h"
  #include "GPU.h"
-@@ -884,17 +894,27 @@ void GPU::StartHBlank(u32 line) noexcept
+@@ -884,17 +901,33 @@ void GPU::StartHBlank(u32 line) noexcept
      {
          // draw
          // note: this should start 48 cycles after the scanline start
@@ -1202,8 +1209,13 @@ index e1c7ddc..d6869c3 100644
 +        SsrProf::Scope prof(SsrProf::Draw2D); // ssrecomp
 +        // ssrecomp: a frame nobody sees (rc_frame_hidden), when the 2D engines draw only for the screen.
 +        const bool skip2D = rc_frame_hidden && !(GPU2D_A.CaptureCnt & (1u << 31)) && ((GPU2D_A.DispCnt >> 16) & 3) != 3;
-+        // (The 3D lines are still taken when the software 3D thread counts them out frame after frame.)
-+        if (line < 192 && skip2D && GPU3D.GetCurrentRenderer().NeedsScanlineDrain()) GPU3D.GetLine(line);
++        // (The 3D lines are still taken: the 3D thread counts them out frame after frame.)
++        if (line < 192 && skip2D)
++        {
++            rc_3d_line_unseen = true;
++            GPU3D.GetLine(line);
++            rc_3d_line_unseen = false;
++        }
 +        if (line < 192 && !skip2D)
          {
              GPU2D_Renderer->DrawScanline(line, &GPU2D_A);
@@ -1228,7 +1240,7 @@ index e1c7ddc..d6869c3 100644
  
          NDS.CheckDMAs(0, 0x02);
 diff --git a/src/GPU2D_Soft.cpp b/src/GPU2D_Soft.cpp
-index 2f8afcb..64d4393 100644
+index 2f8afcb..8282e52 100644
 --- a/src/GPU2D_Soft.cpp
 +++ b/src/GPU2D_Soft.cpp
 @@ -16,9 +16,16 @@
@@ -1258,7 +1270,7 @@ index 2f8afcb..64d4393 100644
  {
      u32 coloreffect = 0;
      u32 eva, evb;
-@@ -102,6 +110,136 @@ u32 SoftRenderer::ColorComposite(int i, u32 val1, u32 val2) const
+@@ -102,6 +110,147 @@ u32 SoftRenderer::ColorComposite(int i, u32 val1, u32 val2) const
      return val1;
  }
  
@@ -1274,7 +1286,18 @@ index 2f8afcb..64d4393 100644
 +    const u32 blendCnt = CurUnit->BlendCnt;
 +    for (int side = 0; side < 2; side++)
 +    {
-+        const int i = side ? 255 : 0;
++        int i = side ? 255 : 0;
++        const int dir = side ? -1 : 1;
++        {
++            // The outermost column is the 3D world alone, with a flat 2D layer from the next
++            // column in (a background scrolled by one pixel: the sky of the Fly animation):
++            // the 2D layer is what the view continues beside the screen. (See MergedEdgeColumn.)
++            auto is3D = [&](int x) { return (BGOBJLine[x] >> 24 & 0xC0) == 0x40; };
++            bool inner = is3D(i) && !is3D(i + dir);
++            for (int k = 2; k < 9 && inner; k++)
++                inner = (BGOBJLine[i + dir * k] >> 24) == (BGOBJLine[i + dir] >> 24);
++            if (inner) i += dir;
++        }
 +        const u32 val1 = BGOBJLine[i], val2 = BGOBJLine[256 + i];
 +        const u32 flag1 = val1 >> 24, flag2 = val2 >> 24;
 +        u32 eva = 16, evb = 0; // shows as it is
@@ -1321,7 +1344,7 @@ index 2f8afcb..64d4393 100644
 +        bool flat = true;
 +        for (int k = 1; k < 8 && flat; k++)
 +        {
-+            const u32 v = BGOBJLine[side ? 255 - k : k];
++            const u32 v = BGOBJLine[i + dir * k];
 +            flat = (v & 0x3F3F3F) == (val1 & 0x3F3F3F) && (v >> 24) == flag1;
 +        }
 +        // A bitmap background: where the game shows a captured picture of the screen
@@ -1395,7 +1418,7 @@ index 2f8afcb..64d4393 100644
  void SoftRenderer::DrawScanline(u32 line, Unit* unit)
  {
      CurUnit = unit;
-@@ -115,20 +253,22 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
+@@ -115,20 +264,22 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
      if (CurUnit->Num == 0)
      {
          auto bgDirty = GPU.VRAMDirty_ABG.DeriveState(GPU.VRAMMap_ABG, GPU);
@@ -1424,7 +1447,7 @@ index 2f8afcb..64d4393 100644
      }
  
      bool forceblank = false;
-@@ -147,7 +287,10 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
+@@ -147,7 +298,10 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
      if (CurUnit->Num == 0)
      {
          if (!GPU.GPU3D.IsRendererAccelerated())
@@ -1435,7 +1458,7 @@ index 2f8afcb..64d4393 100644
          else if (CurUnit->CaptureLatch && (((CurUnit->CaptureCnt >> 29) & 0x3) != 1))
          {
              _3DLine = GPU.GPU3D.GetLine(n3dline);
-@@ -170,8 +313,56 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
+@@ -170,8 +324,56 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
      u32 dispmode = CurUnit->DispCnt >> 16;
      dispmode &= (CurUnit->Num ? 0x1 : 0x3);
  
@@ -1492,7 +1515,7 @@ index 2f8afcb..64d4393 100644
      CurUnit->UpdateMosaicCounters(line);
  
      switch (dispmode)
-@@ -303,6 +494,12 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
+@@ -303,6 +505,12 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
  
          *(u64*)&dst[i] = c | ((c & 0x00C0C0C000C0C0C0) >> 6) | 0xFF000000FF000000;
      }
@@ -1505,7 +1528,7 @@ index 2f8afcb..64d4393 100644
  }
  
  void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
-@@ -576,7 +773,7 @@ void SoftRenderer::DoCapture(u32 line, u32 width)
+@@ -576,7 +784,7 @@ void SoftRenderer::DoCapture(u32 line, u32 width)
  template<u32 bgmode>
  void SoftRenderer::DrawScanlineBGMode(u32 line)
  {
@@ -1514,7 +1537,7 @@ index 2f8afcb..64d4393 100644
      u16* bgCnt = CurUnit->BGCnt;
      for (int i = 3; i >= 0; i--)
      {
-@@ -631,7 +828,7 @@ void SoftRenderer::DrawScanlineBGMode(u32 line)
+@@ -631,7 +839,7 @@ void SoftRenderer::DrawScanlineBGMode(u32 line)
  
  void SoftRenderer::DrawScanlineBGMode6(u32 line)
  {
@@ -1523,7 +1546,7 @@ index 2f8afcb..64d4393 100644
      u16* bgCnt = CurUnit->BGCnt;
      for (int i = 3; i >= 0; i--)
      {
-@@ -659,7 +856,7 @@ void SoftRenderer::DrawScanlineBGMode6(u32 line)
+@@ -659,7 +867,7 @@ void SoftRenderer::DrawScanlineBGMode6(u32 line)
  
  void SoftRenderer::DrawScanlineBGMode7(u32 line)
  {
@@ -1532,7 +1555,7 @@ index 2f8afcb..64d4393 100644
      u16* bgCnt = CurUnit->BGCnt;
      // mode 7 only has text-mode BG0 and BG1
  
-@@ -691,11 +888,29 @@ void SoftRenderer::DrawScanlineBGMode7(u32 line)
+@@ -691,11 +899,29 @@ void SoftRenderer::DrawScanlineBGMode7(u32 line)
  
  void SoftRenderer::DrawScanline_BGOBJ(u32 line)
  {
@@ -1562,7 +1585,7 @@ index 2f8afcb..64d4393 100644
  
          return;
      }
-@@ -741,11 +956,17 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+@@ -741,11 +967,17 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
  
      if (!GPU.GPU3D.IsRendererAccelerated())
      {
@@ -1580,7 +1603,7 @@ index 2f8afcb..64d4393 100644
              BGOBJLine[i] = ColorComposite(i, val1, val2);
          }
      }
-@@ -859,16 +1080,6 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+@@ -859,16 +1091,6 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
  }
  
  
@@ -1597,7 +1620,7 @@ index 2f8afcb..64d4393 100644
  
  void SoftRenderer::DrawPixel_Accel(u32* dst, u16 color, u32 flag)
  {
-@@ -965,6 +1176,57 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
+@@ -965,6 +1187,57 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
      else
          tilemapaddr += ((yoff & 0xF8) << 3);
  
@@ -1655,7 +1678,7 @@ index 2f8afcb..64d4393 100644
      u16 curtile;
      u16* curpal;
      u32 pixelsaddr;
-@@ -1599,19 +1861,60 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
+@@ -1599,19 +1872,60 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
  
          CurUnit->OBJMosaicY = 0;
          CurUnit->OBJMosaicYCount = 0;
@@ -1719,7 +1742,7 @@ index 2f8afcb..64d4393 100644
      NumSprites[CurUnit->Num] = 0;
      memset(OBJLine[CurUnit->Num], 0, 256*4);
      memset(OBJWindow[CurUnit->Num], 0, 256);
-@@ -1634,15 +1937,29 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
+@@ -1634,15 +1948,29 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
          64, 32, 64, 8
      };
  
@@ -1822,17 +1845,15 @@ index 4beaf8f..bf419de 100644
  
      typedef void (*DrawPixel)(u32* dst, u16 color, u32 flag);
 diff --git a/src/GPU3D.cpp b/src/GPU3D.cpp
-index 1204741..22f58ea 100644
+index 1204741..e7dff9f 100644
 --- a/src/GPU3D.cpp
 +++ b/src/GPU3D.cpp
-@@ -16,6 +16,10 @@
+@@ -16,6 +16,8 @@
      with melonDS. If not, see http://www.gnu.org/licenses/.
  */
  
 +#include "SsrProf.h" // ssrecomp
-+extern bool rc_frame_hidden; // ssrecomp: GPU.cpp
 +extern bool rc_wide_render_skip; // ssrecomp: GPU.cpp
-+extern bool rc_wide_publish_only;
  #include <stdio.h>
  #include <string.h>
  #include <algorithm>
@@ -1908,7 +1929,7 @@ index 1204741..22f58ea 100644
  
  #define INTERPOLATE(var)  { outbuf->var = (vin->var + ((vout->var - vin->var) * factor_num) / factor_den); }
  
-@@ -861,6 +896,7 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
+@@ -862,6 +897,7 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
              Vertex* vprev = &vertices[prev];
              if (vprev->Position[comp] <= vprev->Position[3])
              {
@@ -1916,7 +1937,7 @@ index 1204741..22f58ea 100644
                  ClipSegment<comp, 1, attribs>(&temp[c], &vtx, vprev);
                  c++;
              }
-@@ -871,12 +907,16 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
+@@ -869,12 +905,16 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
              Vertex* vnext = &vertices[next];
              if (vnext->Position[comp] <= vnext->Position[3])
              {
@@ -1933,7 +1954,7 @@ index 1204741..22f58ea 100644
      }
  
      nverts = c; c = clipstart;
-@@ -888,6 +928,7 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
+@@ -889,6 +929,7 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
              Vertex* vprev = &temp[prev];
              if (vprev->Position[comp] >= -vprev->Position[3])
              {
@@ -1941,7 +1962,7 @@ index 1204741..22f58ea 100644
                  ClipSegment<comp, -1, attribs>(&vertices[c], &vtx, vprev);
                  c++;
              }
-@@ -898,12 +939,16 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
+@@ -896,12 +937,16 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
              Vertex* vnext = &temp[next];
              if (vnext->Position[comp] >= -vnext->Position[3])
              {
@@ -1958,7 +1979,7 @@ index 1204741..22f58ea 100644
      }
  
      // checkme
-@@ -971,6 +1014,19 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -971,6 +1016,19 @@ void GPU3D::SubmitPolygon() noexcept
      // TODO: work out how it works on the real thing
      // the normalization part is a wild guess
  
@@ -1978,7 +1999,7 @@ index 1204741..22f58ea 100644
      Vertex *v0, *v1, *v2, *v3;
      s64 normalX, normalY, normalZ;
      s64 dot;
-@@ -1050,8 +1106,8 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -1048,8 +1106,8 @@ void GPU3D::SubmitPolygon() noexcept
          }
  
          if (LastStripPolygon->NumVertices == lastpolyverts &&
@@ -1989,7 +2010,7 @@ index 1204741..22f58ea 100644
          {
              reusedvertices[0] = LastStripPolygon->Vertices[id0];
              reusedvertices[1] = LastStripPolygon->Vertices[id1];
-@@ -1086,7 +1142,7 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -1084,7 +1142,7 @@ void GPU3D::SubmitPolygon() noexcept
      // clipping
  
      nverts = ClipPolygon<true>(*this, clippedvertices, nverts, clipstart);
@@ -1998,7 +2019,7 @@ index 1204741..22f58ea 100644
      {
          LastStripPolygon = NULL;
          return;
-@@ -1092,7 +1148,7 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -1092,7 +1150,7 @@ void GPU3D::SubmitPolygon() noexcept
  
      // reject the polygon if it's not going to fit in polygon/vertex RAM
  
@@ -2007,7 +2028,7 @@ index 1204741..22f58ea 100644
      {
          LastStripPolygon = NULL;
          DispCnt |= (1<<13);
-@@ -1589,6 +1636,25 @@ void GPU3D::BoxTest(const u32* params) noexcept
+@@ -1589,6 +1647,25 @@ void GPU3D::BoxTest(const u32* params) noexcept
          cube[i].Position[3] = ((s64)x*ClipMatrix[3] + (s64)y*ClipMatrix[7] + (s64)z*ClipMatrix[11] + (s64)0x1000*ClipMatrix[15]) >> 12;
      }
  
@@ -2033,7 +2054,7 @@ index 1204741..22f58ea 100644
      // front face (-Z)
      face[0] = cube[0]; face[1] = cube[1]; face[2] = cube[2]; face[3] = cube[3];
      res = ClipPolygon<false>(*this, face, 4, 0);
-@@ -1764,6 +1830,13 @@ void GPU3D::ExecuteCommand() noexcept
+@@ -1764,6 +1841,13 @@ void GPU3D::ExecuteCommand() noexcept
      {
          // fast path for command which only have a single parameter
  
@@ -2047,7 +2068,7 @@ index 1204741..22f58ea 100644
          /*printf("[GXS:%08X] 0x%02X,  0x%08X", GXStat, entry.Command, entry.Param);*/
  
          switch (entry.Command)
-@@ -2116,6 +2189,9 @@ void GPU3D::ExecuteCommand() noexcept
+@@ -2116,6 +2200,9 @@ void GPU3D::ExecuteCommand() noexcept
      }
      else
      {
@@ -2057,7 +2078,7 @@ index 1204741..22f58ea 100644
          ExecParams[ExecParamCount] = entry.Param;
          ExecParamCount++;
  
-@@ -2375,6 +2451,7 @@ void GPU3D::FinishWork(s32 cycles) noexcept
+@@ -2375,6 +2462,7 @@ void GPU3D::FinishWork(s32 cycles) noexcept
  
  void GPU3D::Run() noexcept
  {
@@ -2065,7 +2086,7 @@ index 1204741..22f58ea 100644
      if (!GeometryEnabled || FlushRequest ||
          (CmdPIPE.IsEmpty() && !(GXStat & (1<<27))))
      {
-@@ -2456,12 +2533,70 @@ bool YSort(Polygon* a, Polygon* b)
+@@ -2456,12 +2544,70 @@ bool YSort(Polygon* a, Polygon* b)
      return a->SortKey < b->SortKey;
  }
  
@@ -2136,7 +2157,7 @@ index 1204741..22f58ea 100644
              if (FlushRequest)
              {
                  if (NumPolygons)
-@@ -2487,6 +2622,44 @@ void GPU3D::VBlank() noexcept
+@@ -2487,6 +2633,44 @@ void GPU3D::VBlank() noexcept
  
                  RenderNumPolygons = NumPolygons;
                  RenderFrameIdentical = false;
@@ -2156,21 +2177,20 @@ index 1204741..22f58ea 100644
 +                    // one (WideListsOnHelper), started first so that they are ready by the time
 +                    // the in-between frame is drawn; they are built with the in-between lists
 +                    // whenever one may be needed, as the DS-resolution one decides below.
-+                    const bool skipWide = (rc_wide_render_skip || rc_wide_publish_only || rc_frame_hidden) && !capturing;
 +                    const bool helper = Wide.Owner == this && WideListsOnHelper();
-+                    if (helper && !skipWide)
++                    if (helper)
 +                    {
 +                        SsrProf::Scope prof(SsrProf::WideFlush);
 +                        WideOnFlush(*this, interpolate);
 +                    }
 +                    if (interpolate && helper)
 +                        InterpDeferred = true; // built when it is drawn, from the helper's pairs
-+                    else if (interpolate && !rc_frame_hidden)
++                    else if (interpolate)
 +                    {
 +                        SsrProf::Scope prof(SsrProf::Interp);
 +                        BuildInterpolatedFrame();
 +                    }
-+                    if (Wide.Owner == this && !helper && !skipWide)
++                    if (Wide.Owner == this && !helper)
 +                    {
 +                        SsrProf::Scope prof(SsrProf::WideFlush);
 +                        WideOnFlush(*this, InterpPending);
@@ -2182,7 +2202,7 @@ index 1204741..22f58ea 100644
              }
              else
              {
-@@ -2499,6 +2672,13 @@ void GPU3D::VBlank() noexcept
+@@ -2499,6 +2683,13 @@ void GPU3D::VBlank() noexcept
                      && memcmp(RenderEdgeTable, EdgeTable, 8*2) == 0
                      && memcmp(RenderFogDensityTable + 1, FogDensityTable, 32) == 0
                      && memcmp(RenderToonTable, ToonTable, 32*2) == 0;
@@ -2196,7 +2216,7 @@ index 1204741..22f58ea 100644
              }
  
              RenderDispCnt = DispCnt;
-@@ -2535,7 +2715,35 @@ void GPU3D::VBlank() noexcept
+@@ -2535,7 +2726,35 @@ void GPU3D::VBlank() noexcept
  
  void GPU3D::VCount215(GPU& gpu) noexcept
  {
@@ -2227,11 +2247,8 @@ index 1204741..22f58ea 100644
 +        if (Wide.Owner == this && !rc_wide_render_skip) { SsrProf::Scope prof(SsrProf::WideRender); WideOnRender(gpu, true); }
 +        return;
 +    }
--    CurrentRenderer->RenderFrame(gpu);
-+    const bool capturing = (gpu.GPU2D_A.CaptureCnt & (1u << 31)) != 0;
-+    if (!rc_frame_hidden || capturing)
-+        CurrentRenderer->RenderFrame(gpu);
-+    if (Wide.Owner == this && !rc_wide_render_skip && (!rc_frame_hidden || capturing)) { SsrProf::Scope prof(SsrProf::WideRender); WideOnRender(gpu, false); }
+     CurrentRenderer->RenderFrame(gpu);
++    if (Wide.Owner == this && !rc_wide_render_skip) { SsrProf::Scope prof(SsrProf::WideRender); WideOnRender(gpu, false); }
  }
  
  void GPU3D::SetRenderXPos(u16 xpos) noexcept
@@ -2344,14 +2361,6 @@ index 08c2208..edf2d76 100644
      u32 RenderNumPolygons = 0;
  
      u32 FlushRequest = 0;
-@@ -375,6 +427,7 @@ public:
-     virtual void RenderFrame(GPU& gpu) = 0;
-     virtual void RestartFrame(GPU& gpu) {};
-     virtual u32* GetLine(int line) = 0;
-+    virtual bool NeedsScanlineDrain() const { return true; }
-     virtual void Blit(const GPU& gpu) {};
- 
-     virtual void SetupAccelFrame() {}
 diff --git a/src/GPU3D_OpenGL.cpp b/src/GPU3D_OpenGL.cpp
 index 706c75e..ad97fc5 100644
 --- a/src/GPU3D_OpenGL.cpp
@@ -2979,7 +2988,7 @@ index b780522..65df344 100644
  #endif
 \ No newline at end of file
 diff --git a/src/GPU3D_Soft.cpp b/src/GPU3D_Soft.cpp
-index 9f6e2d7..41e0286 100644
+index 9f6e2d7..ae21031 100644
 --- a/src/GPU3D_Soft.cpp
 +++ b/src/GPU3D_Soft.cpp
 @@ -17,6 +17,7 @@
@@ -2990,7 +2999,16 @@ index 9f6e2d7..41e0286 100644
  
  #include <algorithm>
  #include <stdio.h>
-@@ -1737,9 +1738,17 @@ void SoftRenderer::RenderPolygons(const GPU& gpu, bool threaded, Polygon** polyg
+@@ -24,6 +25,8 @@
+ #include "NDS.h"
+ #include "GPU.h"
+ 
++extern bool rc_3d_render_skip; // ssrecomp: GPU.cpp
++
+ namespace melonDS
+ {
+ 
+@@ -1737,9 +1740,17 @@ void SoftRenderer::RenderPolygons(const GPU& gpu, bool threaded, Polygon** polyg
  void SoftRenderer::VCount144(GPU& gpu)
  {
      if (RenderThreadRunning.load(std::memory_order_relaxed) && !gpu.GPU3D.AbortFrame)
@@ -3008,7 +3026,22 @@ index 9f6e2d7..41e0286 100644
  void SoftRenderer::RenderFrame(GPU& gpu)
  {
      auto textureDirty = gpu.VRAMDirty_Texture.DeriveState(gpu.VRAMMap_Texture, gpu);
-@@ -1752,6 +1761,8 @@ void SoftRenderer::RenderFrame(GPU& gpu)
+@@ -1749,9 +1760,23 @@ void SoftRenderer::RenderFrame(GPU& gpu)
+     bool texPalChanged = gpu.MakeVRAMFlat_TexPalCoherent(texPalDirty);
+ 
+     FrameIdentical = !(textureChanged || texPalChanged) && gpu.GPU3D.RenderFrameIdentical;
++    {
++        // ssrecomp: a picture nobody will see (rc_3d_render_skip) is not drawn: the last one stays,
++        // as for a frame identical to the last. Not while the game captures the picture or shows
++        // main memory, which reads it. The next picture that is drawn is then drawn in full,
++        // identical to the skipped one or not.
++        static const SoftRenderer* skipped = nullptr; // (whose last picture was not drawn)
++        const bool skip = rc_3d_render_skip && !(gpu.GPU2D_A.CaptureCnt & (1u << 31)) && ((gpu.GPU2D_A.DispCnt >> 16) & 3) != 3;
++        if (skip) FrameIdentical = true;
++        else if (skipped == this) FrameIdentical = false;
++        if (skip) skipped = this;
++        else if (skipped == this) skipped = nullptr;
++    }
  
      if (RenderThreadRunning.load(std::memory_order_relaxed))
      {
@@ -3017,7 +3050,7 @@ index 9f6e2d7..41e0286 100644
          // "Render thread, you're up! Get moving."
          Platform::Semaphore_Post(Sema_RenderStart);
      }
-@@ -1783,6 +1794,7 @@ void SoftRenderer::RenderThreadFunc(GPU& gpu)
+@@ -1783,6 +1808,7 @@ void SoftRenderer::RenderThreadFunc(GPU& gpu)
          // the ensuing race conditions may cause a crash
          // (since some of the GPU state includes pointers).
          RenderThreadRendering = true;
@@ -3025,7 +3058,7 @@ index 9f6e2d7..41e0286 100644
          if (FrameIdentical)
          { // If no rendering is needed, just say we're done.
              Platform::Semaphore_Post(Sema_ScanlineCount, 192);
-@@ -1790,7 +1802,7 @@ void SoftRenderer::RenderThreadFunc(GPU& gpu)
+@@ -1790,7 +1816,7 @@ void SoftRenderer::RenderThreadFunc(GPU& gpu)
          else
          {
              ClearBuffers(gpu);
@@ -3034,7 +3067,7 @@ index 9f6e2d7..41e0286 100644
          }
  
          // Tell the main thread that we're done rendering
-@@ -1806,10 +1818,13 @@ u32* SoftRenderer::GetLine(int line)
+@@ -1806,10 +1832,13 @@ u32* SoftRenderer::GetLine(int line)
      if (RenderThreadRunning.load(std::memory_order_relaxed))
      {
          if (line < 192)

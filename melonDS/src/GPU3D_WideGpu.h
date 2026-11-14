@@ -184,22 +184,30 @@ void WideGpuSendJoin(int slot);
 bool WideGpuSendBusy(int slot);
 void WideGpuSendStop(); // (waits for the jobs, then ends the thread; started again when needed)
 
+// Fast forward (set by the frontend around the frames it runs at once, for those whose 3D picture
+// goes to a frame nobody sees): the DS-resolution picture is drawn only if its lines are looked at
+// after all. Each picture cost a wait for the graphics chip (about 4 ms on a Pixel 9 Pro), four
+// for every frame shown.
+inline bool WideGpuDSLazy = false;
+
 class WideGpuDSRenderer : public Renderer3D
 {
 public:
     explicit WideGpuDSRenderer(std::unique_ptr<WideGpuBackend> backend);
     ~WideGpuDSRenderer() override;
-    void Reset(GPU& gpu) override { HaveLines = false; Dirty = true; }
+    void Reset(GPU& gpu) override {}
     void RenderFrame(GPU& gpu) override;
     u32* GetLine(int line) override;
-    bool NeedsScanlineDrain() const override { return false; }
 
 private:
     void Convert(); // Pixels to Lines
+    void Send(GPU& gpu); // the picture's job, from List
+    GPU* Deferred = nullptr; // (WideGpuDSLazy: the frame whose picture has not been drawn yet)
+    u32 ListCount = 0;
     std::unique_ptr<WideGpuBackend> Backend;
     WideGpuFrame Frame;
     u32* Pixels = nullptr;
-    bool Pending = false, Fetched = true, HaveLines = false, Dirty = true;
+    bool Pending = false, Fetched = true;
     u64 Version = 0;
     std::array<Polygon*, 2048> List {}; // (the frame's list as it was handed over)
     u32 Lines[256 * 192] {}; // in the format GetLine returns

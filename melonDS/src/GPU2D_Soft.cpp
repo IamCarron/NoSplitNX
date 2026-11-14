@@ -131,8 +131,7 @@ void SoftRenderer::RecordEdges(u32 line)
             auto is3D = [&](int x) { return (BGOBJLine[x] >> 24 & 0xC0) == 0x40; };
             bool inner = is3D(i) && !is3D(i + dir);
             for (int k = 2; k < 9 && inner; k++)
-                inner = (BGOBJLine[i + dir * k] >> 24) == (BGOBJLine[i + dir] >> 24) &&
-                        (BGOBJLine[i + dir * k] & 0x3F3F3F) == (BGOBJLine[i + dir] & 0x3F3F3F);
+                inner = (BGOBJLine[i + dir * k] >> 24) == (BGOBJLine[i + dir] >> 24);
             if (inner) i += dir;
         }
         const u32 val1 = BGOBJLine[i], val2 = BGOBJLine[256 + i];

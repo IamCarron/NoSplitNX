@@ -14,8 +14,7 @@
 #include "GPU3D.h"
 #include "SsrThreads.h"
 
-extern bool rc_wide_render_skip;
-extern bool rc_wide_publish_only;
+extern bool rc_3d_line_unseen; // GPU.cpp
 
 namespace melonDS
 {
@@ -192,21 +191,8 @@ void WideGpuDSRenderer::RenderFrame(GPU& gpu)
     }
     WideGpuTexVersion = Version;
 
-    if (Pending)
-    {
-        Backend->Fetch(0); // (an earlier picture nobody asked for)
-        Pending = false;
-        Convert();
-    }
-    if (textureChanged || texPalChanged || !gpu.GPU3D.RenderFrameIdentical || !HaveLines)
-        Dirty = true;
-    const bool capturing = (gpu.GPU2D_A.CaptureCnt & (1u << 31)) != 0;
-    if (!Dirty || ((rc_wide_render_skip || rc_wide_publish_only) && !capturing && HaveLines))
-    {
-        Fetched = true;
-        return;
-    }
-    Dirty = false;
+    if (Pending) Backend->Fetch(0); // (an earlier picture nobody asked for)
+    Pending = false;
     Pixels = Backend->Target(0, 256, 192);
     Fetched = false;
     // The list itself is copied (the in-between frame's is lent to RenderPolygonRAM for this
@@ -214,7 +200,15 @@ void WideGpuDSRenderer::RenderFrame(GPU& gpu)
     // flat texture memory stay as they are until the next frame is flushed or rendered, by when
     // the job has been waited for (GetLine, and GPU3D::VBlank).
     List = gpu.GPU3D.RenderPolygonRAM;
-    const u32 count = gpu.GPU3D.RenderNumPolygons;
+    ListCount = gpu.GPU3D.RenderNumPolygons;
+    // (Fast forward: only if its lines are looked at, see WideGpuDSLazy.)
+    Deferred = WideGpuDSLazy ? &gpu : nullptr;
+    if (!Deferred) Send(gpu);
+}
+
+void WideGpuDSRenderer::Send(GPU& gpu)
+{
+    const u32 count = ListCount;
     WideGpuSend(0, [this, &gpu, count] {
         WideGpuBuild(gpu, List.data(), count, 256, 192, Frame, Backend->TakesAtlas());
         Frame.TexVersion = Version;
@@ -238,14 +232,21 @@ void WideGpuDSRenderer::Convert()
         const u32 v = Pixels[i];
         Lines[i] = ((v >> 18) & 0x3F) | (((v >> 10) & 0x3F) << 8) | (((v >> 2) & 0x3F) << 16) | (((v >> 27) & 0x1F) << 24);
     }
-    HaveLines = true;
 }
 
 u32* WideGpuDSRenderer::GetLine(int line)
 {
     if (!Fetched)
     {
+        // (A hidden frame's lines, taken and not looked at: the last picture's, nothing drawn.)
+        if (Deferred && rc_3d_line_unseen) return &Lines[256 * (line < 0 ? 0 : line > 191 ? 191 : line)];
         Fetched = true;
+        if (Deferred)
+        {
+            GPU& gpu = *Deferred;
+            Deferred = nullptr;
+            Send(gpu);
+        }
         SsrWaitTimer t(SsrStats().Wait3DNs);
         WideGpuSendJoin(0);
         WideGpuSendJoin(3);

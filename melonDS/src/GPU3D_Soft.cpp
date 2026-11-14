@@ -25,6 +25,8 @@
 #include "NDS.h"
 #include "GPU.h"
 
+extern bool rc_3d_render_skip; // ssrecomp: GPU.cpp
+
 namespace melonDS
 {
 
@@ -1758,6 +1760,18 @@ void SoftRenderer::RenderFrame(GPU& gpu)
     bool texPalChanged = gpu.MakeVRAMFlat_TexPalCoherent(texPalDirty);
 
     FrameIdentical = !(textureChanged || texPalChanged) && gpu.GPU3D.RenderFrameIdentical;
+    {
+        // ssrecomp: a picture nobody will see (rc_3d_render_skip) is not drawn: the last one stays,
+        // as for a frame identical to the last. Not while the game captures the picture or shows
+        // main memory, which reads it. The next picture that is drawn is then drawn in full,
+        // identical to the skipped one or not.
+        static const SoftRenderer* skipped = nullptr; // (whose last picture was not drawn)
+        const bool skip = rc_3d_render_skip && !(gpu.GPU2D_A.CaptureCnt & (1u << 31)) && ((gpu.GPU2D_A.DispCnt >> 16) & 3) != 3;
+        if (skip) FrameIdentical = true;
+        else if (skipped == this) FrameIdentical = false;
+        if (skip) skipped = this;
+        else if (skipped == this) skipped = nullptr;
+    }
 
     if (RenderThreadRunning.load(std::memory_order_relaxed))
     {

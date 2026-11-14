@@ -623,6 +623,9 @@ inline void SyncGbaSettings(const std::string& cfg, const std::string& dataDir)
     const std::string had = ConfigValue(ini, "scaling");
     set.push_back({ "scaling", ConfigValue(cfg, "smooth") == "1" ? "smooth" : had == "whole" ? "whole" : "sharp" });
     set.push_back({ "show_fps", ConfigValue(cfg, "show_fps") == "1" ? "1" : "0" });
+    set.push_back({ "fast_button", ConfigValue(cfg, "fast_button") == "toggle" ? "toggle" : "hold" });
+    const std::string fast = ConfigValue(cfg, "fast_lock");
+    if (fast == "0" || fast == "1") set.push_back({ "fast_lock", fast });
     const std::string vol = ConfigValue(cfg, "volume");
     set.push_back({ "volume", vol.empty() ? "100" : vol });
 #ifndef __SWITCH__
@@ -1653,6 +1656,8 @@ inline std::vector<Setting> SettingsList()
 #endif
 #endif
     l.push_back({ "smooth", "SMOOTH SCALING", onOff, "0", "ON: THE PICTURE IS SOFTENED AS IT IS SCALED UP TO YOUR SCREEN. OFF: SHARP PIXELS." });
+    l.push_back({ "fast_button", "FAST FORWARD BUTTON", { { "hold", "HOLD" }, { "toggle", "TOGGLE" } }, "hold",
+                  "HOLD: RELEASE TO STOP. TOGGLE: PRESS ONCE TO START AND AGAIN TO STOP. APPLIES TO KEYBOARD, CONTROLLER AND ON-SCREEN FAST FORWARD." });
     l.push_back({ "wide", "WIDESCREEN WORLD", onOff, "1", "ON: THE 3D WORLD IS DRAWN OUT TO THE SIDES OF THE 16:9 SCREEN. OFF: ONLY AS WIDE AS A DS SCREEN." });
 #ifdef __SWITCH__
     l.push_back({ "wide_lines", "WORLD DETAIL", { { "192", "192" }, { "288", "288" }, { "384", "384" }, { "540", "540" }, { "720", "720" } }, "",
@@ -1750,7 +1755,7 @@ inline int GroupOf(const Setting& s)
     if (!strncmp(s.key, "list_", 5)) return 5;
     if (!strcmp(s.key, "ra") || !strcmp(s.key, "!ra_login")) return 6;
     static const char* display[] = { "view", "large_screen", "fullscreen", "smooth", "battle_buttons", "show_fps" };
-    static const char* controls[] = { "start_button", "buttons", "pad_touch" };
+    static const char* controls[] = { "start_button", "buttons", "pad_touch", "fast_button" };
     for (const char* k : display)
         if (!strcmp(s.key, k)) return 0;
     if (!strcmp(s.key, "volume")) return 1;

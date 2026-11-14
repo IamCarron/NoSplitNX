@@ -48,6 +48,16 @@ namespace PcLauncher { const unsigned char* BuiltInArt(const char* code, size_t&
 extern const uint32_t rc_num_chunks;
 bool rc_portable_knows(const char code[4]); // (runtime/recomp_api.h)
 
+namespace Achievements
+{
+void ShutdownNetwork();
+}
+
+extern "C" void userAppExit(void)
+{
+    Achievements::ShutdownNetwork();
+}
+
 namespace SwitchPlatform
 {
 namespace
@@ -987,7 +997,11 @@ bool Start(int& argc, char**& argv)
                     const Result rc = envSetNextLoad(g_self.c_str(), cmd.c_str());
                     fprintf(stderr, "[switch] %s chosen: the program starts again to play it (0x%x)\n",
                         games[chosen].rom.c_str(), (unsigned)rc);
-                    if (R_SUCCEEDED(rc)) return false;
+                    if (R_SUCCEEDED(rc))
+                    {
+                        Achievements::ShutdownNetwork();
+                        return false;
+                    }
                     remove(chosenMarker.c_str());
                 }
             }
@@ -1362,6 +1376,7 @@ void Finish()
         else fprintf(stderr, "[test] start the game again for the next run\n");
         fflush(stderr);
     }
+    Achievements::ShutdownNetwork();
 }
 }
 #endif

@@ -23,18 +23,26 @@ namespace
 std::once_flag g_curlInit;
 bool g_curlOk = false;
 bool g_socketOpen = false;
+std::mutex g_netMutex;
 std::atomic<bool> g_stop{ false };
+std::atomic<int> g_busy{ 0 };
 
 int Progress(void*, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
 {
     return g_stop ? 1 : 0;
 }
 
-// (Not curl_global_cleanup: the achievements' request may still be on its way on a thread of
-// its own, left to finish, which then just fails.)
 void CloseNetwork()
 {
     g_stop = true;
+    for (int i = 0; i < 200 && g_busy > 0; i++)
+        svcSleepThread(10'000'000ULL);
+    std::lock_guard<std::mutex> lock(g_netMutex);
+    if (g_busy == 0 && g_curlOk)
+    {
+        g_curlOk = false;
+        curl_global_cleanup();
+    }
     if (g_socketOpen)
     {
         g_socketOpen = false;
@@ -95,12 +103,14 @@ bool Request(const std::string& url, const std::string& post, const std::string&
     curl_easy_setopt(c, CURLOPT_WRITEDATA, &sink);
     curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, Progress);
     curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+    g_busy++;
     const CURLcode res = curl_easy_perform(c);
     long code = 0;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
     if (res != CURLE_OK) error = std::string("no connection (") + curl_easy_strerror(res) + ")";
     if (headers) curl_slist_free_all(headers);
     curl_easy_cleanup(c);
+    g_busy--;
     status = (int)code;
     return res == CURLE_OK;
 }
@@ -125,6 +135,11 @@ void HttpStop(bool on)
     if (on) CloseNetwork();
 }
 
+void ShutdownNetwork()
+{
+    CloseNetwork();
+}
+
 #else
 
 const char* SystemName() { return "Desktop/Test"; }
@@ -144,6 +159,7 @@ bool HttpDownload(const std::string&, const std::string&, int&, std::string&, st
 }
 
 void HttpStop(bool) {}
+void ShutdownNetwork() {}
 
 #endif
 

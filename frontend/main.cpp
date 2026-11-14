@@ -57,7 +57,8 @@
 #include "ui.h"
 #include "merged.h"
 #include "audiostretch.h"
-#include "audio_fast_forward.h"
+#include "fast_forward_button.h"
+#include "fast_forward_audio.h"
 #include "gpucompose.h"
 #include "emuthread.h"
 
@@ -282,7 +283,7 @@ static void Bw2DexCover(Scene& sc, float viewWidth, const ScreenImage* screens)
 
 // Defined in the 2D renderer: layers not to draw, per engine (see GPU2D_Soft.cpp).
 extern unsigned rc_hide_layers[2];
-extern bool rc_frame_hidden, rc_wide_render_skip, rc_wide_publish_only; // melonDS/src/GPU.cpp
+extern bool rc_frame_hidden, rc_wide_render_skip, rc_3d_render_skip; // melonDS/src/GPU.cpp
 
 using namespace melonDS;
 
@@ -352,6 +353,8 @@ static int KeyFromName(const std::string& n)
 }
 
 // Script lines: "<first frame> <last frame> KEY [KEY...]" or "<first> <last> touch <x> <y>"
+static std::vector<int> g_touchOnlyFuncs; // functions of screens played only by touch (see their lookup)
+
 static std::vector<ScriptEvent> LoadScript(const std::string& path)
 {
     std::vector<ScriptEvent> out;
@@ -492,10 +495,10 @@ static std::vector<uint8_t> ReadFile(const std::string& path)
 #endif
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) return data;
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    data.resize(len);
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return data; }
+    const long len = ftell(f);
+    if (len < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return data; }
+    data.resize((size_t)len);
     if (fread(data.data(), 1, len, f) != (size_t)len) data.clear();
     fclose(f);
     return data;
@@ -1010,6 +1013,20 @@ static void ApplyRenderer3D(NDS& nds, bool gpu)
 // can move what achievements read.
 static bool AchievementsOn = false;
 
+// Firmware has a fixed expected length. Reject incomplete or oversized files without reading
+// an arbitrary amount into memory before discovering that they are not usable firmware.
+static std::vector<uint8_t> ReadFirmwareFile(const std::string& path, size_t expected)
+{
+    FILE* file = fopen(path.c_str(), "rb");
+    if (!file) return {};
+    std::vector<uint8_t> data(expected);
+    const bool complete = fread(data.data(), 1, data.size(), file) == data.size();
+    const bool exact = complete && fgetc(file) == EOF && !ferror(file);
+    const bool closed = fclose(file) == 0;
+    if (!exact || !closed) data.clear();
+    return data;
+}
+
 static std::unique_ptr<NDS> MakeConsole(const std::vector<uint8_t>& rom, const std::vector<uint8_t>& sav, bool fixedClock)
 {
     // Black 2 and White 2 (US) get 8 MB of main RAM, for their wider map (frontend/bw2map.h).
@@ -1040,20 +1057,29 @@ static std::unique_ptr<NDS> MakeConsole(const std::vector<uint8_t>& rom, const s
     // The firmware kept from before (firmware.bin, see Host::FirmwarePath), when it is one: the
     // same size as the firmware made fresh otherwise.
     if (!Host::FirmwarePath.empty())
-        if (FILE* f = fopen(Host::FirmwarePath.c_str(), "rb"))
+    {
+        const size_t expected = Firmware(0).Length();
+#ifdef __SWITCH__
+        // (A save of the settings that was cut short can leave them in the rollback copy alone.)
         {
-            std::vector<u8> fw;
-            u8 buf[65536];
-            size_t n;
-            while ((n = fread(buf, 1, sizeof buf, f)) > 0) fw.insert(fw.end(), buf, buf + n);
-            fclose(f);
-            if (fw.size() == Firmware(0).Length())
-            {
-                args.Firmware = Firmware(fw.data(), (u32)fw.size());
-                fprintf(stderr, "[firmware] %s\n", Host::FirmwarePath.c_str());
-            }
-            else fprintf(stderr, "[firmware] %s: %zu bytes, not firmware: a new one\n", Host::FirmwarePath.c_str(), fw.size());
+            std::error_code missing;
+            if (!std::filesystem::exists(Host::FirmwarePath, missing) && !missing)
+                rename((Host::FirmwarePath + ".old").c_str(), Host::FirmwarePath.c_str());
         }
+#endif
+        const auto firmware = ReadFirmwareFile(Host::FirmwarePath, expected);
+        if (!firmware.empty())
+        {
+            args.Firmware = Firmware(firmware.data(), (u32)firmware.size());
+            fprintf(stderr, "[firmware] %s\n", Host::FirmwarePath.c_str());
+        }
+        else
+        {
+            std::error_code error;
+            if (std::filesystem::exists(std::filesystem::u8path(Host::FirmwarePath), error))
+                fprintf(stderr, "[firmware] cannot use %s; expected exactly %zu bytes; a fresh firmware is used\n", Host::FirmwarePath.c_str(), expected);
+        }
+    }
     auto nds = std::make_unique<NDS>(std::move(args));
 #ifdef JIT_ENABLED
     UseFastMem = UseJit && nds->JIT.FastMemoryEnabled();
@@ -1143,6 +1169,7 @@ struct AutoFocus
     int pending = 0;           // frames the opposite decision has been stable
     std::vector<const RcApp*> bottomApps;
     std::vector<const RcApp*> athlonApps;
+    std::vector<const RcApp*> touchOnlyApps; // played only by touch: the stick touch cursor comes on there
 
     void Init()
     {
@@ -1162,6 +1189,10 @@ struct AutoFocus
         for (unsigned i = 0; i < rc_num_apps; i++)
             if (!strcmp(rc_apps[i].name, "PokeathlonCourse") || !strcmp(rc_apps[i].name, "PokeathlonUnkApp"))
                 athlonApps.push_back(&rc_apps[i]);
+        // The Ruins of Alph's sliding puzzle takes no buttons at all, not even to quit (GitHub #108).
+        for (unsigned i = 0; i < rc_num_apps; i++)
+            if (!strcmp(rc_apps[i].name, "AlphPuzzle") || !strcmp(rc_apps[i].name, "TrainerCardSignature"))
+                touchOnlyApps.push_back(&rc_apps[i]);
     }
 
     // A HeartGold/SoulSilver text box on the top screen: white across its middle rows and the
@@ -1567,6 +1598,8 @@ struct Settings
     bool ultraNoticeSeen = false;
     // FAST FORWARD SOUND: off plays silence while fast forwarding (GitHub #45).
     bool ffMute = false;
+    bool fastButtonToggle = false;
+    bool fastLock = false; // pause-menu FAST FORWARD, retained for the next launch
     std::string listColour, listBackground, listLang; // (GAME LIST: COLOUR, BACKGROUND; LANGUAGE)
     bool cpuBoost = true; // Switch only: the processor's boost mode (see SwitchPlatform)
     bool jit = true;      // Switch, games that are not recompiled: melonDS's JIT (read at start-up)
@@ -1647,6 +1680,8 @@ struct Settings
             else if (k == "list_background") listBackground = v;
             else if (k == "list_lang" || k == "language") { listLang = v; UiLang::Set(v); }
             else if (k == "ff_low_res") ffLowRes = v == "1";
+            else if (k == "fast_button") fastButtonToggle = v == "toggle";
+            else if (k == "fast_lock") fastLock = v == "1";
             else if (k == "start_button") startMenu = v != "ds";
             else if (k == "cpu_boost") cpuBoost = v == "1";
             else if (k == "jit") jit = v == "1";
@@ -1693,6 +1728,8 @@ struct Settings
         f << "pad_touch=" << (padTouch ? 1 : 0) << "\n";
         f << "show_fps=" << (showFps ? 1 : 0) << "\n";
         f << "ff_low_res=" << (ffLowRes ? 1 : 0) << "\n";
+        f << "fast_button=" << (fastButtonToggle ? "toggle" : "hold") << "\n";
+        f << "fast_lock=" << (fastLock ? 1 : 0) << "\n";
         f << "volume=" << volume << "\n";
         f << "ultrawide_notice=" << (ultraNoticeSeen ? 1 : 0) << "\n";
         f << "aspect=" << (aspect == 1 ? "16:9" : aspect == 2 ? "16:10" : aspect == 3 ? "3:2" : aspect == 4 ? "4:3" : "auto") << "\n";
@@ -2444,6 +2481,7 @@ int main(int argc, char** argv)
         focusProbe("TouchscreenHitbox_FindHitboxAtTouchNew"), focusProbe("TouchscreenHitbox_FindHitboxAtTouchHeld"),
         focusProbe("TouchscreenHitbox_TouchHeldIsIn"), focusProbe("TouchscreenHitbox_TouchNewIsIn") };
     const int probeFieldMap = focusProbe("FieldMap_Main");
+    const int probeEvolution = focusProbe("EvolutionScene_Task");
     // Writing the save: for the seconds this takes the game sits in its flash write loop
     // and the code of the screen it shows (the save question, the overworld) runs only now
     // and then, so nothing on screen changes but the probes go quiet.
@@ -2516,6 +2554,11 @@ int main(int argc, char** argv)
     // running (see where it is counted).
     std::vector<int> appOwnSection(rc_num_apps, -1);
     std::vector<unsigned> sectionStreak(rc_num_sections, 0);
+    // The last frame overlay 8 (the in-battle Bag and party screens) ran without overlay 6 or 7 (the
+    // battle's own effects; 7 runs with 8 while a Pokemon is sent out after a switch). Some battle effects (a wild Pokemon breaking out of a ball, an
+    // enemy's Vine Whip) call into overlay 8 in passing, and the Bag layout flashed up at 4:3
+    // for about ten frames each time.
+    unsigned battleSubmenuLast = 0;
     for (unsigned i = 0; i < rc_num_apps; i++)
     {
         if (!strcmp(rc_apps[i].section, "main") || !strcmp(rc_apps[i].section, "field")) continue;
@@ -2583,6 +2626,7 @@ int main(int argc, char** argv)
     // (worked out each frame before the scene is chosen).
     bool appBottomNow = false;
     bool athlonNow = false;   // a Pokeathlon course or its Pokemon chooser is running
+    bool touchOnlyNow = false; // a touch-only game (the Ruins of Alph puzzle) is running
     // The command strip's own cursor: d-pad presses seen by the frontend this frame, and the
     // selection they have moved it to (reset whenever the ROM's published selection changes).
     std::string stripNav; int stripSel = 0, stripPubSel = -1, stripPubMenu = 0;
@@ -2679,6 +2723,19 @@ int main(int argc, char** argv)
                 bw2.weatherObj.push_back(bw2Find((std::string(w) + phase).c_str()));
         bw1.Init(opt.rom, funcWatch, bw2Names, opt.config); // Pokemon Black and White: their own functions too
         pt.Init(opt.rom, funcWatch, bw2Names);              // Pokemon Platinum: its own functions
+        // Screens played only by touch, with no buttons at all: there the stick touch cursor comes
+        // on by itself (GitHub #108). Diamond, Pearl and Platinum: cooking Poffins, digging in the
+        // Underground, the contests' dressing up, the Ball Capsules' seals and the Trainer Card's
+        // signature; Black and White: the Musical's dressing up (Nimbasa City, in the story) and
+        // the signature. (HeartGold and SoulSilver's are applications: AutoFocus::touchOnlyApps.)
+        g_touchOnlyFuncs.clear();
+        for (const char* n : { "PoffinBerrySelection_RunPoffinCookingApp", "Mining_GameTask", "VisualCompetition_Main",
+                               "CapsuleMenu_Main", "SignatureApp_Main", "MUSICAL_DRESSUP_SYS_Main",
+                               "TRCARD_SYS_StateWaitEditProc" })
+        {
+            const int f = funcWatch.Find(n);
+            if (f >= 0) g_touchOnlyFuncs.push_back(f);
+        }
         // (Platinum has functions with Black 2's names, StartMenu_Main and CARD_WaitBackupAsync
         // among them: Black 2's layouts must not pick them up.)
         if (pt.on) bw2 = Bw2Funcs();
@@ -2937,6 +2994,19 @@ int main(int argc, char** argv)
                 }
             }
             sc.items.insert(sc.items.end(), shades.begin(), shades.end());
+        }
+        else if (!pt.dp && red(128, 64) && blue(128, 136) && !blue(128, 166) && !orange(40, 160))
+        {
+            // The Yes / No panel ("Would you like to give a nickname?" after a catch): only the two
+            // buttons, at the right above the message bar, so the caught Pokemon and the message
+            // stay in sight (the whole touch screen pasted at the lower left covered them).
+            sc.name = "battle-yesno";
+            const float viewR = 128 + viewWidth / 2;
+            const float scale = viewWidth < 300 ? 0.4f : 0.5f, w = 244 * scale, h = 60 * scale, gap = 4;
+            const float x = viewR - w - 4, y1 = 144 - 2 * h - gap - 4;
+            put(6, 35, 244, 60, x, y1, scale);
+            put(6, 107, 244, 60, x, y1 + h + gap, scale);
+            for (size_t k = sc.items.size() - 2; k < sc.items.size(); k++) sc.items[k].border = true;
         }
         else if (viewWidth < 300 || battleUnknown >= 20)
         {
@@ -3509,12 +3579,25 @@ int main(int argc, char** argv)
             Element closing = Crop(1, regionalMenu ? 0 : 22, 109, regionalMenu ? 256 : 214, 6);
             list.drop = cards.drop = closing.drop = LAYER_BACKDROP;
             sc = CleanMenu("launch-menu", { list, cards }, viewWidth, 0x1c1c1c);
-            const Element& c = sc.items.back();
-            closing.scale = c.scale;
-            closing.dx = c.dx;
-            closing.dy = c.dy + c.sh * c.scale;
-            closing.crisp = true;
-            sc.items.push_back(closing);
+            // The key system's card is only there once the game has it to show (not in a new
+            // save): without it there is nothing to close, and the closing edge would stand
+            // alone under the saved game's card. It is there when anything other than the
+            // background's own stripes (each row's colour at the screen's left edge) is drawn
+            // where the card would be.
+            bool keyCard = false;
+            if (screens)
+                for (int y = 120; y < 166 && !keyCard; y += 2)
+                    for (int x = 30; x < 226; x += 4)
+                        if (screens[1].pixels[y * 256 + x] != screens[1].pixels[y * 256 + 4]) { keyCard = true; break; }
+            if (keyCard)
+            {
+                const Element& c = sc.items.back();
+                closing.scale = c.scale;
+                closing.dx = c.dx;
+                closing.dy = c.dy + c.sh * c.scale;
+                closing.crisp = true;
+                sc.items.push_back(closing);
+            }
             sc.extraRows[0] = extra;
             sc.redrawSkip[0] = 1 << 3;   // the list without the Poke Ball and stripes (BG3)
             sc.redrawUnscroll[0] = 2;     // the list whole, also when the game has scrolled it
@@ -3712,7 +3795,14 @@ int main(int argc, char** argv)
         // not running during a door transition, so its condition has to hold for a while.
         static int spreadFrames = 0;
         const bool topFading = screens && screens[0].pixels && AutoFocus::Blank(screens[0].pixels);
-        if (std::any_of(std::begin(probeTouch), std::end(probeTouch), probeActive) && !fieldActive() && !topFading &&
+        // Fly lands with the X menu's task gone quiet and the field map not yet running for about a
+        // second, the world already drawn on the top screen: that is not a screen without a layout
+        // (the two screens joined at 4:3 flashed up for a second after every Fly).
+        static unsigned lastMenuTask = 0;
+        if (probeActive(probeStartMenu)) lastMenuTask = rc_current_frame();
+        const bool worldAfterMenu = lastMenuTask && rc_current_frame() - lastMenuTask < 900 && screens && screens[0].flags &&
+            LayerClass(screens[0].flags[60 * 256 + 128]) == LAYER_3D && LayerClass(screens[0].flags[100 * 256 + 20]) == LAYER_3D;
+        if (std::any_of(std::begin(probeTouch), std::end(probeTouch), probeActive) && !fieldActive() && !topFading && !worldAfterMenu &&
             !appActive("Battle") && !appActive("TitleScreen") && !appActive("IntroMovie") && !appActive("Credits"))
             spreadFrames++;
         else
@@ -4289,6 +4379,10 @@ int main(int argc, char** argv)
             sc.bgX = 128;
             sc.bgY = 58;
         }
+        else if (appActive("GearRadio"))
+            // The radio: who is speaking and what they say are in a box at the foot of the other
+            // screen (rows 120 to 191); shown above the radio, as the phone's clock is.
+            sc = Stack("radio", { Crop(0, 0, 120, 256, 72), Crop(1, 0, 0, 256, 192) }, false, viewWidth);
         else if (appActive("GearPhone") && screens[1].flags &&
             LayerClass(screens[1].flags[170 * 256 + 30]) == LAYER_OBJ)
             // A call in progress (the contact list is inactive and a sprite panel covers its
@@ -4507,11 +4601,11 @@ int main(int argc, char** argv)
         }
         else if (focus.wantBottom || appBottomNow)
             only("bottom", 1);
-        else if (sectionActive("OVY_8") ||
+        else if ((battleSubmenuLast && battleSubmenuLast + 3 >= rc_current_frame()) ||
                  // (Opening, the Bag or the party pauses for about 5 frames after it has started,
                  // with neither it nor the battle running: without this the battle would flash
                  // up at 4:3 in between.)
-                 (sectionWithin("OVY_8", 12) && !sectionActive("OVY_12")))
+                 (battleSubmenuLast && battleSubmenuLast + 12 >= rc_current_frame() && !sectionActive("OVY_12")))
             // In-battle bag and party screens (overlay 8) fill the bottom screen.
             only("battle-submenu", 1);
         else if (probeActive(probeBattleInput) ||
@@ -4545,6 +4639,18 @@ int main(int argc, char** argv)
                 // A battle outside its menus: messages and animations.
                 sc.name = "battle";
                 sc.edgeFill = true;
+            }
+            else if (probeActive(probeEvolution))
+            {
+                // An evolution (from a Rare Candy in the Bag it runs with no battle overlay):
+                // its bars are the scene's colours too, and its text box reaches across the view.
+                sc.edgeFill = true;
+                int y0, y1;
+                if (screens && screens[0].pixels && WideBoxFind(screens[0], y0, y1))
+                {
+                    sc.wideBox[0] = y0;
+                    sc.wideBox[1] = y1;
+                }
             }
         }
         // The overworld is drawn across the whole wide view by the widescreen 3D renderer.
@@ -4701,7 +4807,7 @@ int main(int argc, char** argv)
     {
         M_RESUME, M_LAYOUT, M_LARGE, M_FPS60, M_FULLSCREEN, M_SMOOTH, M_WIDE, M_WIDEMAP, M_BATTLEBUTTONS,
         M_WIDELINES, M_AUTODETAIL, M_WIDEGPU, M_GPU3D, M_SHOWFPS, M_BUTTONS, M_PADTOUCH, M_EMULATION,
-        M_CONTROLS, M_STARTBTN, M_FAST, M_FFLOWRES, M_SAVESTATE, M_LOADSTATE, M_RESET, M_QUIT,
+        M_CONTROLS, M_STARTBTN, M_FAST, M_FASTBTN, M_FFLOWRES, M_SAVESTATE, M_LOADSTATE, M_RESET, M_QUIT,
         M_SETTINGS, M_DISPLAY, M_LANGUAGE, M_SOUND, M_GRAPHICS, M_CONTROLMENU, M_BACK, M_CHEATS, M_NOTHING,
         M_VOLUME, M_FFMUTE, M_ASPECT, M_RA, M_RA_ON, M_RA_ACCOUNT, M_RA_GAME, M_RA_LOGIN, M_RA_TYPED, M_RA_CANCEL, M_BOTHVER,
         M_RA_LIST, M_ACH_POINTS, M_ACH_STATUS, M_ACH_RARITY,
@@ -4724,8 +4830,16 @@ int main(int argc, char** argv)
     int sliderTap = -1; // a tap on a slider's bar (Menu::SliderAt): the value, for its row's action
     std::string raTyped, raUser;
     std::vector<int> menuIds;
-    bool fastLock = false;
+    bool fastLock = cfg.fastLock;
+    FastForwardButton fastButton;
+    bool fastInputFocused = true;
     double ffFrameMs = 0; // emulation time of one frame while fast forwarding (see speed)
+    // (The same in two parts: the frame that is shown, which draws its screens, and each of the
+    // hidden ones before it, which cost a third of that.)
+    double ffShownMs = 0, ffHiddenMs = 0;
+    // Fast forward's pictures are shown this many refreshes of the screen apart (see speed): 1,
+    // or more where the frames of one picture take longer than a refresh.
+    int ffRefreshes = 1;
     // World detail choices: the most lines the widescreen 3D is drawn at (192 is the DS's own).
     static const int detailLines[] = { 192, 288, 384, 540, 720, 1080, 1440, 2160 };
     const int detailCount = (int)(sizeof(detailLines) / sizeof(detailLines[0]));
@@ -4995,6 +5109,7 @@ int main(int argc, char** argv)
         else if (menuPage == PAGE_CONTROLS)
         {
             add(M_CONTROLS, "KEYS AND BUTTONS", "");
+            add(M_FASTBTN, "FAST FORWARD BUTTON", cfg.fastButtonToggle ? "TOGGLE" : "HOLD");
             add(M_BACK, "BACK", "");
         }
     };
@@ -5096,6 +5211,8 @@ int main(int argc, char** argv)
     std::vector<int16_t> audioOut;
     uint64_t audioTick = 0;
     double audioSlow = 1.0;
+    // Sound made while fast forwarding, played at its own speed (FastForwardAudio).
+    FastForwardAudio ffAudio;
     bool ffInBattle = false;
     bool audioWasFastForward = false;
     bool running = true;
@@ -5272,6 +5389,27 @@ int main(int argc, char** argv)
 #endif
     if (opt.headless || ref || (!opt.shotDir.empty() && !getenv("SSR_PIPELINE"))) pipelined = false;
     EmuThread emuThread;
+#ifdef __SWITCH__
+    // The closing down's watch (see the end of main), its thread made now: at the end, with
+    // the program's memory all but used, it was never seen to start (test runs stopped for good
+    // at "[exit] achievements", and its message never came).
+    std::atomic<double> exitDeadline { 0 };
+    std::atomic<bool> exitFinished { false };
+    std::thread exitWatch([&] {
+        bool said = false;
+        while (!exitFinished)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            const double d = exitDeadline;
+            if (d > 0 && !said) { fprintf(stderr, "[exit] (watched)\n"); fflush(stderr); said = true; }
+            if (d <= 0 || perfNow() < d || exitFinished) continue;
+            fprintf(stderr, "[exit] closing down did not finish within 5 seconds: ending the program without the rest\n");
+            fflush(stderr);
+            SwitchPlatform::Finish();
+            SwitchPlatform::ForceExit();
+        }
+    });
+#endif
     int emuSpeed = 1, emuGot = 0;
     double emuMs = 0, perfEmu = 0;
     uint64_t perfDsFrames = 0; // DS frames emulated since the last timing line (several a frame when fast forwarding)
@@ -5290,10 +5428,19 @@ int main(int argc, char** argv)
             // (The widescreen world drawn during a frame is shown after the next one.)
             rc_frame_hidden = !ffFull && emuSpeed > 1 && i < emuSpeed - 1;
             rc_wide_render_skip = !ffFull && emuSpeed > 1 && i < emuSpeed - 2;
-            rc_wide_publish_only = !ffFull && emuSpeed > 1 && i == emuSpeed - 1;
+            // (The DS-resolution 3D picture on the graphics chip, drawn at the end of this frame
+            // for the next: only the one the shown frame takes, see WideGpuDSLazy.)
+            melonDS::WideGpuDSLazy = rc_3d_render_skip = !ffFull && emuSpeed > 1 && i != emuSpeed - 2;
             rc_frame++;
             if (funcWatchOn) funcWatch.NextFrame();
+            const double f0 = perfNow();
             nds->RunFrame();
+            if (emuSpeed > 1)
+            {
+                double& part = i == emuSpeed - 1 ? ffShownMs : ffHiddenMs;
+                const double ms = perfNow() - f0;
+                part = part > 0 ? part * 0.9 + 0.1 * ms : ms;
+            }
             Achievements::DoFrame(); // (on this thread: it reads the game's memory)
             exclusives.DoFrame();
             const int avail = nds->SPU.GetOutputSize();
@@ -5305,7 +5452,8 @@ int main(int argc, char** argv)
             }
         }
         emuGot = filled;
-        rc_frame_hidden = rc_wide_render_skip = rc_wide_publish_only = false;
+        rc_frame_hidden = rc_wide_render_skip = false;
+        melonDS::WideGpuDSLazy = rc_3d_render_skip = false;
         emuMs = perfNow() - t0;
     };
     if (pipelined)
@@ -5508,14 +5656,14 @@ int main(int argc, char** argv)
             lastRefresh = returned;
             // 2 ms early when Present itself waits out that last bit, so a late wake still
             // meets this refresh. When Present does not wait, the whole refresh is left.
-            double untilNext = refreshPeriod * refreshesPerFrame;
+            double untilNext = refreshPeriod * refreshesPerFrame * ffRefreshes;
             if (blocked > 0.0005) untilNext -= 0.002;
             if (untilNext < 0.002) untilNext = 0.002;
             nextTick = returned + (uint64_t)(untilNext * (double)perfFreq);
             perfMark(5);
             return;
         }
-        nextTick += (uint64_t)(frameTime * perfFreq);
+        nextTick += (uint64_t)(frameTime * ffRefreshes * perfFreq);
         perfMark(5);
     };
     auto drawFrame = [&](DrawJob& j, bool pace = true) {
@@ -5887,7 +6035,9 @@ int main(int argc, char** argv)
                     }
                 }
                 else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
-                    mouseDown = false;
+                    { mouseDown = false; fastInputFocused = false; fastButton.Block(); }
+                else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
+                    fastInputFocused = true;
                 // A quick click can go down and up between two frames, and the game, which reads the
                 // touch screen once a frame, never saw it (the Pokeathlon's START did nothing): a
                 // click lasts at least 4 frames.
@@ -6552,6 +6702,13 @@ int main(int argc, char** argv)
                 break;
             case M_FAST:
                 fastLock = !fastLock;
+                cfg.fastLock = fastLock;
+                cfg.Save(opt.config);
+                break;
+            case M_FASTBTN:
+                cfg.fastButtonToggle = !cfg.fastButtonToggle;
+                cfg.Save(opt.config);
+                fastButton.Block();
                 break;
             case M_VOLUME:
                 // (Left goes down, right and A up; past 100 it comes round to OFF, and back. A
@@ -6610,6 +6767,7 @@ int main(int argc, char** argv)
 
         bool paused = menu.open;
         speed = 1;
+        ffRefreshes = 1;
         if (!paused && !swallowMenuButtons)
         {
             if (saveEdge) saveQuick();
@@ -6624,7 +6782,7 @@ int main(int argc, char** argv)
             // The Pokeathlon is played only by touch: there the stick touch cursor is on whatever
             // the setting says (for a controller with no mouse or touch screen). The setting itself
             // is not changed, so it is back as it was once the course ends.
-            const bool padTouchNow = cfg.padTouch || athlonNow;
+            const bool padTouchNow = cfg.padTouch || athlonNow || touchOnlyNow;
             // (SWAP SCREENS given a button of its own in CONTROLS works without the touch cursor.)
             if (!padTouchNow && cfg.controls.pad[Controls::SWAP] >= 0 && pressed(PAD_RS)) focus.manualFlip = !focus.manualFlip;
             if (padTouchNow)
@@ -6641,12 +6799,40 @@ int main(int argc, char** argv)
         }
         // Fast forward (up to 6x) while the right trigger (ZR on the Switch) or Left Shift is held, or
         // locked on from the menu.
-        if (!paused && (fastLock || kbFast || ps.rt > 0.5f))
+        const bool fastDown = kbFast || ps.rt > 0.5f;
+        if (fastButton.Update(cfg.fastButtonToggle, fastDown, fastInputFocused && !menu.open && !swallowMenuButtons, fastLock))
+        {
+            cfg.fastLock = fastLock;
+            cfg.Save(opt.config);
+        }
+        const bool fastRequested = fastButton.Requested(cfg.fastButtonToggle, fastDown, fastLock);
+        if (!paused && fastRequested)
+        {
 #ifdef __SWITCH__
             speed = 6;
 #else
             speed = ffFrameMs > 0 && !opt.headless ? std::clamp((int)(33.3 / ffFrameMs), 2, 4) : 4; // (tests: always 4)
+            static int oneRefresh = 0;
+            if (ffShownMs > 0 && ffHiddenMs > 0 && !opt.headless)
+            {
+                const double room = frameTime * 1000 - 3.0;
+                auto fits = [&](int n, double slack) { return n >= 2 && n <= 4 && (ffShownMs + (n - 1) * ffHiddenMs) * slack <= room; };
+                if (!fits(oneRefresh, 0.95)) oneRefresh = 0;
+                for (int n = 4; n > oneRefresh && n >= 2; n--)
+                    if (fits(n, 1.1)) { oneRefresh = n; break; }
+                if (oneRefresh * 2 >= speed) speed = oneRefresh;
+                static int refreshes = 1;
+                if (speed != oneRefresh)
+                {
+                    const double need = (ffShownMs + (speed - 1) * ffHiddenMs + 3.0) / (frameTime * 1000);
+                    if (need > refreshes) refreshes = (int)std::ceil(need);
+                    else if (need * 1.1 < refreshes - 1) refreshes = std::max(1, (int)std::ceil(need * 1.1));
+                    ffRefreshes = refreshes = std::clamp(refreshes, 1, 4);
+                }
+                else refreshes = 1;
+            }
 #endif
+        }
         // A direction just pressed in a menu list runs at normal speed for a brief moment (120ms)
         // so that a quick tap moves the cursor one item (shops, Bag, party).
         // In the overworld, battles, and field exploration, fast forward continues at full speed.
@@ -6660,6 +6846,7 @@ int main(int argc, char** argv)
             prevDirs = dirs;
             const bool isMenu = funcWatchOn && (funcWatch.Ran(bw2.fieldMenu, 8) || funcWatch.Ran(bw2.bag, 8) || funcWatch.Ran(bw2.party, 8));
             if (speed > 1 && dirs && !fastLock && isMenu && now - dirSince < 120) speed = 1;
+            if (speed == 1) ffRefreshes = 1;
         }
         prevPad = ps;
 
@@ -7574,15 +7761,21 @@ int main(int argc, char** argv)
                 if (appActive(app->name)) athlon = true;
             if (focus.AthlonBottom(athlon, top, bot)) appBottom = true;
             athlonNow = athlon;
-            // The stick touch cursor came on for the course (the setting is off): say how it is used,
-            // where there is no touch screen to tap instead.
+            bool touchOnly = false;
+            for (const RcApp* app : focus.touchOnlyApps)
+                if (appActive(app->name)) touchOnly = true;
+            for (int f : g_touchOnlyFuncs)
+                if (funcWatch.Ran(f, 2)) touchOnly = true;
+            touchOnlyNow = touchOnly;
+            // The stick touch cursor came on for the course or the puzzle (the setting is off): say
+            // how it is used, where there is no touch screen to tap instead.
             static bool prevAthlon = false;
-            if (athlon && !prevAthlon && !cfg.padTouch && SDL_GetNumTouchDevices() == 0)
+            if ((athlon || touchOnly) && !prevAthlon && !cfg.padTouch && SDL_GetNumTouchDevices() == 0)
             {
                 toast = "RIGHT STICK: MOVE THE CURSOR / LEFT TRIGGER: TOUCH";
                 toastUntil = frame + 300;
             }
-            prevAthlon = athlon;
+            prevAthlon = athlon || touchOnly;
         }
         appBottomNow = appBottom;
         {
@@ -7600,6 +7793,8 @@ int main(int argc, char** argv)
             if (!last || last + 3 < rc_current_frame()) sectionStreak[sec] = 0;
             else if (last == rc_current_frame()) sectionStreak[sec]++;
         }
+        if (sectionWithin("OVY_8", 0) && !sectionWithin("OVY_6", 0) && !sectionWithin("OVY_7", 0))
+            battleSubmenuLast = rc_current_frame();
         if (top && bot && !paused) focus.Update(top, bot, fieldNow, appBottom);
         sceneMark(0);
         layout.swapped = focus.Swapped();
@@ -7849,9 +8044,14 @@ int main(int argc, char** argv)
             }
         }
 
-        // Every emulated frame contributes sound. Compress the batch to the time of one
-        // displayed frame so effects stay with the picture, at a higher pitch during fast
-        // forward. Keeping the original-rate music accumulated up to 30 seconds of lag.
+        // Fast forward runs several DS frames in one go, and each one produces a frame of
+        // sound. Playing all of it in that one moment would rush the music and raise its pitch.
+        // It is played at its own speed and pitch instead, a stretch at a time, never more
+        // than about two seconds behind the picture (FastForwardAudio). Letting go drops what
+        // waits. Keep the short device queue (normally about 100 ms) playing so the next samples
+        // have time to arrive; clearing it here creates a hole in playback. A battle has its own
+        // music: when one starts or ends, what waits is dropped so that track starts with the
+        // battle instead of waiting behind whatever was playing before it.
         const bool audioFastForward = speed > 1;
         if (audioFastForward != audioWasFastForward)
         {
@@ -7862,14 +8062,25 @@ int main(int argc, char** argv)
             audioTick = 0;
             audioWasFastForward = audioFastForward;
         }
-        ffInBattle = std::strncmp(scene.name, "battle", 6) == 0;
-        got = AudioFastForward(audioBuf.data(), got, speed);
+        const bool inBattle = std::strncmp(scene.name, "battle", 6) == 0;
+        if (speed > 1 && inBattle != ffInBattle && !ffAudio.Empty())
+        {
+            ffAudio.Clear();
+            if (audio) SDL_ClearQueuedAudio(audio);
+        }
+        ffInBattle = inBattle;
+        if (speed > 1)
+        {
+            ffAudio.Push(audioBuf.data(), got, 48000);
+            got = ffAudio.Pull(audioBuf.data(), frameTime, 48000, (int)(audioBuf.size() / 2));
+        }
+        else if (!ffAudio.Empty()) ffAudio.Clear();
 
         if (audio && got > 0)
         {
             if (speed > 1)
             {
-                // In fast forward, AudioFastForward has already averaged the batch into 1 displayed frame.
+                // In fast forward, FastForwardAudio has already extracted one frame's worth of audio.
                 // Queue directly without running through AudioStretch, preventing stutter, distortion, and CPU overhead.
                 audioOut.assign(audioBuf.begin(), audioBuf.begin() + (size_t)got * 2);
                 if (cfg.ffMute)
@@ -8172,6 +8383,7 @@ int main(int argc, char** argv)
             // (What START BUTTON does, while it is the one chosen.)
             if (selId == M_STARTBTN) hint = cfg.startMenu ? "START OPENS THIS MENU" : "START IS THE DS START";
             if (selId == M_CONTROLS) hint = "SAVE, LOAD, FAST FORWARD, SWAP";
+            if (selId == M_FASTBTN) hint = "HOLD: RELEASE TO STOP. TOGGLE: PRESS ONCE TO START AND AGAIN TO STOP. APPLIES TO KEYBOARD, CONTROLLER AND ON-SCREEN FAST FORWARD.";
             if (selId == M_BOTHVER) hint = "WILD POKEMON OF BOTH VERSIONS";
             if (selId == M_CHEATS) hint = cheats.items.empty() ? "NONE FOUND: SEE THE README" : "ACTION REPLAY CODES";
             if (selId == M_NOTHING && menuPage == PAGE_CHEATS && cheats.items.empty()) hint = "DATABASE INFO EXPLAINS WHAT WAS FOUND";
@@ -8409,6 +8621,17 @@ int main(int argc, char** argv)
     if (!opt.noSave && !FlushSave(opt.save) && !opt.headless)
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FullDex save failed",
             "Your latest progress could not be written reliably. Check disk space and save-folder permissions. Keep the save and .tmp files for recovery.", window);
+#ifdef __SWITCH__
+    // Closing the sound has now and then never returned on the Switch (the game hung at
+    // "[exit] audio", in a test run with nothing else going on), QUIT after a save has frozen
+    // the console with the log ending in a clean "[exit] done", and test runs have stopped
+    // for good just after "[exit] saving". The save is written by now, so from here the
+    // closing down is watched: if it has not finished within five seconds the program ends
+    // without the rest (back to the HOME Menu rather than the Homebrew Menu; a test run's
+    // next run still starts).
+    exitDeadline = perfNow() + 5000;
+#endif
+    exitStep("achievements");
     Achievements::Stop();
     if (!opt.headless)
     {
@@ -8449,23 +8672,6 @@ int main(int argc, char** argv)
         fprintf(stderr, "[audio] %llu samples, peak %d, rms %.1f\n", (unsigned long long)AudioSamples, AudioPeak,
             sqrt(AudioSumSq / AudioSamples));
     if (nds->ARM9.RecompEnable) rc_print_stats();
-#ifdef __SWITCH__
-    // Closing the sound has now and then never returned on the Switch (the game hung at
-    // "[exit] audio", in a test run with nothing else going on), and QUIT after a save has
-    // frozen the console with the log ending in a clean "[exit] done", so in what the
-    // program's end does after that (the console is taken down here instead, under the
-    // watch). Everything that matters is saved by then, so if
-    // this does not finish within five seconds the program ends without the rest (back to the
-    // HOME Menu rather than the Homebrew Menu).
-    std::atomic<bool> sdlClosed { false };
-    std::thread exitWatch([&sdlClosed] {
-        for (int i = 0; i < 500 && !sdlClosed; i++) std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        if (sdlClosed) return;
-        fprintf(stderr, "[exit] closing down did not finish within 5 seconds: ending the program without the rest\n");
-        SwitchPlatform::Finish();
-        SwitchPlatform::ForceExit();
-    });
-#endif
     if (!opt.headless)
     {
         if (audio)
@@ -8481,7 +8687,7 @@ int main(int argc, char** argv)
 #ifdef __SWITCH__
     exitStep("console");
     nds.reset();
-    sdlClosed = true;
+    exitFinished = true;
     exitWatch.join();
 #endif
 #ifdef __SWITCH__

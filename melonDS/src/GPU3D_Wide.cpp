@@ -23,8 +23,6 @@
 #include "GPU3D_GLThread.h"
 #include "GPU3D_WideGpu.h"
 
-extern bool rc_wide_publish_only;
-
 namespace melonDS
 {
 WideState Wide;
@@ -1416,7 +1414,7 @@ struct WideAccess
         // one is shown at the next call, by when it has had two frames. (Where the graphics chip
         // keeps up nothing changes. SSR_WIDE_NO_LATE=1 always waits.)
         static const bool noLate = getenv("SSR_WIDE_NO_LATE") != nullptr;
-        if (!noLate && !rc_wide_publish_only && Drawing && DrawingOnWideGpu && WideGpuCurrent && !showingInterp && !Dirty && !NeedReal &&
+        if (!noLate && Drawing && DrawingOnWideGpu && WideGpuCurrent && !showingInterp && !Dirty && !NeedReal &&
             Wide.FrontW == Wide.Width && Wide.FrontH == Wide.Height &&
             (WideGpuSendOnThread() ? WideGpuSendBusy(1) || WideGpuSendBusy(2) : !WideGpuCurrent->Done(PendingSlot)))
         {
@@ -1431,7 +1429,6 @@ struct WideAccess
             if (!DrawingOnWideGpu || SentOk) Publish();
             PendingPublish = false;
         }
-        if (rc_wide_publish_only) return;
         // The lists built on the helper thread (ListHelper): the in-between frame's for it, or
         // both.
         ListHelper::Join(showingInterp ? 1 : 2);
