@@ -2247,6 +2247,9 @@ int main(int argc, char** argv)
     SDL_Texture* tex[2] = { nullptr, nullptr };
     SDL_Texture* overlayTex = nullptr;
     int overlayTexW = 0, overlayTexH = 0;
+    SDL_Texture* hudTex = nullptr;
+    int hudTexW = 0, hudTexH = 0;
+    double lastComposeMs = 0.0;
     SDL_AudioDeviceID audio = 0;
     Pads pads;
     Layout layout = LayoutFromName(cfg.layout);
@@ -3423,18 +3426,23 @@ int main(int argc, char** argv)
             int style = bw1.on || !wideView || !screens ? 0 : cfg.battleButtons;
             if (wideView && screens && !bw1.on && kind == 2) style = 2;
             float promptRight = viewLeft + 4.0f;
+            float minBtnW = 96.0f, idealBtnW = 112.0f, maxBtnW = 120.0f;
+            const int btnStyle = (style == 2) ? 2 : 0;
+            Gen5BattleButtonBounds(btnStyle, moves, target, 110, minBtnW, idealBtnW, maxBtnW);
+            float targetBtnW = idealBtnW;
             if (!bw1.on && wideView && screens && (moves || command || target))
             {
-                const float minButtonsW = style == 2 ? 96.0f : (moves ? 126.0f : 112.0f);
-                AdaptGen5BattlePrompt(sc, viewWidth, screens, minButtonsW, promptRight);
+                AdaptGen5BattlePrompt(sc, viewWidth, screens, minBtnW, idealBtnW, maxBtnW,
+                    promptRight, targetBtnW);
             }
-            const float availBtnW = std::max(84.0f, viewRight - 4.0f - (promptRight + 6.0f));
+            const float availBtnW = std::max(84.0f,
+                std::min(wideView ? maxBtnW : 128.0f, viewRight - 2.0f - (promptRight + 5.0f)));
             if ((moves || command || target) && style == 2)
             {
                 // PANEL: the corner panel's piece as tall as the message box (rows 147-189),
                 // against the view's right edge, shrunk if needed so translated prompts never overlap.
                 Element c = moves ? Crop(1, 0, 30, 256, 98) : target ? Crop(1, 0, 22, 256, 110) : Crop(1, 0, 78, 256, 114);
-                c.scale = std::min(43.0f / c.sh, (availBtnW + 2.0f) / c.sw);
+                c.scale = std::min(44.0f / c.sh, availBtnW / c.sw);
                 c.dx = viewRight - 2 - c.sw * c.scale;
                 c.dy = 190 - c.sh * c.scale;
                 c.border = true;
@@ -3443,11 +3451,11 @@ int main(int argc, char** argv)
                 sc.items.push_back(c);
             }
             else if (moves)
-                cornerPanel(Crop(1, 0, 30, 256, 98), std::min(0.5f, availBtnW / 256.0f)); // the four moves, two by two (49 high)
+                cornerPanel(Crop(1, 0, 30, 256, 98), std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f)); // the four moves, two by two
             else if (command)
-                cornerPanel(Crop(1, 0, 78, 256, 114), std::min(0.44f, availBtnW / 256.0f)); // FIGHT above BAG, RUN and POKEMON
+                cornerPanel(Crop(1, 0, 78, 256, 114), std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f)); // FIGHT above BAG, RUN and POKEMON
             else if (target)
-                cornerPanel(Crop(1, 0, 22, 256, 110), std::min(0.45f, availBtnW / 256.0f)); // the targets (50 high)
+                cornerPanel(Crop(1, 0, 22, 256, 110), std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f)); // the targets
         }
         else if (funcWatch.Ran(bw2.save, 8) || (funcWatch.Ran(bw2.saveWrite, 8) && !strcmp(lastKnownBw2.name, "save")))
         {
@@ -3630,9 +3638,35 @@ int main(int argc, char** argv)
             // Nothing recognised. Mostly a moment between screens (a button pressed in battle) in
             // which none of the watched functions runs: the last layout stays for up to 45 frames.
             // After that this is a screen without a layout of its own, and both screens are shown
-            // side by side, so nothing is hidden.
+            // side by side, so nothing is hidden. When one screen has already faded blank, avoid
+            // keeping stale menu/save cards or synthetic borders/holes floating over the fade.
             if (lastKnownBw2Frame && funcWatch.CurrentFrame() - lastKnownBw2Frame <= 45)
-                return lastKnownBw2;
+            {
+                if (topBlank || bottomBlank)
+                {
+                    if (!strcmp(lastKnownBw2.name, "start-menu") || !strcmp(lastKnownBw2.name, "save"))
+                    {
+                        lastKnownBw2Frame = 0;
+                    }
+                    else
+                    {
+                        Scene held = lastKnownBw2;
+                        for (Element& el : held.items)
+                        {
+                            el.holeCount = 0;
+                            el.border = false;
+                        }
+                        held.items.erase(std::remove_if(held.items.begin(), held.items.end(),
+                            [](const Element& el) { return el.wideOnly || el.screen < 0; }),
+                            held.items.end());
+                        return held;
+                    }
+                }
+                else
+                {
+                    return lastKnownBw2;
+                }
+            }
             // One screen with nothing on it (one colour), as in the logos and the opening
             // before the title screen: the other one alone at full size, the bars beside it
             // in soft colours from its edges (white beside a white logo). A change between that and both screens waits until
@@ -4796,6 +4830,10 @@ int main(int argc, char** argv)
     uint32_t scriptClock = frame; // equals frame unless --battle-mash holds it during battles
 
     Canvas canvas;
+    Canvas hudCanvas;
+    SDL_Rect overlayDirtyRect {}, hudDirtyRect {};
+    uint64_t builtOverlaySig = 0, uploadedOverlaySig = 0;
+    uint64_t builtHudSig = 0, uploadedHudSig = 0;
     Menu menu;
     // The pause menu's items (menuIds: the item in each row) and its pages (menuPage): the menu
     // itself, then DISPLAY, GRAPHICS and CONTROLS, and in CONTROLS the keys and buttons
@@ -5311,7 +5349,7 @@ int main(int argc, char** argv)
     struct DrawJob
     {
         bool valid = false;
-        bool merged = false, overlayUsed = false, wantShot = false;
+        bool merged = false, overlayUsed = false, hudUsed = false, wantShot = false;
         uint32_t frameNo = 0; // (for the name of a screenshot)
         int outW = 0, outH = 0;
         SDL_Rect rects[2] {};
@@ -5492,6 +5530,7 @@ int main(int argc, char** argv)
     // Showing a frame in two steps: drawn (renderFrame), then handed to the screen
     // (presentFrame), which with `ahead` happens at the frame's own time, a while after.
     auto renderFrame = [&](DrawJob& j) {
+        const double composeT0 = perfNow();
         // (The widened battle picture, from what was grabbed after the frame: made here, beside
         // the next frame's emulation.)
         if (j.battleRender)
@@ -5499,8 +5538,12 @@ int main(int argc, char** argv)
             BattleRender(battleWide, j.wide, 0);
             j.battleRender = false;
         }
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-        SDL_RenderClear(renderer);
+        // GpuCompositor::Draw already clears the full target; only clear upfront when it will not run.
+        if (!(j.merged && !cpuCompose))
+        {
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderClear(renderer);
+        }
         if (j.merged)
         {
             // The graphics card puts the pieces together (gpucompose.h). SSR_CPU_COMPOSE=1
@@ -5569,14 +5612,42 @@ int main(int argc, char** argv)
                 SDL_SetTextureBlendMode(overlayTex, SDL_BLENDMODE_BLEND);
                 overlayTexW = j.outW;
                 overlayTexH = j.outH;
+                uploadedOverlaySig = 0;
             }
-            if (canvas.Dirty())
+            if (overlayDirtyRect.w > 0 && overlayDirtyRect.h > 0 && canvas.w == j.outW && canvas.h == j.outH)
             {
-                const SDL_Rect dr = { canvas.x0d, canvas.y0d, canvas.x1d - canvas.x0d, canvas.y1d - canvas.y0d };
-                SDL_UpdateTexture(overlayTex, &dr, canvas.px.data() + (size_t)dr.y * j.outW + dr.x, j.outW * 4);
-                SDL_RenderCopy(renderer, overlayTex, &dr, &dr);
+                if (uploadedOverlaySig != builtOverlaySig)
+                {
+                    SDL_UpdateTexture(overlayTex, &overlayDirtyRect,
+                        canvas.px.data() + (size_t)overlayDirtyRect.y * j.outW + overlayDirtyRect.x, j.outW * 4);
+                    uploadedOverlaySig = builtOverlaySig;
+                }
+                SDL_RenderCopy(renderer, overlayTex, &overlayDirtyRect, &overlayDirtyRect);
             }
         }
+        if (j.hudUsed)
+        {
+            if (!hudTex || hudTexW != j.outW || hudTexH != j.outH)
+            {
+                if (hudTex) SDL_DestroyTexture(hudTex);
+                hudTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, j.outW, j.outH);
+                SDL_SetTextureBlendMode(hudTex, SDL_BLENDMODE_BLEND);
+                hudTexW = j.outW;
+                hudTexH = j.outH;
+                uploadedHudSig = 0;
+            }
+            if (hudDirtyRect.w > 0 && hudDirtyRect.h > 0 && hudCanvas.w == j.outW && hudCanvas.h == j.outH)
+            {
+                if (uploadedHudSig != builtHudSig)
+                {
+                    SDL_UpdateTexture(hudTex, &hudDirtyRect,
+                        hudCanvas.px.data() + (size_t)hudDirtyRect.y * j.outW + hudDirtyRect.x, j.outW * 4);
+                    uploadedHudSig = builtHudSig;
+                }
+                SDL_RenderCopy(renderer, hudTex, &hudDirtyRect, &hudDirtyRect);
+            }
+        }
+        lastComposeMs = perfNow() - composeT0;
         // In a window, screenshots are read back from the renderer: exactly what is shown.
         if (j.wantShot)
         {
@@ -7000,18 +7071,30 @@ int main(int argc, char** argv)
 #ifdef SSR_DEKO3D
             else if (!opt.headless && melonDS::WideGpuCurrent)
             {
-                // Drawn by the graphics chip, which shares its time with SDL's drawing of each
-                // frame: the measure is its own time on the widescreen pictures per frame, over
-                // the last 15 frames, or 3 frames where the emulation waited > 1.5 ms for the
-                // widescreen worker. SDL composition + present takes ~6 ms on the Switch, so
-                // keeping widescreen GPU work under 9.5 ms per frame leaves headroom to meet
-                // the 16.67 ms VSync deadline without dropping to 30/37/40 FPS.
+                // Drawn by the graphics chip, which shares time with SDL's frame composition and the
+                // emulation threads. Step across clean 16:9 heights (multiples of 8 and 64-px aligned
+                // widths) so MakeTargets and WideTex never churn through dozens of intermediate sizes,
+                // and drop whenever GPU busy, compositor upload time or dropped FPS exceeds the 60 Hz budget.
                 static uint64_t lastBusy = 0, window = 0;
+                static double composeWindow = 0.0, emuWindow = 0.0;
                 static int windowFrames = 0;
                 static bool wasFast = false;
+                static constexpr int dekoTiers[] = { 360, 432, 540, 576, 720 };
+                auto tierDown = [&](int cur, int floorVal) {
+                    for (int i = (int)std::size(dekoTiers) - 1; i >= 0; i--)
+                        if (dekoTiers[i] < cur && dekoTiers[i] >= floorVal) return dekoTiers[i];
+                    return std::max(floorVal, cur * 9 / 10);
+                };
+                auto tierUp = [&](int cur) {
+                    for (int t : dekoTiers)
+                        if (t > cur && t <= cfg.wideLines) return t;
+                    return std::min(cfg.wideLines, cur + std::max(16, cfg.wideLines / 10));
+                };
                 const uint64_t busy = melonDS::WideGpuBusyNs.load();
                 window += busy >= lastBusy ? busy - lastBusy : 0;
                 lastBusy = busy;
+                composeWindow += lastComposeMs;
+                emuWindow += emuMs;
                 const uint64_t ns = SsrStats().WaitWideNs.load();
                 const uint64_t waited = ns >= lastWideNs ? ns - lastWideNs : ns;
                 lastWideNs = ns;
@@ -7019,6 +7102,7 @@ int main(int argc, char** argv)
                 if (speed > 1 || wasFast)
                 {
                     window = windowFrames = 0;
+                    composeWindow = emuWindow = 0.0;
                     slowFrames = 0;
                     wasFast = speed > 1;
                 }
@@ -7029,9 +7113,10 @@ int main(int argc, char** argv)
                         calmFrames = 0;
                         if (++slowFrames >= 3 && adaptLines > floorLines)
                         {
-                            adaptLines = std::max(floorLines, adaptLines * 9 / 10);
+                            adaptLines = tierDown(adaptLines, floorLines);
                             slowFrames = 0;
                             window = windowFrames = 0;
+                            composeWindow = emuWindow = 0.0;
                         }
                     }
                     else
@@ -7039,18 +7124,24 @@ int main(int argc, char** argv)
                     if (++windowFrames >= 15)
                     {
                         const double perFrame = window / 1e6 / windowFrames;
+                        const double avgCompose = composeWindow / windowFrames;
+                        const double avgEmu = emuWindow / windowFrames;
                         window = 0;
+                        composeWindow = emuWindow = 0.0;
                         windowFrames = 0;
-                        if (perFrame > 9.5 && adaptLines > floorLines)
+                        const bool overloaded = perFrame > 8.8 || avgCompose > 5.5 ||
+                            (!paused && shownFps > 0 && shownFps <= 55 && avgEmu + avgCompose > 14.5);
+                        if (overloaded && adaptLines > floorLines)
                         {
-                            adaptLines = std::max(floorLines, adaptLines * 9 / 10);
+                            adaptLines = tierDown(adaptLines, floorLines);
                             calmFrames = 0;
                         }
-                        else if (adaptLines < cfg.wideLines && waited < 300000 && (calmFrames += 15) >= 120)
+                        else if (adaptLines < cfg.wideLines && waited < 300000 &&
+                            (shownFps == 0 || shownFps >= 58) && (calmFrames += 15) >= 180)
                         {
-                            const int up = std::min(cfg.wideLines, adaptLines + std::max(16, cfg.wideLines / 10));
+                            const int up = tierUp(adaptLines);
                             const double scale = (double)up / adaptLines;
-                            if (perFrame * scale * scale < 7.8) adaptLines = up;
+                            if (perFrame * scale * scale < 7.2 && avgCompose * scale < 4.5) adaptLines = up;
                             calmFrames = 0;
                         }
                     }
@@ -7950,6 +8041,8 @@ int main(int argc, char** argv)
                 const bool isApp = std::any_of(std::begin(appScenes), std::end(appScenes),
                     [&](const char* n) { return !strcmp(picked.name, n); }) || (pt.on && PtFuncs::AppScene(picked.name));
                 const bool generic = !strcmp(picked.name, "top") || !strcmp(picked.name, "bottom") || !strcmp(picked.name, "spread");
+                if (AutoFocus::Blank(top) && AutoFocus::Blank(bot))
+                    lastAppFrame = 0;
                 if (isApp)
                 {
                     lastApp = picked;
@@ -8084,8 +8177,11 @@ int main(int argc, char** argv)
                         unscroll = r2d.LineScroll[unitNum][0][scene.redrawUnscroll[s] & 3][1] & 511;
                         if (unscroll >= 256) unscroll -= 512;
                     }
-                    std::vector<uint32_t> again((size_t)256 * (192 + extra));
-                    std::vector<uint8_t> againFlags((size_t)256 * (192 + extra));
+                    static std::vector<uint32_t> again;
+                    static std::vector<uint8_t> againFlags;
+                    const size_t againCount = (size_t)256 * (192 + extra);
+                    again.assign(againCount, 0);
+                    againFlags.assign(againCount, 0);
                     if (RenderScreenRows(*nds, unitNum, 0, 192 + extra, again.data(), againFlags.data(), skip, unscroll))
                     {
                         const size_t n = again.size();
@@ -8276,50 +8372,9 @@ int main(int argc, char** argv)
         }
 
         sceneMark(2);
-        // Overlay: touch cursor, status message, pause menu.
-        bool overlayUsed = false;
-        canvas.Resize(outW, outH);
-        canvas.Clear();
-        const SDL_Rect cursorRect = merged
-            ? SDL_Rect { (int)view.originX, (int)view.originY, (int)(256 * view.unit), (int)(192 * view.unit) }
-            : rects[1];
-        if (frame < cursorShownUntil && cursorRect.w > 0 && !paused)
-        {
-            const int cx = cursorRect.x + (int)(cursorX * cursorRect.w / 256);
-            const int cy = cursorRect.y + (int)(cursorY * cursorRect.h / 192);
-            const int rad = std::max(6, cursorRect.w / 48);
-            const uint32_t ringCol = curPress ? 0xFFFFD75E : 0xFFFFFFFF;
-            const uint32_t shadowCol = 0xD010141C;
-            const int bound = rad + 3;
-            for (int dy = -bound; dy <= bound; dy++)
-            {
-                for (int dx = -bound; dx <= bound; dx++)
-                {
-                    const float d = std::sqrt((float)(dx * dx + dy * dy));
-                    if (d >= rad - 1.8f && d <= rad + 1.8f)
-                    {
-                        if (d >= rad - 0.9f && d <= rad + 0.9f)
-                            canvas.Fill(cx + dx, cy + dy, 1, 1, ringCol);
-                        else
-                            canvas.Fill(cx + dx, cy + dy, 1, 1, shadowCol);
-                    }
-                    else if (d <= 1.5f)
-                    {
-                        canvas.Fill(cx + dx, cy + dy, 1, 1, ringCol);
-                    }
-                }
-            }
-            const int tickLen = std::max(2, rad / 3);
-            for (int i = 1; i <= tickLen; i++)
-            {
-                canvas.Fill(cx, cy - rad - i, 1, 1, shadowCol);
-                canvas.Fill(cx, cy + rad + i, 1, 1, shadowCol);
-                canvas.Fill(cx - rad - i, cy, 1, 1, shadowCol);
-                canvas.Fill(cx + rad + i, cy, 1, 1, shadowCol);
-            }
-            overlayUsed = true;
-        }
-        // The top right corner.
+        // Split small top-right corner HUD (FPS counter + fast-forward badge) from main overlay so
+        // 59/60 steady gameplay frames and idle pause-menu frames avoid CPU canvas clears, glass
+        // shadow passes and full-screen SDL_UpdateTexture uploads.
         int cornerY = 0;
         int cornerInset = 0;
 #ifdef __ANDROID__
@@ -8327,40 +8382,6 @@ int main(int argc, char** argv)
         cornerInset = std::max(4, outW / 20);
         cornerY = std::max(cornerY, outH / 20);
 #endif
-        if (cfg.showFps && !opt.headless)
-        {
-            int sc = outH / 240 < 1 ? 1 : outH / 240;
-            const std::string text = std::to_string(shownFps) + " FPS";
-            const int dotR = std::max(2, 2 * sc);
-            const int tw = Canvas::TextWidth(text, sc) + dotR * 2 + 12 * sc;
-            const int th = 13 * sc;
-            const int fx = outW - cornerInset - tw - 4 * sc;
-            const int fy = cornerY + 3 * sc;
-            const uint32_t ledCol = shownFps >= 55 ? 0xFF00E676 : shownFps >= 40 ? 0xFFFFB020 : 0xFFFF453A;
-            canvas.ShadowRound(fx, fy, tw, th, 3 * sc, sc, sc);
-            canvas.FillGlass(fx, fy, tw, th, 3 * sc, 0xD0171D2A, 0xD00F131D, 0xFF28344C, 1);
-            const int dotX = fx + 4 * sc + dotR;
-            const int dotY = fy + th / 2;
-            canvas.FillRound(dotX - dotR - 1, dotY - dotR - 1, (dotR + 1) * 2, (dotR + 1) * 2, dotR + 1, (ledCol & 0x00FFFFFF) | 0x33000000u);
-            canvas.FillRound(dotX - dotR, dotY - dotR, dotR * 2, dotR * 2, dotR, ledCol);
-            canvas.Fill(dotX - 1, dotY - 1, 2, 2, 0xFFFFFFFF);
-            canvas.Text(dotX + dotR + 4 * sc, fy + 3 * sc, text, sc, 0xFFFFFFFF);
-            cornerY += 16 * sc;
-            overlayUsed = true;
-        }
-        if (speed > 1)
-        {
-            int sc = outH / 240 < 1 ? 1 : outH / 240;
-            const int fw = Canvas::TextWidth(">>", sc) + 12 * sc;
-            const int th = 13 * sc;
-            const int fx = outW - cornerInset - fw - 4 * sc;
-            const int fy = cornerY + 3 * sc;
-            canvas.GlowRound(fx, fy, fw, th, 3 * sc, 2 * sc, 0xFFFFB020);
-            canvas.FillGlass(fx, fy, fw, th, 3 * sc, 0xEE2A2414, 0xEE1E190E, 0xFFFFB020, 1);
-            canvas.Text(fx + 6 * sc, fy + 3 * sc, ">>", sc, 0xFFFFD166);
-            cornerY += 16 * sc;
-            overlayUsed = true;
-        }
 #if defined(__ANDROID__) && !defined(SSR_PC_LAUNCHER)
         if (!updateSaid && UpdateCheck::g_done)
         {
@@ -8372,46 +8393,109 @@ int main(int argc, char** argv)
             }
         }
 #endif
-        // SoulSilver and HeartGold: the Running Shoes button beside the X menu (see shoesPix),
-        // left of the menu's panel at its foot, its button named under it.
+        auto mixHash = [](uint64_t& h, uint64_t v) { h = (h ^ v) * 1099511628211ULL; };
+        auto mixStr = [&](uint64_t& h, const std::string& s) {
+            mixHash(h, (uint64_t)s.size());
+            for (unsigned char ch : s) mixHash(h, ch);
+        };
+
+        const bool showFpsHud = cfg.showFps && !opt.headless;
+        const bool showFfHud = speed > 1;
+        const bool hudUsed = showFpsHud || showFfHud;
+        if (hudUsed)
+        {
+            uint64_t curHudSig = 1469598103934665603ULL;
+            mixHash(curHudSig, (uint64_t)outW);
+            mixHash(curHudSig, (uint64_t)outH);
+            mixHash(curHudSig, (uint64_t)cornerInset);
+            mixHash(curHudSig, (uint64_t)cornerY);
+            mixHash(curHudSig, showFpsHud ? 1ULL : 0ULL);
+            mixHash(curHudSig, (uint64_t)(unsigned)shownFps);
+            mixHash(curHudSig, (uint64_t)(shownFps >= 55 ? 2 : shownFps >= 40 ? 1 : 0));
+            mixHash(curHudSig, showFfHud ? 1ULL : 0ULL);
+            if (!curHudSig) curHudSig = 1;
+            if (curHudSig != builtHudSig)
+            {
+                hudCanvas.Resize(outW, outH);
+                hudCanvas.Clear();
+                int cy = cornerY;
+                const int sc = outH / 240 < 1 ? 1 : outH / 240;
+                if (showFpsHud)
+                {
+                    const std::string text = std::to_string(shownFps) + " FPS";
+                    const int dotR = std::max(2, 2 * sc);
+                    const int tw = Canvas::TextWidth(text, sc) + dotR * 2 + 12 * sc;
+                    const int th = 13 * sc;
+                    const int fx = outW - cornerInset - tw - 4 * sc;
+                    const int fy = cy + 3 * sc;
+                    const uint32_t ledCol = shownFps >= 55 ? 0xFF00E676 : shownFps >= 40 ? 0xFFFFB020 : 0xFFFF453A;
+                    hudCanvas.ShadowRound(fx, fy, tw, th, 3 * sc, sc, sc);
+                    hudCanvas.FillGlass(fx, fy, tw, th, 3 * sc, 0xD0171D2A, 0xD00F131D, 0xFF28344C, 1);
+                    const int dotX = fx + 4 * sc + dotR;
+                    const int dotY = fy + th / 2;
+                    hudCanvas.FillRound(dotX - dotR - 1, dotY - dotR - 1, (dotR + 1) * 2, (dotR + 1) * 2, dotR + 1, (ledCol & 0x00FFFFFF) | 0x33000000u);
+                    hudCanvas.FillRound(dotX - dotR, dotY - dotR, dotR * 2, dotR * 2, dotR, ledCol);
+                    hudCanvas.Fill(dotX - 1, dotY - 1, 2, 2, 0xFFFFFFFF);
+                    hudCanvas.Text(dotX + dotR + 4 * sc, fy + 3 * sc, text, sc, 0xFFFFFFFF);
+                    cy += 16 * sc;
+                }
+                if (showFfHud)
+                {
+                    const int fw = Canvas::TextWidth(">>", sc) + 12 * sc;
+                    const int th = 13 * sc;
+                    const int fx = outW - cornerInset - fw - 4 * sc;
+                    const int fy = cy + 3 * sc;
+                    hudCanvas.GlowRound(fx, fy, fw, th, 3 * sc, 2 * sc, 0xFFFFB020);
+                    hudCanvas.FillGlass(fx, fy, fw, th, 3 * sc, 0xEE2A2414, 0xEE1E190E, 0xFFFFB020, 1);
+                    hudCanvas.Text(fx + 6 * sc, fy + 3 * sc, ">>", sc, 0xFFFFD166);
+                }
+                builtHudSig = curHudSig;
+                hudDirtyRect = hudCanvas.Dirty()
+                    ? SDL_Rect { hudCanvas.x0d, hudCanvas.y0d, hudCanvas.x1d - hudCanvas.x0d, hudCanvas.y1d - hudCanvas.y0d }
+                    : SDL_Rect {};
+            }
+        }
+        else
+        {
+            builtHudSig = 0;
+            hudDirtyRect = {};
+        }
+
+        // Main overlay: touch cursor, Running Shoes pill, Platinum Pokedex badges, toasts, pause menu.
+        const SDL_Rect cursorRect = merged
+            ? SDL_Rect { (int)view.originX, (int)view.originY, (int)(256 * view.unit), (int)(192 * view.unit) }
+            : rects[1];
+        const bool showCursor = frame < cursorShownUntil && cursorRect.w > 0 && !paused;
+        const int cursorPxX = showCursor ? cursorRect.x + (int)(cursorX * cursorRect.w / 256) : 0;
+        const int cursorPxY = showCursor ? cursorRect.y + (int)(cursorY * cursorRect.h / 192) : 0;
+        const int cursorRad = showCursor ? std::max(6, cursorRect.w / 48) : 0;
+
         shoesRect[2] = 0;
-        if (merged && shoesSeen && !paused && !strcmp(scene.name, "start-menu") && scene.items.size() >= 2)
+        const bool showShoes = merged && shoesSeen && !paused && !strcmp(scene.name, "start-menu") && scene.items.size() >= 2;
+        int shoesOx = 0, shoesOy = 0, shoesOw = 0, shoesOh = 0, shoesTsc = 1;
+        std::string shoesLabel;
+        if (showShoes)
         {
             const Element& panel = scene.items.back();
             const float sc = panel.scale;
             const float w = SHOES_W * sc, h = SHOES_H * sc;
             const float x = panel.dx - w - 6, y = panel.dy + 192 * sc - h - 14;
             shoesRect[0] = x; shoesRect[1] = y; shoesRect[2] = w; shoesRect[3] = h;
-            const int ox = (int)(view.originX + x * view.unit), oy = (int)(view.originY + y * view.unit);
-            const int ow = (int)(w * view.unit), oh = (int)(h * view.unit);
-            const int tsc = std::max(1, outH / 360);
-            const int padPx = 3 * tsc;
-            // Backing container card for running shoes
-            canvas.FillRound(ox - padPx, oy - padPx, ow + 2 * padPx, oh + 2 * padPx, 3 * tsc, 0xE6141824);
-            canvas.OutlineRound(ox - padPx, oy - padPx, ow + 2 * padPx, oh + 2 * padPx, 3 * tsc, 1, 0xFF2E3850);
-
-            for (int py = 0; py < oh; py++)
-            {
-                const int sy = std::min(SHOES_H - 1, py * SHOES_H / std::max(1, oh));
-                for (int px = 0; px < ow; px++)
-                {
-                    const int sx = std::min(SHOES_W - 1, px * SHOES_W / std::max(1, ow));
-                    canvas.Fill(ox + px, oy + py, 1, 1, shoesPix[sy * SHOES_W + sx]);
-                }
-            }
-            const std::string label = std::string(pads.Empty() ? Controls::KeyName(cfg.controls.Key(Controls::Y))
+            shoesOx = (int)(view.originX + x * view.unit);
+            shoesOy = (int)(view.originY + y * view.unit);
+            shoesOw = (int)(w * view.unit);
+            shoesOh = (int)(h * view.unit);
+            shoesTsc = std::max(1, outH / 360);
+            shoesLabel = std::string(pads.Empty() ? Controls::KeyName(cfg.controls.Key(Controls::Y))
                 : Controls::InputName(cfg.controls.Pad(Controls::Y, cfg.byLabel), Controls::StyleOf(pads.controllers.empty() ? nullptr : pads.controllers[0])))
                 + ": RUN " + (shoesOn ? "ON" : "OFF");
-            const int tw = Canvas::TextWidth(label, tsc);
-            const uint32_t statusCol = shoesOn ? 0xFF4CE080 : 0xFFFFC857;
-            canvas.FillRound(ox + (ow - tw) / 2 - 4 * tsc, oy + oh + 4 * tsc, tw + 8 * tsc, 12 * tsc, 3 * tsc, 0xE6141824);
-            canvas.OutlineRound(ox + (ow - tw) / 2 - 4 * tsc, oy + oh + 4 * tsc, tw + 8 * tsc, 12 * tsc, 3 * tsc, 1, 0xFF2E3850);
-            canvas.Text(ox + (ow - tw) / 2, oy + oh + 6 * tsc, label, tsc, statusCol);
-            overlayUsed = true;
         }
-        // Platinum's Pokedex list: name the face buttons on SEARCH, SWITCH and CHECK, as the
-        // connected pad prints them (Xbox, PlayStation or Nintendo). Hidden with no pad.
-        if (merged && !paused && g_ptDexBtns && !pads.Empty())
+
+        const bool showPtDex = merged && !paused && g_ptDexBtns && !pads.Empty();
+        int ptSc = 2, ptBodyOx[3] {}, ptBodyOy[3] {};
+        bool ptHasBody = false;
+        std::string ptBtns[3], ptHint;
+        if (showPtDex)
         {
             const Element* body = nullptr;
             for (const Element& e : scene.items)
@@ -8420,169 +8504,309 @@ int main(int argc, char** argv)
             auto btn = [&](int a) {
                 return std::string(Controls::InputName(cfg.controls.Pad(a, cfg.byLabel), style));
             };
-            const int sc = std::max(2, outH / 240);
+            ptSc = std::max(2, outH / 240);
+            static const int act[] = { Controls::Y, Controls::X, Controls::A };
+            static const int srcY[] = { 42, 88, 160 };
+            for (int i = 0; i < 3; i++) ptBtns[i] = btn(act[i]);
             if (body)
             {
-                static const int act[] = { Controls::Y, Controls::X, Controls::A };
-                static const int srcY[] = { 42, 88, 160 };
+                ptHasBody = true;
+                const int ch = 11 * ptSc;
                 for (int i = 0; i < 3; i++)
                 {
-                    const std::string n = btn(act[i]);
-                    const int tw = Canvas::TextWidth(n, sc), pad = 4 * sc;
-                    const int cw = tw + 2 * pad, ch = 11 * sc;
                     const float lx = body->dx + 108 * body->scale;
                     const float ly = body->dy + (srcY[i] - body->sy) * body->scale;
-                    const int ox = (int)(view.originX + lx * view.unit);
-                    const int oy = (int)(view.originY + ly * view.unit) - ch / 2;
-                    canvas.FillRound(ox, oy, cw, ch, 2 * sc, 0xE6141824);
-                    canvas.OutlineRound(ox, oy, cw, ch, 2 * sc, 1, 0xFF2E3850);
-                    canvas.Text(ox + pad, oy + 2 * sc, n, sc, 0xFFFFE074);
+                    ptBodyOx[i] = (int)(view.originX + lx * view.unit);
+                    ptBodyOy[i] = (int)(view.originY + ly * view.unit) - ch / 2;
                 }
             }
-            const std::string hint = btn(Controls::Y) + " " + UiLang::Tr("SEARCH") + "   "
-                                   + btn(Controls::X) + " " + UiLang::Tr("SWITCH") + "   "
-                                   + btn(Controls::A) + " " + UiLang::Tr("DETAILS");
-            const int tw = Canvas::TextWidth(hint, sc) + 8 * sc;
-            const int ty = outH - 15 * sc;
-            canvas.FillRound((outW - tw) / 2, ty, tw, 13 * sc, 3 * sc, 0xD80D111A);
-            canvas.OutlineRound((outW - tw) / 2, ty, tw, 13 * sc, 3 * sc, 1, 0xFF283248);
-            canvas.Text((outW - tw) / 2 + 4 * sc, ty + 3 * sc, hint, sc, 0xFFFFFFFF);
-            overlayUsed = true;
+            ptHint = ptBtns[0] + " " + UiLang::Tr("SEARCH") + "   "
+                   + ptBtns[1] + " " + UiLang::Tr("SWITCH") + "   "
+                   + ptBtns[2] + " " + UiLang::Tr("DETAILS");
         }
-        if (frame < toastUntil)
+
+        const bool showToast = frame < toastUntil;
+        uint32_t toastFade = 0;
+        if (showToast)
         {
-            int sc = outH / 240 < 1 ? 1 : outH / 240;
-            const int tw = Canvas::TextWidth(toast, sc) + 14 * sc;
-            const int th = 14 * sc;
-            const int tx = 6 * sc, ty = 5 * sc;
             const uint32_t left = toastUntil - frame;
-            const uint32_t fade = left >= 60 ? 255 : left * 255 / 60;
-            canvas.ShadowRound(tx, ty, tw, th, 3 * sc, sc, sc);
-            canvas.FillGlass(tx, ty, tw, th, 3 * sc, ((0xE0 * fade / 255) << 24) | 0x161C28u, ((0xE0 * fade / 255) << 24) | 0x0E121Au, ((0xFF * fade / 255) << 24) | 0x2A354Au, 1);
-            canvas.FillRound(tx + sc, ty + 2 * sc, std::max(2, 2 * sc), th - 4 * sc, sc, ((0xFF * fade / 255) << 24) | 0x0090FFu);
-            canvas.Text(tx + 7 * sc, ty + 3 * sc, toast, sc, (fade << 24) | 0xFFFFFF);
-            overlayUsed = true;
+            toastFade = left >= 60 ? 255 : left * 255 / 60;
         }
+
+        std::string menuTitle, menuHint, menuNote;
+        bool wideMenu = false, needCpuDim = false;
         if (menu.open)
         {
-            // The buttons named as the controller in use has them (PlayStation's CROSS and CIRCLE,
-            // ...), and as CONTROLS has them; with no controller, the keyboard's keys.
             const bool kbOnly = pads.Empty();
             auto btn = [&](int a) {
                 return kbOnly ? std::string(a == Controls::A ? "ENTER" : "ESC")
                               : std::string(Controls::InputName(cfg.controls.Pad(a, cfg.byLabel),
                                     Controls::StyleOf(pads.controllers.empty() ? nullptr : pads.controllers[0])));
             };
-            std::string hint = btn(Controls::A) + ": " + UiLang::Tr("SELECT") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
+            menuHint = btn(Controls::A) + ": " + UiLang::Tr("SELECT") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
             const int selId = menu.selected >= 0 && menu.selected < (int)menuIds.size() ? menuIds[menu.selected] : -1;
             static const char* pageTitle[] = { "NoSplitNX", "KEYS AND BUTTONS", "SETTINGS", "GRAPHICS", "CONTROLS", "CHEATS", "RETROACHIEVEMENTS", "SOUND", "ACHIEVEMENTS", "ACHIEVEMENT", "SEARCH CHEATS", "CHEAT DETAILS", "DATABASE INFO", "SAVE BACKUPS", "RESTORE SAVE", "LOAD STATE" };
             if (menuPage == PAGE_KEYS)
             {
-                hint = btn(Controls::A) + ": " + UiLang::Tr("CHANGE") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
-                if (capturing >= 0) hint = ctlKeyboard ? "ESC: LEAVE IT AS IT WAS" : "OR WAIT 5 SECONDS: AS IT WAS";
-                else if (menu.selected == 0 && ctlHasKeyboard) hint = "CHANGE: KEYBOARD OR CONTROLLER";
-                else if (const char* h = Controls::ActionHint(menu.selected - ctlRow0)) hint = h;
+                menuHint = btn(Controls::A) + ": " + UiLang::Tr("CHANGE") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
+                if (capturing >= 0) menuHint = ctlKeyboard ? "ESC: LEAVE IT AS IT WAS" : "OR WAIT 5 SECONDS: AS IT WAS";
+                else if (menu.selected == 0 && ctlHasKeyboard) menuHint = "CHANGE: KEYBOARD OR CONTROLLER";
+                else if (const char* h = Controls::ActionHint(menu.selected - ctlRow0)) menuHint = h;
 #ifdef __SWITCH__
                 else if (menu.selected == ctlRow0 + Controls::MENU && cfg.controls.pad[Controls::MENU] < 0)
-                    hint = cfg.startMenu ? "+ OPENS IT (START BUTTON)" : "+ AND - OPEN IT";
+                    menuHint = cfg.startMenu ? "+ OPENS IT (START BUTTON)" : "+ AND - OPEN IT";
 #endif
-                menu.Draw(canvas, pageTitle[PAGE_KEYS], hint);
+                menuTitle = pageTitle[PAGE_KEYS];
             }
             else
             {
 #if !defined(__SWITCH__) && !defined(SSR_PHONE)
-            // (What FAST FORWARD LOW RES is for, while it is the one chosen.)
-            if (selId == M_FFLOWRES) hint = "ON: MORE FPS IN FAST FORWARD";
+                if (selId == M_FFLOWRES) menuHint = "ON: MORE FPS IN FAST FORWARD";
 #endif
 #ifdef __SWITCH__
-            if (selId == M_SWITCH_FF) hint = "OFF BY DEFAULT (EXPERIMENTAL)";
-            if (selId == M_FAST && !cfg.switchFastForward) hint = "ENABLE IN SETTINGS -> GRAPHICS FIRST";
+                if (selId == M_SWITCH_FF) menuHint = "OFF BY DEFAULT (EXPERIMENTAL)";
+                if (selId == M_FAST && !cfg.switchFastForward) menuHint = "ENABLE IN SETTINGS -> GRAPHICS FIRST";
 #endif
-            if (selId == M_SETTINGS) hint = "AUDIO, VIDEO AND SYSTEM OPTIONS";
-            if (selId == M_VOLUME) hint = "SOUND AND MUSIC: LEFT / RIGHT";
-            if (selId == M_ASPECT) hint = "NARROWER THAN THE SCREEN: BARS AT THE SIDES";
-            if (selId == M_FFMUTE) hint = "OFF: SILENT WHILE FAST FORWARDING";
-            // (What START BUTTON does, while it is the one chosen.)
-            if (selId == M_STARTBTN) hint = cfg.startMenu ? "START OPENS THIS MENU" : "START IS THE DS START";
-            if (selId == M_CONTROLS) hint = "SAVE, LOAD, FAST FORWARD, SWAP";
-            if (selId == M_FASTBTN) hint = "HOLD: RELEASE TO STOP. TOGGLE: PRESS ONCE TO START AND AGAIN TO STOP. APPLIES TO KEYBOARD, CONTROLLER AND ON-SCREEN FAST FORWARD.";
-            if (selId == M_BOTHVER) hint = "WILD POKEMON OF BOTH VERSIONS";
-            if (selId == M_CHEATS) hint = cheats.items.empty() ? "NONE FOUND: SEE THE README" : "ACTION REPLAY CODES";
-            if (selId == M_NOTHING && menuPage == PAGE_CHEATS && cheats.items.empty()) hint = "DATABASE INFO EXPLAINS WHAT WAS FOUND";
-            // RETROACHIEVEMENTS.
-            // (Each at most about 30 letters: the width of the menu's box.)
-            if (selId == M_RA) hint = "FROM RETROACHIEVEMENTS.ORG";
-            if (selId == M_RA_ON) hint = "CASUAL MODE: NEEDS AN ACCOUNT";
-            if (selId == M_RA_ACCOUNT || selId == M_RA_GAME)
-                hint = !Achievements::Detail().empty() ? Achievements::Detail()
-                     : selId == M_RA_GAME ? "FOUND FROM THE ROM ITSELF" : "YOUR RETROACHIEVEMENTS ACCOUNT";
-            if (selId == M_RA_LOGIN) hint = Achievements::LoggedIn() ? "FORGETS THE ACCOUNT HERE" : "YOUR USER NAME AND PASSWORD";
-            if (selId == M_RA_TYPED)
-                hint = ctlHasKeyboard ? "ENTER: NEXT   ESC: CANCEL" : "TYPE IT  THEN A";
-            if (selId == M_CSEARCH || selId == M_CINFO)
-                hint = btn(Controls::A) + ": " + UiLang::Tr("OPEN") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
-            if (selId >= M_CHEAT0 && selId < M_ACH0) hint = btn(Controls::A) + ": " + UiLang::Tr("ON / OFF") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
-            if (selId == M_CHEAT_ON || (selId >= M_CFOLDER0 && selId < M_CFOLDER0 + (int)cheats.folders.size()))
-                hint = btn(Controls::A) + ": " + UiLang::Tr("OPEN") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
-            if (selId == M_RA_LIST) hint = "WHAT EACH ASKS FOR";
-            std::string note = selId >= M_CHEAT0 && selId < M_ACH0 && selId - M_CHEAT0 < (int)cheats.items.size() ? cheats.items[selId - M_CHEAT0].note : std::string();
-            if (selId >= M_CHEAT0 && selId < M_ACH0 && selId - M_CHEAT0 < (int)cheats.items.size() && cheatWhere == -3)
-            {
-                // ON NOW mixes folders. The row already says "FOLDER: NAME" when that fits; otherwise
-                // the folder starts the note, so two codes with the same name can be told apart.
-                const Cheats::Cheat& c = cheats.items[selId - M_CHEAT0];
-                if (!c.category.empty() && (c.category + ": " + c.name).size() > (size_t)Cheats::LabelChars)
-                    note = note.empty() ? c.category : c.category + ": " + note;
-            }
-            if (selId >= M_CFOLDER0 && selId - M_CFOLDER0 < (int)cheats.folders.size())
-                note = cheats.folders[selId - M_CFOLDER0].note;
-            std::string title = pageTitle[menuPage];
-            if (menuPage == PAGE_CHEATS && cheatWhere == -3) title = "ON NOW";
-            else if (menuPage == PAGE_CHEATS && cheatWhere >= 0 && cheatWhere < (int)cheats.folders.size())
-                title = Cheats::Fit(cheats.folders[cheatWhere].name, 36);
-            else if (menuPage == PAGE_CHEATS && !cheatBrowse() && cheats.folders.size() == 1)
-                title = Cheats::Fit(cheats.folders[0].name, 36);
-            if (menuPage == PAGE_RA_DETAIL && achDetail >= 0 && achDetail < (int)achList.size())
-            {
-                // (The title in the box's top line, at most 30 letters; the whole of it, if longer,
-                // starts the description.)
-                const std::string full = Cheats::Shown(achList[achDetail].title, 200);
-                title = full.size() > 30 ? full.substr(0, 28) + ".." : full;
-                note = (full.size() > 30 ? full + ": " : std::string()) + achList[achDetail].description;
-                hint = btn(Controls::B) + ": " + UiLang::Tr("BACK");
-            }
-            if (menuPage == PAGE_RA_LIST)
-            {
-                hint = btn(Controls::A) + ": " + UiLang::Tr("DETAILS") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
-                if (selId >= M_ACH0 && selId - M_ACH0 < (int)achList.size())
+                if (selId == M_SETTINGS) menuHint = "AUDIO, VIDEO AND SYSTEM OPTIONS";
+                if (selId == M_VOLUME) menuHint = "SOUND AND MUSIC: LEFT / RIGHT";
+                if (selId == M_ASPECT) menuHint = "NARROWER THAN THE SCREEN: BARS AT THE SIDES";
+                if (selId == M_FFMUTE) menuHint = "OFF: SILENT WHILE FAST FORWARDING";
+                if (selId == M_STARTBTN) menuHint = cfg.startMenu ? "START OPENS THIS MENU" : "START IS THE DS START";
+                if (selId == M_CONTROLS) menuHint = "SAVE, LOAD, FAST FORWARD, SWAP";
+                if (selId == M_FASTBTN) menuHint = "HOLD: RELEASE TO STOP. TOGGLE: PRESS ONCE TO START AND AGAIN TO STOP. APPLIES TO KEYBOARD, CONTROLLER AND ON-SCREEN FAST FORWARD.";
+                if (selId == M_BOTHVER) menuHint = "WILD POKEMON OF BOTH VERSIONS";
+                if (selId == M_CHEATS) menuHint = cheats.items.empty() ? "NONE FOUND: SEE THE README" : "ACTION REPLAY CODES";
+                if (selId == M_NOTHING && menuPage == PAGE_CHEATS && cheats.items.empty()) menuHint = "DATABASE INFO EXPLAINS WHAT WAS FOUND";
+                if (selId == M_RA) menuHint = "FROM RETROACHIEVEMENTS.ORG";
+                if (selId == M_RA_ON) menuHint = "CASUAL MODE: NEEDS AN ACCOUNT";
+                if (selId == M_RA_ACCOUNT || selId == M_RA_GAME)
+                    menuHint = !Achievements::Detail().empty() ? Achievements::Detail()
+                             : selId == M_RA_GAME ? "FOUND FROM THE ROM ITSELF" : "YOUR RETROACHIEVEMENTS ACCOUNT";
+                if (selId == M_RA_LOGIN) menuHint = Achievements::LoggedIn() ? "FORGETS THE ACCOUNT HERE" : "YOUR USER NAME AND PASSWORD";
+                if (selId == M_RA_TYPED)
+                    menuHint = ctlHasKeyboard ? "ENTER: NEXT   ESC: CANCEL" : "TYPE IT  THEN A";
+                if (selId == M_CSEARCH || selId == M_CINFO)
+                    menuHint = btn(Controls::A) + ": " + UiLang::Tr("OPEN") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
+                if (selId >= M_CHEAT0 && selId < M_ACH0) menuHint = btn(Controls::A) + ": " + UiLang::Tr("ON / OFF") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
+                if (selId == M_CHEAT_ON || (selId >= M_CFOLDER0 && selId < M_CFOLDER0 + (int)cheats.folders.size()))
+                    menuHint = btn(Controls::A) + ": " + UiLang::Tr("OPEN") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
+                if (selId == M_RA_LIST) menuHint = "WHAT EACH ASKS FOR";
+                if (selId >= M_CHEAT0 && selId < M_ACH0 && selId - M_CHEAT0 < (int)cheats.items.size())
+                    menuNote = cheats.items[selId - M_CHEAT0].note;
+                if (selId >= M_CHEAT0 && selId < M_ACH0 && selId - M_CHEAT0 < (int)cheats.items.size() && cheatWhere == -3)
                 {
-                    const Achievements::Row& r = achList[selId - M_ACH0];
-                    note = r.description + " (" + std::to_string(r.points) + " " + UiLang::Tr("POINTS")
-                         + (r.unlocked ? ", " + UiLang::Tr("UNLOCKED") + ")" : ")");
-                    if (!r.unlocked && !r.progress.empty()) note += UiLang::Tr(" SO FAR: ") + r.progress;
+                    const Cheats::Cheat& c = cheats.items[selId - M_CHEAT0];
+                    if (!c.category.empty() && (c.category + ": " + c.name).size() > (size_t)Cheats::LabelChars)
+                        menuNote = menuNote.empty() ? c.category : c.category + ": " + menuNote;
+                }
+                if (selId >= M_CFOLDER0 && selId - M_CFOLDER0 < (int)cheats.folders.size())
+                    menuNote = cheats.folders[selId - M_CFOLDER0].note;
+                menuTitle = pageTitle[menuPage];
+                if (menuPage == PAGE_CHEATS && cheatWhere == -3) menuTitle = "ON NOW";
+                else if (menuPage == PAGE_CHEATS && cheatWhere >= 0 && cheatWhere < (int)cheats.folders.size())
+                    menuTitle = Cheats::Fit(cheats.folders[cheatWhere].name, 36);
+                else if (menuPage == PAGE_CHEATS && !cheatBrowse() && cheats.folders.size() == 1)
+                    menuTitle = Cheats::Fit(cheats.folders[0].name, 36);
+                if (menuPage == PAGE_RA_DETAIL && achDetail >= 0 && achDetail < (int)achList.size())
+                {
+                    const std::string full = Cheats::Shown(achList[achDetail].title, 200);
+                    menuTitle = full.size() > 30 ? full.substr(0, 28) + ".." : full;
+                    menuNote = (full.size() > 30 ? full + ": " : std::string()) + achList[achDetail].description;
+                    menuHint = btn(Controls::B) + ": " + UiLang::Tr("BACK");
+                }
+                if (menuPage == PAGE_RA_LIST)
+                {
+                    menuHint = btn(Controls::A) + ": " + UiLang::Tr("DETAILS") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
+                    if (selId >= M_ACH0 && selId - M_ACH0 < (int)achList.size())
+                    {
+                        const Achievements::Row& r = achList[selId - M_ACH0];
+                        menuNote = r.description + " (" + std::to_string(r.points) + " " + UiLang::Tr("POINTS")
+                             + (r.unlocked ? ", " + UiLang::Tr("UNLOCKED") + ")" : ")");
+                        if (!r.unlocked && !r.progress.empty()) menuNote += UiLang::Tr(" SO FAR: ") + r.progress;
+                    }
+                }
+                if (menuPage == PAGE_CHEATS)
+                {
+                    if (cheatWhere == -4) menuTitle = "SEARCH RESULTS";
+                    if (selId >= M_CHEAT0 && selId < M_ACH0) menuHint = "SELECT: DETAILS   LEFT/RIGHT: ON/OFF";
+                }
+                if (menuPage == PAGE_CSEARCH)
+                {
+                    menuNote = UiLang::Tr("FIND: ") + (cheatQuery.empty() ? UiLang::Tr("ALL CODES") : cheatQuery);
+                    menuHint = "TYPE OR SELECT LETTERS TO ADD";
+                }
+                if (menuPage == PAGE_CDETAIL || menuPage == PAGE_CINFO) menuNote.clear();
+                if (menuPage == PAGE_BACKUPS) menuNote = "NEWEST FIRST. CHOOSE A BACKUP TO REVIEW BEFORE RESTORING.";
+                if (menuPage == PAGE_RESTORE_CONFIRM && restoreChoice >= 0 && restoreChoice < (int)saveBackups.size())
+                    menuNote = saveBackups[restoreChoice].label + ". " + UiLang::Tr("RESTORES THIS GAME'S SAVE AND RESTARTS IT. CURRENT SAVE KEPT AS BEFORE-RESTORE.SAV.");
+                if (menuPage == PAGE_LOAD_CONFIRM)
+                    menuNote = "YOUR CARTRIDGE SAVE IS KEPT. SAVING IN-GAME AFTER LOADING AN OLD STATE CAN STILL REPLACE NEWER PROGRESS.";
+                wideMenu = menuPage == PAGE_CHEATS || menuPage == PAGE_CDETAIL || menuPage == PAGE_CINFO || menuPage == PAGE_CSEARCH || menuPage == PAGE_BACKUPS || menuPage == PAGE_RESTORE_CONFIRM || menuPage == PAGE_LOAD_CONFIRM;
+                needCpuDim = opt.headless || (!opt.shotDir.empty() && (opt.shotAt.count(frame) || g_sceneShots.count(frame) || (opt.shotEvery && frame % opt.shotEvery == 0)));
+            }
+        }
+
+        const bool overlayUsed = showCursor || showShoes || showPtDex || showToast || menu.open;
+        if (overlayUsed)
+        {
+            uint64_t curOverlaySig = 1469598103934665603ULL;
+            mixHash(curOverlaySig, (uint64_t)outW);
+            mixHash(curOverlaySig, (uint64_t)outH);
+            mixHash(curOverlaySig, (showCursor ? 1ULL : 0ULL) | (showShoes ? 2ULL : 0ULL) |
+                (showPtDex ? 4ULL : 0ULL) | (showToast ? 8ULL : 0ULL) | (menu.open ? 16ULL : 0ULL));
+            if (showCursor)
+            {
+                mixHash(curOverlaySig, (uint64_t)(unsigned)cursorPxX);
+                mixHash(curOverlaySig, (uint64_t)(unsigned)cursorPxY);
+                mixHash(curOverlaySig, (uint64_t)(unsigned)cursorRad);
+                mixHash(curOverlaySig, curPress ? 1ULL : 0ULL);
+            }
+            if (showShoes)
+            {
+                mixHash(curOverlaySig, (uint64_t)(unsigned)shoesOx);
+                mixHash(curOverlaySig, (uint64_t)(unsigned)shoesOy);
+                mixHash(curOverlaySig, (uint64_t)(unsigned)shoesOw);
+                mixHash(curOverlaySig, (uint64_t)(unsigned)shoesOh);
+                mixHash(curOverlaySig, shoesOn ? 1ULL : 0ULL);
+                mixStr(curOverlaySig, shoesLabel);
+            }
+            if (showPtDex)
+            {
+                mixHash(curOverlaySig, (uint64_t)ptSc);
+                mixHash(curOverlaySig, ptHasBody ? 1ULL : 0ULL);
+                for (int i = 0; i < 3; i++)
+                {
+                    mixHash(curOverlaySig, (uint64_t)(unsigned)ptBodyOx[i]);
+                    mixHash(curOverlaySig, (uint64_t)(unsigned)ptBodyOy[i]);
+                    mixStr(curOverlaySig, ptBtns[i]);
+                }
+                mixStr(curOverlaySig, ptHint);
+            }
+            if (showToast)
+            {
+                mixHash(curOverlaySig, toastFade);
+                mixStr(curOverlaySig, toast);
+            }
+            if (menu.open)
+            {
+                mixHash(curOverlaySig, (uint64_t)Menu::Accent);
+                mixHash(curOverlaySig, (uint64_t)UiLang::lang);
+                mixHash(curOverlaySig, (uint64_t)menuPage);
+                mixHash(curOverlaySig, (uint64_t)menu.selected);
+                mixHash(curOverlaySig, wideMenu ? 1ULL : 0ULL);
+                mixHash(curOverlaySig, needCpuDim ? 1ULL : 0ULL);
+                mixStr(curOverlaySig, menuTitle);
+                mixStr(curOverlaySig, menuHint);
+                mixStr(curOverlaySig, menuNote);
+                mixHash(curOverlaySig, (uint64_t)menu.items.size());
+                for (const MenuItem& it : menu.items)
+                {
+                    mixStr(curOverlaySig, it.label);
+                    mixStr(curOverlaySig, it.value);
+                    mixHash(curOverlaySig, (it.info ? 0x100ULL : 0ULL) | (uint64_t)(unsigned)(it.slider + 2));
                 }
             }
-            if(menuPage == PAGE_CHEATS)
+            if (!curOverlaySig) curOverlaySig = 1;
+
+            if (curOverlaySig != builtOverlaySig)
             {
-                if(cheatWhere == -4)title="SEARCH RESULTS";
-                if(selId>=M_CHEAT0 && selId<M_ACH0)hint="SELECT: DETAILS   LEFT/RIGHT: ON/OFF";
+                canvas.Resize(outW, outH);
+                canvas.Clear();
+                if (showCursor)
+                {
+                    const uint32_t ringCol = curPress ? 0xFFFFD75E : 0xFFFFFFFF;
+                    const uint32_t shadowCol = 0xD010141C;
+                    const int bound = cursorRad + 3;
+                    const float outMin2 = (cursorRad - 1.8f) * (cursorRad - 1.8f);
+                    const float outMax2 = (cursorRad + 1.8f) * (cursorRad + 1.8f);
+                    const float inMin2 = (cursorRad - 0.9f) * (cursorRad - 0.9f);
+                    const float inMax2 = (cursorRad + 0.9f) * (cursorRad + 0.9f);
+                    for (int dy = -bound; dy <= bound; dy++)
+                    {
+                        for (int dx = -bound; dx <= bound; dx++)
+                        {
+                            const float d2 = (float)(dx * dx + dy * dy);
+                            if (d2 >= outMin2 && d2 <= outMax2)
+                                canvas.Fill(cursorPxX + dx, cursorPxY + dy, 1, 1,
+                                    (d2 >= inMin2 && d2 <= inMax2) ? ringCol : shadowCol);
+                            else if (d2 <= 2.25f)
+                                canvas.Fill(cursorPxX + dx, cursorPxY + dy, 1, 1, ringCol);
+                        }
+                    }
+                    const int tickLen = std::max(2, cursorRad / 3);
+                    for (int i = 1; i <= tickLen; i++)
+                    {
+                        canvas.Fill(cursorPxX, cursorPxY - cursorRad - i, 1, 1, shadowCol);
+                        canvas.Fill(cursorPxX, cursorPxY + cursorRad + i, 1, 1, shadowCol);
+                        canvas.Fill(cursorPxX - cursorRad - i, cursorPxY, 1, 1, shadowCol);
+                        canvas.Fill(cursorPxX + cursorRad + i, cursorPxY, 1, 1, shadowCol);
+                    }
+                }
+                if (showShoes)
+                {
+                    const int padPx = 3 * shoesTsc;
+                    canvas.FillRound(shoesOx - padPx, shoesOy - padPx, shoesOw + 2 * padPx, shoesOh + 2 * padPx, 3 * shoesTsc, 0xE6141824);
+                    canvas.OutlineRound(shoesOx - padPx, shoesOy - padPx, shoesOw + 2 * padPx, shoesOh + 2 * padPx, 3 * shoesTsc, 1, 0xFF2E3850);
+                    for (int py = 0; py < shoesOh; py++)
+                    {
+                        const int sy = std::min(SHOES_H - 1, py * SHOES_H / std::max(1, shoesOh));
+                        for (int px = 0; px < shoesOw; px++)
+                        {
+                            const int sx = std::min(SHOES_W - 1, px * SHOES_W / std::max(1, shoesOw));
+                            canvas.Fill(shoesOx + px, shoesOy + py, 1, 1, shoesPix[sy * SHOES_W + sx]);
+                        }
+                    }
+                    const int tw = Canvas::TextWidth(shoesLabel, shoesTsc);
+                    const uint32_t statusCol = shoesOn ? 0xFF4CE080 : 0xFFFFC857;
+                    canvas.FillRound(shoesOx + (shoesOw - tw) / 2 - 4 * shoesTsc, shoesOy + shoesOh + 4 * shoesTsc, tw + 8 * shoesTsc, 12 * shoesTsc, 3 * shoesTsc, 0xE6141824);
+                    canvas.OutlineRound(shoesOx + (shoesOw - tw) / 2 - 4 * shoesTsc, shoesOy + shoesOh + 4 * shoesTsc, tw + 8 * shoesTsc, 12 * shoesTsc, 3 * shoesTsc, 1, 0xFF2E3850);
+                    canvas.Text(shoesOx + (shoesOw - tw) / 2, shoesOy + shoesOh + 6 * shoesTsc, shoesLabel, shoesTsc, statusCol);
+                }
+                if (showPtDex)
+                {
+                    if (ptHasBody)
+                    {
+                        const int pad = 4 * ptSc, ch = 11 * ptSc;
+                        for (int i = 0; i < 3; i++)
+                        {
+                            const int cw = Canvas::TextWidth(ptBtns[i], ptSc) + 2 * pad;
+                            canvas.FillRound(ptBodyOx[i], ptBodyOy[i], cw, ch, 2 * ptSc, 0xE6141824);
+                            canvas.OutlineRound(ptBodyOx[i], ptBodyOy[i], cw, ch, 2 * ptSc, 1, 0xFF2E3850);
+                            canvas.Text(ptBodyOx[i] + pad, ptBodyOy[i] + 2 * ptSc, ptBtns[i], ptSc, 0xFFFFE074);
+                        }
+                    }
+                    const int tw = Canvas::TextWidth(ptHint, ptSc) + 8 * ptSc;
+                    const int ty = outH - 15 * ptSc;
+                    canvas.FillRound((outW - tw) / 2, ty, tw, 13 * ptSc, 3 * ptSc, 0xD80D111A);
+                    canvas.OutlineRound((outW - tw) / 2, ty, tw, 13 * ptSc, 3 * ptSc, 1, 0xFF283248);
+                    canvas.Text((outW - tw) / 2 + 4 * ptSc, ty + 3 * ptSc, ptHint, ptSc, 0xFFFFFFFF);
+                }
+                if (showToast)
+                {
+                    const int sc = outH / 240 < 1 ? 1 : outH / 240;
+                    const int tw = Canvas::TextWidth(toast, sc) + 14 * sc;
+                    const int th = 14 * sc;
+                    const int tx = 6 * sc, ty = 5 * sc;
+                    canvas.ShadowRound(tx, ty, tw, th, 3 * sc, sc, sc);
+                    canvas.FillGlass(tx, ty, tw, th, 3 * sc, ((0xE0 * toastFade / 255) << 24) | 0x161C28u, ((0xE0 * toastFade / 255) << 24) | 0x0E121Au, ((0xFF * toastFade / 255) << 24) | 0x2A354Au, 1);
+                    canvas.FillRound(tx + sc, ty + 2 * sc, std::max(2, 2 * sc), th - 4 * sc, sc, ((0xFF * toastFade / 255) << 24) | 0x0090FFu);
+                    canvas.Text(tx + 7 * sc, ty + 3 * sc, toast, sc, (toastFade << 24) | 0xFFFFFF);
+                }
+                if (menu.open)
+                {
+                    if (menuPage == PAGE_KEYS) menu.Draw(canvas, menuTitle, menuHint);
+                    else menu.Draw(canvas, menuTitle, menuHint, menuNote, wideMenu ? 260 : 0, needCpuDim);
+                }
+                builtOverlaySig = curOverlaySig;
+                overlayDirtyRect = canvas.Dirty()
+                    ? SDL_Rect { canvas.x0d, canvas.y0d, canvas.x1d - canvas.x0d, canvas.y1d - canvas.y0d }
+                    : SDL_Rect {};
             }
-            if(menuPage == PAGE_CSEARCH)
-            {
-                note=UiLang::Tr("FIND: ")+(cheatQuery.empty() ? UiLang::Tr("ALL CODES") : cheatQuery);
-                hint="TYPE OR SELECT LETTERS TO ADD";
-            }
-            if(menuPage == PAGE_CDETAIL || menuPage == PAGE_CINFO)note.clear();
-            if(menuPage == PAGE_BACKUPS)note="NEWEST FIRST. CHOOSE A BACKUP TO REVIEW BEFORE RESTORING.";
-            if(menuPage == PAGE_RESTORE_CONFIRM && restoreChoice>=0 && restoreChoice<(int)saveBackups.size())
-                note=saveBackups[restoreChoice].label+". "+UiLang::Tr("RESTORES THIS GAME'S SAVE AND RESTARTS IT. CURRENT SAVE KEPT AS BEFORE-RESTORE.SAV.");
-            if(menuPage == PAGE_LOAD_CONFIRM)
-                note="YOUR CARTRIDGE SAVE IS KEPT. SAVING IN-GAME AFTER LOADING AN OLD STATE CAN STILL REPLACE NEWER PROGRESS.";
-            const bool wideMenu=menuPage==PAGE_CHEATS || menuPage==PAGE_CDETAIL || menuPage==PAGE_CINFO || menuPage==PAGE_CSEARCH || menuPage==PAGE_BACKUPS || menuPage==PAGE_RESTORE_CONFIRM || menuPage==PAGE_LOAD_CONFIRM;
-            const bool needCpuDim = opt.headless || (!opt.shotDir.empty() && (opt.shotAt.count(frame) || g_sceneShots.count(frame) || (opt.shotEvery && frame % opt.shotEvery == 0)));
-            menu.Draw(canvas, title, hint, note, wideMenu ? 260 : 0, needCpuDim);
-            }
-            overlayUsed = true;
+        }
+        else
+        {
+            builtOverlaySig = 0;
+            overlayDirtyRect = {};
         }
 
         bool wantShot = !opt.shotDir.empty() &&
@@ -8656,7 +8880,8 @@ int main(int argc, char** argv)
                     MergedBlackBars(shot, opt.composeW, opt.composeH);
                 }
                 else Compose(layout, opt.composeW, opt.composeH, top, bot, shot);
-                BlendCanvas(canvas, shot);
+                if (overlayUsed && canvas.w == opt.composeW && canvas.h == opt.composeH) BlendCanvas(canvas, shot);
+                if (hudUsed && hudCanvas.w == opt.composeW && hudCanvas.h == opt.composeH) BlendCanvas(hudCanvas, shot);
                 WritePNG(opt.shotDir + name, shot.data(), opt.composeW, opt.composeH);
             }
             else
@@ -8686,6 +8911,7 @@ int main(int argc, char** argv)
             DrawJob& job = ahead ? aheadJobs[(aheadHead + aheadCount) % 3] : pipelined ? pendingJob : nowJob;
             job.merged = merged;
             job.overlayUsed = overlayUsed;
+            job.hudUsed = hudUsed;
             job.wantShot = wantShot && opt.windowShots;
             job.frameNo = frame;
             job.outW = outW;

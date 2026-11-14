@@ -4,6 +4,14 @@
 ## Unreleased
 
 
+## v1.0.0 — Switch Horizon Performance, Edge-to-Edge Battle Tray & Clean Map Transitions
+
+- **Horizon OS / Nintendo Switch performance optimisations**: split the corner FPS/fast-forward pill into a small cached HUD texture and cached pause menus, toasts and cursors by content signature so unchanged frames skip CPU glass/shadow rasterisation and `3.7 MB` GPU uploads; removed a duplicate full-screen render clear, reused scanline redraw buffers, replaced per-pixel square roots in the touch cursor, skipped redundant `49,152`-pixel signature scans on animating widescreen frames, specialised opaque layer masking in the GPU compositor, and stepped adaptive Deko3D resolution cleanly across integer 16:9 tiers (`720p`/`576p`/`540p`/`432p`/`360p`) under compositor or CPU pressure.
+- **Gen 5 battle tray mutual resizing**: co-sized the bottom battle prompt box and right-hand command/move/target buttons so they meet edge-to-edge across the tray with a consistent gutter, seamlessly extending the prompt background column without stretching glyphs.
+- **Map & screen transition fixes**: tightened Pokemon Black's bottom-arrow strip detection with 2D layer-flag and full-width uniformity checks so bright 3D overworld terrain/water never punches a bottom cutout, cleared held app/menu state on fade-to-black transitions, and stripped stale synthetic cards and borders when a single screen blanks out first.
+- **Release automation**: publish non-hyphenated release tags such as `v1.0.0` as stable GitHub releases.
+
+
 ## v1.0.0-beta.11 — Switch ROM Music, Gen 5 Battle Bar & Menu Polish
 
 - **Game list music on Switch**: fixed silent launcher previews and flat visualiser bars by using native Switch audio output before emulation starts, raising DS sound-archive limits (>512 wave entries, larger tables and nested calls), adding raw ROM scanning when file tables miss, and automatically skipping silent control tracks.

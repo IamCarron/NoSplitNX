@@ -93,16 +93,32 @@ public:
 
     // White bottom-edge strip ("Look at the touch screen ▼") on the top screen during overworld
     // submenus (such as SAVE in Spanish Black) where the game expects interaction on the bottom.
-    static bool TopHasBottomArrowBanner(const uint32_t* px)
+    static bool TopHasBottomArrowBanner(const uint32_t* px, const uint8_t* flags = nullptr)
     {
         if (!px) return false;
+        if (flags)
+        {
+            for (int y : { 180, 185 })
+                for (int x : { 24, 72, 184, 232 })
+                {
+                    const uint8_t lc = LayerClass(flags[y * 256 + x]);
+                    if (lc == LAYER_3D || lc == LAYER_BACKDROP) return false;
+                }
+        }
         int whiteRows = 0, darkAbove = 0, cyan = 0;
         for (int y = 176; y <= 188; y += 3)
         {
-            const uint32_t lc = px[y * 256 + 24], rc = px[y * 256 + 232];
-            const bool lw = ((lc >> 16) & 0xFF) > 215 && ((lc >> 8) & 0xFF) > 215 && (lc & 0xFF) > 215;
-            const bool rw = ((rc >> 16) & 0xFF) > 215 && ((rc >> 8) & 0xFF) > 215 && (rc & 0xFF) > 215;
-            if (lw && rw) whiteRows++;
+            bool rowWhite = true;
+            for (int x : { 16, 48, 80, 176, 208, 240 })
+            {
+                const uint32_t c = px[y * 256 + x];
+                if (((c >> 16) & 0xFF) <= 215 || ((c >> 8) & 0xFF) <= 215 || (c & 0xFF) <= 215)
+                {
+                    rowWhite = false;
+                    break;
+                }
+            }
+            if (rowWhite) whiteRows++;
         }
         for (int x = 32; x <= 224; x += 48)
         {
@@ -141,7 +157,7 @@ public:
         // two, the game does nothing else, the overworld included: the save stays until the
         // overworld runs again. Also match the bottom arrow banner + touch-screen save UI so
         // versions whose REPORT_EVENT_Main address missed never show the cut-off ▼ strip.)
-        const bool pixelSave = screens && TopHasBottomArrowBanner(screens[0].pixels) && BottomScreenIsSave(screens[1].pixels);
+        const bool pixelSave = screens && TopHasBottomArrowBanner(screens[0].pixels, screens[0].flags) && BottomScreenIsSave(screens[1].pixels);
         if (Fw->Ran(report, 10) || (saving && !Fw->Ran(field, 1)) || pixelSave)
         {
             // Laid out as Black 2's (merged.h, SaveScreenPieces): the overworld, without the
@@ -166,7 +182,7 @@ public:
             return;
         }
         saving = false;
-        if (!strcmp(sc.name, "top") && screens && TopHasBottomArrowBanner(screens[0].pixels) && !sc.items.empty())
+        if (!strcmp(sc.name, "top") && screens && TopHasBottomArrowBanner(screens[0].pixels, screens[0].flags) && !sc.items.empty())
         {
             sc.items[0].drop = LAYER_BG1;
             if (sc.items[0].holeCount < 4)
@@ -260,17 +276,20 @@ public:
                     }
                     sc.items = std::move(keep);
                     float promptRight = viewLeft + 4.0f;
-                    const float minButtonsW = (buttons == BUTTONS_STRIP && !target) ? 116.0f
-                        : buttons == BUTTONS_CORNER ? 100.0f : 96.0f;
-                    AdaptGen5BattlePrompt(sc, viewWidth, screens, minButtonsW, promptRight);
-                    const float availW = std::max(84.0f, viewRight - 2.0f - (promptRight + 6.0f));
+                    float minBtnW = 96.0f, idealBtnW = 112.0f, maxBtnW = 120.0f;
+                    Gen5BattleButtonBounds(buttons, moves, target, 103, minBtnW, idealBtnW, maxBtnW);
+                    float targetBtnW = idealBtnW;
+                    AdaptGen5BattlePrompt(sc, viewWidth, screens, minBtnW, idealBtnW, maxBtnW,
+                        promptRight, targetBtnW);
+                    const float availW = std::max(84.0f, std::min(maxBtnW, viewRight - 2.0f - (promptRight + 5.0f)));
                     if (buttons == BUTTONS_CORNER)
                     {
+                        const float innerAvail = std::max(78.0f, availW - 4.0f);
                         for (Element& e : cornerKeep)
                         {
-                            if (e.screen == 1 && e.dx < promptRight + 6.0f && e.sw > 0)
+                            if (e.screen == 1 && e.sw > 0)
                             {
-                                e.scale = std::max(0.28f, std::min(e.scale, (availW - 4.0f) / (float)e.sw));
+                                e.scale = std::max(0.28f, innerAvail / (float)e.sw);
                                 e.dx = viewRight - 4.0f - e.sw * e.scale;
                                 e.dy = 189.0f - e.sh * e.scale;
                             }
@@ -295,7 +314,7 @@ public:
                         // tall as the message box (rows 147-189), against the view's right edge.
                         Element c = moves ? Crop(1, 0, 30, 256, 98) : target ? Crop(1, 0, 32, 256, 103)
                             : Crop(1, 0, 78, 256, 114);
-                        c.scale = std::min(43.0f / c.sh, availW / c.sw);
+                        c.scale = std::min(44.0f / c.sh, availW / c.sw);
                         c.dx = viewRight - 2 - c.sw * c.scale;
                         c.dy = 190 - c.sh * c.scale;
                         c.border = true;
@@ -418,7 +437,7 @@ public:
         // One scale for all the pieces of a menu.
         const float boxTop = 147, boxBottom = 190, gap = 2, right = viewRight - 2;
         const float top = boxTop + 2, bottom = boxBottom - 1, height = bottom - top;
-        const float availW = std::max(84.0f, right - (promptRight + 6.0f));
+        const float availW = std::max(84.0f, right - (promptRight + 5.0f));
         std::vector<Cell> cells;
         float width;
         if (!moves)

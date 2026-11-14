@@ -802,14 +802,61 @@ inline void SaveScreenPieces(Scene& sc, bool wideView, float viewRight, const Sc
     }
 }
 
+// Computes mutually co-sized tray widths so the left battle prompt box and right action buttons
+// fill the bottom tray cleanly with a consistent gutter.
+inline void Gen5BattleButtonBounds(int style, bool moves, bool target, int targetH,
+    float& minW, float& idealW, float& maxW)
+{
+    if (style == 2)
+    {
+        const float sh = moves ? 98.0f : target ? (float)targetH : 114.0f;
+        minW = 256.0f * (37.0f / sh);
+        idealW = 256.0f * (43.0f / sh);
+        maxW = 256.0f * (44.0f / sh);
+        return;
+    }
+    if (style == 1 && !target)
+    {
+        minW = moves ? 126.0f : 114.0f;
+        idealW = moves ? 148.0f : 130.0f;
+        maxW = moves ? 154.0f : 135.4f;
+        return;
+    }
+    minW = moves ? 112.0f : 102.0f;
+    idealW = moves ? 130.0f : target ? 118.0f : 115.0f;
+    maxW = moves ? 138.0f : target ? 123.0f : 120.0f;
+}
+
+inline void CoSizeGen5BattleTray(float viewWidth, float naturalPromptW,
+    float minBtnW, float idealBtnW, float maxBtnW,
+    float& outPromptBoxW, float& outButtonsW, float gutter = 5.0f)
+{
+    const float trayW = std::max(160.0f, viewWidth - 6.0f); // [viewLeft + 4 .. viewRight - 2]
+    const float budget = std::max(120.0f, trayW - gutter);
+    idealBtnW = std::clamp(idealBtnW, minBtnW, std::min(maxBtnW, std::max(minBtnW, budget - 80.0f)));
+    const float rem = budget - idealBtnW;
+    if (naturalPromptW <= rem)
+    {
+        const float grow = viewWidth >= 300.0f ? std::min(maxBtnW - idealBtnW, (rem - naturalPromptW) * 0.35f) : 0.0f;
+        outButtonsW = idealBtnW + std::max(0.0f, grow);
+    }
+    else
+    {
+        outButtonsW = std::clamp(budget - naturalPromptW, minBtnW, idealBtnW);
+    }
+    outPromptBoxW = std::max(80.0f, budget - outButtonsW);
+}
+
 // Moves Gen 5's bottom battle prompt ("What will X do?" / "¿Qué debería hacer X?") into a framed
-// box anchored on the left of a full-width dark tray (matching HeartGold's wide command bar) so
-// translated prompts never collide with the right-hand command buttons and use the left margin.
+// box anchored on the left of a full-width dark tray, mutually resized with the right-hand buttons
+// so both halves meet evenly without wasting space or stretching text glyphs.
 inline bool AdaptGen5BattlePrompt(Scene& sc, float viewWidth, const ScreenImage* screens,
-    float minButtonsWidth, float& outPromptRight)
+    float minButtonsWidth, float idealButtonsWidth, float maxButtonsWidth,
+    float& outPromptRight, float& outButtonsWidth, float gutter = 5.0f)
 {
     const float viewLeft = 128.0f - viewWidth / 2.0f;
     outPromptRight = viewLeft + 4.0f;
+    outButtonsWidth = idealButtonsWidth;
     if (sc.items.empty() || !screens || !screens[0].pixels || IsUniformScreen(screens[0].pixels))
         return false;
 
@@ -863,7 +910,7 @@ inline bool AdaptGen5BattlePrompt(Scene& sc, float viewWidth, const ScreenImage*
     sc.items.push_back(FillRect(viewLeft - 2.0f, 147.0f, (int)std::ceil(viewWidth) + 4, 46, trayBg));
     sc.items.push_back(FillRect(viewLeft - 2.0f, 147.0f, (int)std::ceil(viewWidth) + 4, 1, hairlineCol));
 
-    // Find tight horizontal span of the bright prompt text inside rows 150..186.
+    // Find tight span of the bright prompt text inside rows 150..186.
     int minX = 256, maxX = -1, minY = 192, maxY = -1;
     const int thresh = std::min(190, fillLum + 55);
     for (int y = 150; y <= 186; y++)
@@ -882,24 +929,75 @@ inline bool AdaptGen5BattlePrompt(Scene& sc, float viewWidth, const ScreenImage*
     if (maxX < minX || maxY < minY)
         return true;
 
-    const int sx = std::max(0, minX - 6);
-    const int ex = std::min(256, maxX + 8);
-    const int desiredW = std::min(std::max(ex - sx, 168), 256 - sx);
-    const int sy = 150;
-    const int sh = 38;
-    Element box = Crop(0, sx, sy, desiredW, sh);
-    const float maxPromptW = std::max(80.0f, viewWidth - 12.0f - minButtonsWidth);
-    box.scale = std::min(1.0f, maxPromptW / (float)box.sw);
-    box.dx = viewLeft + 4.0f;
-    box.dy = 150.0f + (38.0f - box.sh * box.scale) * 0.5f;
-    box.border = true;
-    box.borderRadius = 2.5f;
-    box.borderWidth = 8;
-    box.borderColor = boxBorder;
-    box.crisp = box.scale >= 0.99f;
+    const int sx = std::max(4, minX - 6);
+    const int ex = std::min(252, maxX + 8);
+    const int cropW = std::max(16, ex - sx);
+    const bool insideInner = minY >= 151 && maxY <= 185;
+    const int sy = insideInner ? 151 : 150;
+    const int sh = insideInner ? 35 : 37;
+    const float frameY = 150.0f;
+    const int frameH = 38;
+
+    float promptBoxW = 0.0f;
+    CoSizeGen5BattleTray(viewWidth, (float)(cropW + 4), minButtonsWidth, idealButtonsWidth,
+        maxButtonsWidth, promptBoxW, outButtonsWidth, gutter);
+    const float boxLeft = viewLeft + 4.0f;
+    const int boxIntW = std::max(64, (int)std::floor(promptBoxW));
+
+    // Single rounded outer frame owns the outline across both the text region and gradient fill.
+    Element frame = FillRect(boxLeft, frameY, boxIntW, frameH, fillPx);
+    frame.border = true;
+    frame.borderRadius = 3.0f;
+    frame.borderWidth = 8;
+    frame.borderColor = boxBorder;
+    sc.items.push_back(frame);
+
+    const float innerLeft = boxLeft + 2.0f;
+    const float innerW = std::max(12.0f, (float)boxIntW - 4.0f);
+    const float textScale = std::min(1.0f, innerW / (float)cropW);
+    const float textDy = frameY + (frameH - sh * textScale) * 0.5f;
+
+    // Pick a clean 2-pixel background column strip (without text) so extended width preserves the
+    // box's exact vertical gradient without ever stretching font glyphs.
+    int cleanX = -1;
+    auto isCleanPair = [&](int x) {
+        if (x < 4 || x + 1 >= 252) return false;
+        for (int y = sy; y < sy + sh; y++)
+            if (lum(x, y) > thresh || lum(x + 1, y) > thresh) return false;
+        return true;
+    };
+    for (int x = std::min(248, maxX + 6); x + 1 < 252 && cleanX < 0; x++)
+        if (isCleanPair(x)) cleanX = x;
+    for (int x = minX - 8; x >= 4 && cleanX < 0; x--)
+        if (isCleanPair(x)) cleanX = x;
+
+    if (cleanX >= 0 && innerW > cropW * textScale + 0.5f)
+    {
+        Element ext = Crop(0, cleanX, sy, 2, sh);
+        ext.dx = innerLeft;
+        ext.dy = textDy;
+        ext.scale = textScale;
+        ext.stretchX = innerW / (2.0f * textScale);
+        ext.crisp = textScale >= 0.99f;
+        sc.items.push_back(ext);
+    }
+
+    Element box = Crop(0, sx, sy, cropW, sh);
+    box.dx = innerLeft;
+    box.dy = textDy;
+    box.scale = textScale;
+    box.crisp = textScale >= 0.99f;
     sc.items.push_back(box);
-    outPromptRight = box.dx + box.sw * box.scale;
+    outPromptRight = boxLeft + (float)boxIntW;
     return true;
+}
+
+inline bool AdaptGen5BattlePrompt(Scene& sc, float viewWidth, const ScreenImage* screens,
+    float fixedButtonsWidth, float& outPromptRight)
+{
+    float usedButtons = fixedButtonsWidth;
+    return AdaptGen5BattlePrompt(sc, viewWidth, screens, fixedButtonsWidth, fixedButtonsWidth,
+        fixedButtonsWidth, outPromptRight, usedButtons);
 }
 
 inline Scene Stack(const char* name, std::vector<Element> crops, bool horizontal, float viewWidth)
@@ -1125,7 +1223,8 @@ inline const uint32_t* MergedFillWideHoles(const WideImage& wide, int screenX0, 
         for (int y = h - 2; y >= 0; y--)
             if (wide.pixels[(size_t)y * w + x] >> 24) return wide.pixels;
     }
-    px.assign(wide.pixels, wide.pixels + (size_t)w * h);
+    px.resize((size_t)w * h);
+    memcpy(px.data(), wide.pixels, (size_t)w * h * 4);
     for (int y = 0; y < h; y++)
     {
         uint32_t* row = &px[(size_t)y * w];

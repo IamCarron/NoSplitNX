@@ -15,7 +15,8 @@ class Gen5LayoutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             exe = Path(folder) / 'test_gen5'
             subprocess.run(
-                ['c++', '-std=c++17', '-I' + str(ROOT / 'frontend'), str(ROOT / 'tests/test_gen5_layout.cpp'), '-o', str(exe)] + cflags + libs,
+                ['c++', '-std=c++17', '-I' + str(ROOT / 'frontend'), '-I' + str(ROOT / 'melonDS/src'),
+                 str(ROOT / 'tests/test_gen5_layout.cpp'), '-o', str(exe)] + cflags + libs,
                 check=True
             )
             subprocess.run([str(exe)], env={'SDL_VIDEODRIVER': 'dummy'}, check=True)

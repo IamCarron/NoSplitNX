@@ -133,10 +133,22 @@ public:
             // changing): a piece the same as last frame keeps its texture. (Not the piece under
             // the widescreen world, whose holes follow the world's picture.)
             const bool canCache = !overWorld || wide->serial != 0;
-            const auto tp = std::chrono::steady_clock::now();
-            const uint64_t sig = !canCache ? 0 : (Signature(el, src, plain, nearest) ^ (overWorld ? wide->serial * 1099511628211ull : 0ull));
-            SignatureMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tp).count();
-            if (canCache && cached.hasSig && cached.sig == sig)
+            const uint64_t ws = overWorld ? wide->serial : 0;
+            const bool steadyWorld = !overWorld || cached.wideSerial == ws;
+            cached.wideSerial = ws;
+            uint64_t sig = 0;
+            bool cacheHit = false;
+            // When the 3D scene animates on every frame (60 fps interpolation), wide->serial changes
+            // every tick so overWorld cannot match last frame's texture. Skip hashing all 49,152
+            // pixels and flags until a static frame holds its serial steady.
+            if (canCache && steadyWorld)
+            {
+                const auto tp = std::chrono::steady_clock::now();
+                sig = Signature(el, src, plain, nearest) ^ (overWorld ? ws * 1099511628211ull : 0ull);
+                SignatureMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tp).count();
+                cacheHit = cached.hasSig && cached.sig == sig;
+            }
+            if (cacheHit)
             {
                 const SDL_BlendMode bm = plain ? SDL_BLENDMODE_NONE : (!nearest && slotIndex < (int)CachedPremul.size() && CachedPremul[slotIndex]) ? Premultiplied : SDL_BLENDMODE_BLEND;
                 if (!cached.hasBlend || cached.blend != bm)
@@ -148,7 +160,7 @@ public:
                 DrawPiece(tex, dst, el);
                 continue;
             }
-            cached.hasSig = canCache;
+            cached.hasSig = canCache && steadyWorld;
             cached.sig = sig;
             const auto tu = std::chrono::steady_clock::now();
             if (plain)
@@ -194,6 +206,7 @@ public:
                         wideCol[x] = (wx >= 0 && wx < wide->w) ? wx : -1;
                     }
                 }
+                const bool fastLayerOnly = !keyed && !spriteKey && al == 255 && !el.holeCount && el.cutX >= 256 && el.sx + el.sw <= 256;
                 auto div255 = [](uint32_t val) -> uint32_t { return (val + 1u + (val >> 8)) >> 8; };
                 for (int y = 0; y < el.sh; y++)
                 {
@@ -207,6 +220,31 @@ public:
                         if (wy >= 0 && wy < wide->h) wideRow = wide->pixels + (size_t)wy * wide->w;
                     }
                     uint32_t* out = &Buf[(size_t)y * el.sw];
+                    if (fastLayerOnly && frow)
+                    {
+                        const uint8_t dropMask = el.drop;
+                        if (wideRow)
+                        {
+                            for (int x = 0; x < el.sw; x++)
+                            {
+                                const uint32_t c = row[x] & 0xFFFFFF;
+                                const uint8_t lc = LayerClass(frow[x]);
+                                const bool skip = (lc & dropMask) ||
+                                    (lc == LAYER_BACKDROP && wideCol[x] >= 0 && (wideRow[wideCol[x]] >> 24) != 0);
+                                out[x] = skip ? (premul ? 0 : c) : (0xFF000000u | c);
+                            }
+                        }
+                        else
+                        {
+                            for (int x = 0; x < el.sw; x++)
+                            {
+                                const uint32_t c = row[x] & 0xFFFFFF;
+                                const bool skip = (LayerClass(frow[x]) & dropMask) != 0;
+                                out[x] = skip ? (premul ? 0 : c) : (0xFF000000u | c);
+                            }
+                        }
+                        continue;
+                    }
                     for (int x = 0; x < el.sw; x++)
                     {
                         uint32_t c = row[x] & 0xFFFFFF;
@@ -249,6 +287,7 @@ private:
         SDL_Texture* t = nullptr;
         int w = 0, h = 0;
         uint64_t sig = 0;
+        uint64_t wideSerial = 0;
         bool hasSig = false;
         SDL_ScaleMode scale = SDL_ScaleModeNearest;
         SDL_BlendMode blend = SDL_BLENDMODE_NONE;

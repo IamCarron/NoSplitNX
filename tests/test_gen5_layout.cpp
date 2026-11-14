@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdio>
 #include "../frontend/gpucompose.h"
+#include "../frontend/bw1.h"
 
 int main()
 {
@@ -86,7 +87,7 @@ int main()
     }
 
     // Gen 5 battle prompt adaptation: moves bottom prompt into a framed left box on a dark tray
-    // across wide screens, leaving generous room for right-hand command buttons on both compositors.
+    // across wide screens, mutually co-sized with right-hand buttons so both halves meet evenly.
     {
         constexpr uint32_t darkTray = 0xFF1A2024u, crimson = 0xFF682428u, arena = 0xFF103020u;
         std::fill(top.begin(), top.end(), arena);
@@ -96,30 +97,36 @@ int main()
             for (int y = 147; y < 150; y++) top[y * 256 + x] = crimson;
             for (int y = 150; y < 192; y++) top[y * 256 + x] = darkTray;
         }
-        // Prompt glyphs spanning x=16..196 (similar to "¿Qué debería hacer Latios?").
-        for (int y = 158; y < 178; y++)
-            for (int x = 16; x < 196; x++)
+        // Prompt glyphs spanning x=16..180 (similar to "¿Qué debería hacer Latios?").
+        for (int y = 158; y < 174; y++)
+            for (int x = 16; x < 180; x++)
                 top[y * 256 + x] = white;
 
         Scene battle;
         battle.name = "battle";
         battle.wide = true;
         battle.items = { FullScreen(0) };
-        float promptRight = 0.0f;
+        float promptRight = 0.0f, usedBtnW = 0.0f;
         const float viewW = 341.333f;
         const float viewLeft = 128.0f - viewW / 2.0f;
-        assert(AdaptGen5BattlePrompt(battle, viewW, screens, 112.0f, promptRight));
+        const float viewRight = 128.0f + viewW / 2.0f;
+        float minBtnW = 0.0f, idealBtnW = 0.0f, maxBtnW = 0.0f;
+        Gen5BattleButtonBounds(0, false, false, 110, minBtnW, idealBtnW, maxBtnW);
+        assert(AdaptGen5BattlePrompt(battle, viewW, screens, minBtnW, idealBtnW, maxBtnW, promptRight, usedBtnW));
         assert(battle.items[0].holeCount == 1);
         assert(battle.items[0].holes[0][1] == 147 && battle.items[0].holes[0][3] == 192);
-        const Element& box = battle.items.back();
-        assert(box.screen == 0 && box.border);
-        assert(box.dx < 0.0f && box.dx <= viewLeft + 4.5f); // shifted into widescreen left margin
-        assert(promptRight <= 128.0f + viewW / 2.0f - 112.0f);
+        const Element& textBox = battle.items.back();
+        const Element& frame = battle.items[3];
+        assert(frame.screen == -1 && frame.border);
+        assert(textBox.screen == 0 && textBox.stretchX == 1.0f && textBox.scale >= 0.99f);
+        assert(frame.dx < 0.0f && frame.dx <= viewLeft + 4.5f); // shifted into widescreen left margin
+        const float trayGap = (viewRight - 2.0f - usedBtnW) - promptRight;
+        assert(trayGap >= 4.0f && trayGap <= 6.5f); // mutually meets right-hand buttons cleanly
 
         std::vector<uint32_t> cpu;
         MergedCompose(battle, screens, 1280, 720, cpu, false, nullptr);
         const MergedView mv = MergedMakeView(1280, 720);
-        const int gx = (int)(mv.originX + (box.dx + 12.0f) * mv.unit);
+        const int gx = (int)(mv.originX + (textBox.dx + 12.0f) * mv.unit);
         const int gy = (int)(mv.originY + 166.0f * mv.unit);
         assert(gx >= 0 && gx < 1280 && gy >= 0 && gy < 720);
         assert((cpu[gy * 1280 + gx] & 0xFFFFFF) == (white & 0xFFFFFF));
@@ -138,6 +145,26 @@ int main()
         }
         SDL_DestroyRenderer(renderer);
         SDL_FreeSurface(surface);
+    }
+
+    // Black 1 bottom arrow banner detector must match real 2D strips and ignore bright 3D map snow/water.
+    {
+        std::vector<uint8_t> flags(256 * 192, 0x02); // LAYER_BG1 (2D)
+        std::fill(top.begin(), top.end(), 0xFF202020u);
+        for (int y = 172; y < 192; y++)
+            for (int x = 0; x < 256; x++)
+                top[y * 256 + x] = 0xFFF8F8F8u;
+        for (int y = 174; y < 188; y++)
+            for (int x = 122; x < 134; x++)
+                top[y * 256 + x] = 0xFF00D8F0u; // cyan arrow
+        assert(Bw1Layouts::TopHasBottomArrowBanner(top.data(), flags.data()));
+
+        // Same pixels rendered on 3D layer (0x40) or broken by terrain columns must be rejected.
+        std::fill(flags.begin() + 170 * 256, flags.end(), 0x40); // LAYER_3D
+        assert(!Bw1Layouts::TopHasBottomArrowBanner(top.data(), flags.data()));
+        std::fill(flags.begin(), flags.end(), 0x02);
+        for (int y = 172; y < 192; y++) top[y * 256 + 48] = 0xFF305080u;
+        assert(!Bw1Layouts::TopHasBottomArrowBanner(top.data(), flags.data()));
     }
 
     // Battle questions: the question at full size, both answers in the message bar,

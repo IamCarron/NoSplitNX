@@ -122,11 +122,11 @@ jobs:
           cat build-sd/SHA256SUMS.txt >> build-sd/RELEASE_NOTES.md
           echo '```' >> build-sd/RELEASE_NOTES.md
 
-      - name: Create GitHub Release for Beta Tag
+      - name: Create GitHub Release for Tag
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           name: "NoSplitNX ${{ github.ref_name }}"
           body_path: build-sd/RELEASE_NOTES.md
           generate_release_notes: false
