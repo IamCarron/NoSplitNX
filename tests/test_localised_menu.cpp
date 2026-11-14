@@ -72,5 +72,33 @@ int main(int argc, char** argv) {
     std::vector<Launcher::Game> manyGames(6);
     for (size_t i = 0; i < manyGames.size(); ++i) manyGames[i].name = "GAME " + std::to_string(i);
     assert(Launcher::MaxScroll(Launcher::MakeView(wide, manyGames, 0)) > 0);
+
+    // Tall cheat-like menus at 1280x720 must keep comfortable outer vertical margin and ignore
+    // out-of-range row taps, and long Spanish footer hints must wrap cleanly inside the modal.
+    {
+        Menu tall;
+        for (int i = 0; i < 24; ++i) tall.items.push_back({"CHEAT CODE NUMBER " + std::to_string(i), "OFF"});
+        Canvas mc; mc.Resize(1280, 720);
+        tall.Draw(mc, "POPULAR CHEATS", "A: OPEN   B: BACK", "", 260, false);
+        assert(tall.drawnY >= 24);
+        assert(tall.drawnY + tall.drawnH <= mc.h - 24);
+        assert(tall.drawnShown > 0 && tall.drawnShown < (int)tall.items.size());
+        assert(tall.ItemAt(tall.drawnX + tall.drawnW / 2, tall.drawnFirstY + tall.drawnShown * tall.drawnLineH + 2) == -1);
+
+        UiLang::Set("es");
+        Menu controls;
+        controls.items = {{"KEY BINDINGS", ""}, {"FAST FORWARD BUTTON", "HOLD"}, {"BACK", ""}};
+        const std::string longHint =
+            "Mantener: pulsa para acelerar y suelta para parar. Alternar: pulsa una vez para empezar y otra para parar. Se aplica al teclado, al mando y al avance rapido en pantalla";
+        Canvas hc; hc.Resize(1280, 720);
+        controls.Draw(hc, "CONTROLES", longHint, "", 0, false);
+        assert(controls.drawnX > 20 && controls.drawnX + controls.drawnW < hc.w - 20);
+        // No foreground text/widget pixel may protrude past the left or right edges of the box.
+        for (int y = 0; y < hc.h; ++y)
+        {
+            for (int x = 0; x < controls.drawnX; ++x) assert((hc.px[y * hc.w + x] & 0xFFFFFFu) == 0);
+            for (int x = controls.drawnX + controls.drawnW; x < hc.w; ++x) assert((hc.px[y * hc.w + x] & 0xFFFFFFu) == 0);
+        }
+    }
     std::cout << "Translation coverage, prefixes, rendered option values, spacing and touch rows passed\n";
 }

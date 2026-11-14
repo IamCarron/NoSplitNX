@@ -3,9 +3,11 @@
 #include "switch_platform.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <dirent.h>
@@ -23,11 +25,6 @@
 #include "thirdparty/stb_image.h"
 #undef STB_IMAGE_IMPLEMENTATION
 #include "launcher.h"
-#if __has_include(<SDL.h>)
-#include <SDL.h>
-#else
-#include <SDL2/SDL.h>
-#endif
 #include "rom_music.h"
 #include "ui_lang_sdl.h"
 #include "controls.h"
@@ -74,8 +71,8 @@ std::vector<char*> g_argv;
 TestRun::State g_test;
 std::string g_self;
 
-// Owns the SDL audio output device cleanly while PickGame is on screen and closes it
-// before handing off to the main emulator loop (which initialises SDL on its own).
+// Owns native Nintendo Switch audout playback on a background thread while PickGame is on
+// screen and tears it down completely before handing off to the main emulator SDL audio loop.
 struct MusicAudioSession
 {
     static int ParseVolume(const std::string& s)
@@ -83,64 +80,143 @@ struct MusicAudioSession
         return s.empty() ? 100 : std::clamp(atoi(s.c_str()), 0, 100);
     }
 
+    static constexpr int kBufCount = 2;
+    static constexpr size_t kBufFrames = 1024;
+    static constexpr size_t kBufBytes = kBufFrames * 4;
+
     RomMusic::Player player;
-    SDL_AudioDeviceID dev = 0;
-    bool sdlOwned = false;
+    std::mutex mtx;
+    std::atomic<bool> quit{false};
+    bool audoutReady = false;
+    bool threadStarted = false;
+    Thread audioThread{};
+    uint8_t* pool = nullptr;
+    AudioOutBuffer bufs[kBufCount]{};
     int pendingIdx = -1;
     int loadedIdx = -1;
     int settleFrames = 0;
     float bands[RomMusic::Player::kBandCount] = {};
     bool bandsActive = false;
-    std::vector<int16_t> mixBuf;
+
+    static void AudioThreadMain(void* arg)
+    {
+        static_cast<MusicAudioSession*>(arg)->AudioLoop();
+    }
+
+    void FillBuffer(AudioOutBuffer& buf)
+    {
+        int16_t* dst = static_cast<int16_t*>(buf.buffer);
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            if (player.IsLoaded() && player.Volume() > 0)
+                player.Mix(dst, (int)kBufFrames);
+            else
+            {
+                std::fill(dst, dst + kBufFrames * 2, (int16_t)0);
+                // Keep band meters decaying smoothly even while paused/fading.
+                player.Mix(dst, (int)kBufFrames);
+            }
+        }
+        armDCacheFlush(buf.buffer, kBufBytes);
+    }
+
+    void AudioLoop()
+    {
+        FillBuffer(bufs[0]);
+        if (R_FAILED(audoutAppendAudioOutBuffer(&bufs[0]))) return;
+        int cur = 1;
+        while (!quit.load(std::memory_order_acquire))
+        {
+            FillBuffer(bufs[cur]);
+            AudioOutBuffer* released = nullptr;
+            if (R_FAILED(audoutPlayBuffer(&bufs[cur], &released))) break;
+            if (released == &bufs[0]) cur = 0;
+            else if (released == &bufs[1]) cur = 1;
+            else cur ^= 1;
+        }
+    }
 
     MusicAudioSession(bool enable, int initialVol)
     {
         player.SetVolume(initialVol);
         if (!enable) return;
-        const uint32_t had = SDL_WasInit(SDL_INIT_AUDIO);
-        if (!(had & SDL_INIT_AUDIO))
+        const Result initRc = audoutInitialize();
+        if (R_FAILED(initRc))
         {
-            if (SDL_InitSubSystem(SDL_INIT_AUDIO) == 0) sdlOwned = true;
-            else return;
+            fprintf(stderr, "[music] audoutInitialize failed: 0x%x\n", (unsigned)initRc);
+            return;
         }
-        SDL_AudioSpec want;
-        SDL_zero(want);
-        want.freq = RomMusic::Player::kSampleRate;
-        want.format = AUDIO_S16SYS;
-        want.channels = 2;
-        want.samples = 1024;
-        dev = SDL_OpenAudioDevice(nullptr, 0, &want, nullptr, 0);
-        if (dev)
+        const Result startRc = audoutStartAudioOut();
+        if (R_FAILED(startRc))
         {
-            SDL_PauseAudioDevice(dev, 0);
-            mixBuf.resize(1024 * 2);
+            fprintf(stderr, "[music] audoutStartAudioOut failed: 0x%x\n", (unsigned)startRc);
+            audoutExit();
+            return;
         }
+        void* mem = nullptr;
+        if (posix_memalign(&mem, 0x1000, (size_t)kBufCount * kBufBytes) != 0 || !mem)
+        {
+            fprintf(stderr, "[music] aligned audio buffer alloc failed\n");
+            audoutStopAudioOut();
+            audoutExit();
+            return;
+        }
+        pool = static_cast<uint8_t*>(mem);
+        memset(pool, 0, (size_t)kBufCount * kBufBytes);
+        for (int i = 0; i < kBufCount; i++)
+        {
+            bufs[i].next = nullptr;
+            bufs[i].buffer = pool + (size_t)i * kBufBytes;
+            bufs[i].buffer_size = kBufBytes;
+            bufs[i].data_size = kBufBytes;
+            bufs[i].data_offset = 0;
+        }
+        audoutReady = true;
+        quit.store(false, std::memory_order_release);
+        if (R_SUCCEEDED(threadCreate(&audioThread, AudioThreadMain, this, nullptr, 0x20000, 0x2B, -2)))
+        {
+            if (R_SUCCEEDED(threadStart(&audioThread))) threadStarted = true;
+            else threadClose(&audioThread);
+        }
+        fprintf(stderr, "[music] audout started (rate=%u ch=%u state=%u thread=%d)\n",
+                audoutGetSampleRate(), audoutGetChannelCount(), (unsigned)audoutGetAudioOutState(), (int)threadStarted);
     }
 
     ~MusicAudioSession() { Shutdown(); }
 
     void Shutdown()
     {
-        if (dev)
+        quit.store(true, std::memory_order_release);
+        if (threadStarted)
         {
-            SDL_PauseAudioDevice(dev, 1);
-            SDL_ClearQueuedAudio(dev);
-            SDL_CloseAudioDevice(dev);
-            dev = 0;
+            threadWaitForExit(&audioThread);
+            threadClose(&audioThread);
+            threadStarted = false;
         }
-        if (sdlOwned)
+        if (audoutReady)
         {
-            SDL_QuitSubSystem(SDL_INIT_AUDIO);
-            sdlOwned = false;
+            audoutStopAudioOut();
+            audoutExit();
+            audoutReady = false;
         }
-        player.Clear();
+        if (pool)
+        {
+            free(pool);
+            pool = nullptr;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            player.Clear();
+        }
         bandsActive = false;
     }
 
     void Update(const std::vector<Launcher::Game>& games, int selectedIdx, int volPct)
     {
-        player.SetVolume(volPct);
-        if (!dev) return;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            player.SetVolume(volPct);
+        }
 
         const int targetIdx = (selectedIdx >= 0 && selectedIdx < (int)games.size() &&
                                !games[selectedIdx].comingSoon && !games[selectedIdx].rom.empty())
@@ -152,8 +228,10 @@ struct MusicAudioSession
             settleFrames = 9; // ~150 ms debounce so fast carousel scrolling stays fluid
             if (targetIdx != loadedIdx)
             {
-                player.Clear();
-                SDL_ClearQueuedAudio(dev);
+                {
+                    std::lock_guard<std::mutex> lock(mtx);
+                    player.Clear();
+                }
                 bandsActive = false;
                 std::fill(std::begin(bands), std::end(bands), 0.0f);
             }
@@ -166,36 +244,56 @@ struct MusicAudioSession
             {
                 loadedIdx = pendingIdx;
                 if (loadedIdx >= 0 && volPct > 0)
-                    player.LoadFromRom(games[loadedIdx].rom, games[loadedIdx].platform, games[loadedIdx].code);
+                {
+                    RomMusic::Player nextPlayer;
+                    nextPlayer.SetVolume(volPct);
+                    const bool ok = nextPlayer.LoadFromRom(games[loadedIdx].rom, games[loadedIdx].platform, games[loadedIdx].code);
+                    fprintf(stderr, "[music] %s (%s): %s\n", games[loadedIdx].code.c_str(),
+                            games[loadedIdx].platform == 1 ? "GBA" : "NDS", ok ? "loaded" : "no audio track");
+                    std::lock_guard<std::mutex> lock(mtx);
+                    player = std::move(nextPlayer);
+                }
                 else
+                {
+                    std::lock_guard<std::mutex> lock(mtx);
                     player.Clear();
+                }
             }
         }
-        else if (loadedIdx >= 0 && volPct > 0 && !player.IsLoaded())
+        else if (loadedIdx >= 0 && volPct > 0)
         {
-            player.LoadFromRom(games[loadedIdx].rom, games[loadedIdx].platform, games[loadedIdx].code);
+            bool needLoad = false;
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                needLoad = !player.IsLoaded();
+            }
+            if (needLoad)
+            {
+                RomMusic::Player nextPlayer;
+                nextPlayer.SetVolume(volPct);
+                const bool ok = nextPlayer.LoadFromRom(games[loadedIdx].rom, games[loadedIdx].platform, games[loadedIdx].code);
+                fprintf(stderr, "[music] %s (%s): %s\n", games[loadedIdx].code.c_str(),
+                        games[loadedIdx].platform == 1 ? "GBA" : "NDS", ok ? "loaded" : "no audio track");
+                std::lock_guard<std::mutex> lock(mtx);
+                if (!player.IsLoaded()) player = std::move(nextPlayer);
+            }
         }
 
-        if (volPct <= 0 || !player.IsLoaded())
         {
-            if (SDL_GetQueuedAudioSize(dev) > 0) SDL_ClearQueuedAudio(dev);
-            bandsActive = false;
-            for (float& b : bands) b *= 0.80f;
-            return;
+            std::lock_guard<std::mutex> lock(mtx);
+            if (volPct <= 0 || !player.IsLoaded())
+            {
+                bandsActive = false;
+                for (float& b : bands) b *= 0.80f;
+                return;
+            }
+            if (!threadStarted)
+            {
+                int16_t dummy[kBufFrames * 2];
+                player.Mix(dummy, (int)kBufFrames);
+            }
+            player.GetBands(bands, bandsActive);
         }
-
-        const int targetQueuedFrames = 14400; // ~300 ms headroom so launcher rendering frames never starve audio
-        int queuedFrames = (int)(SDL_GetQueuedAudioSize(dev) / 4);
-        int safety = 0;
-        while (queuedFrames < targetQueuedFrames && safety++ < 16)
-        {
-            const int chunkFrames = 960; // 20 ms at 48 kHz
-            if ((int)mixBuf.size() < chunkFrames * 2) mixBuf.resize((size_t)chunkFrames * 2);
-            player.Mix(mixBuf.data(), chunkFrames);
-            SDL_QueueAudio(dev, mixBuf.data(), (Uint32)(chunkFrames * 4));
-            queuedFrames += chunkFrames;
-        }
-        player.GetBands(bands, bandsActive);
     }
 };
 

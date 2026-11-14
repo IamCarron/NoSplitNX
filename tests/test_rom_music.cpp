@@ -333,6 +333,190 @@ std::vector<uint8_t> BuildSyntheticNds()
     return nds;
 }
 
+std::vector<uint8_t> BuildSyntheticNdsLargeSwarAndFallback(bool corruptFnt)
+{
+    // SWAR with 605 waves (> 512 legacy limit): slots 0..599 stubbed tiny wave, 600..604 440Hz sine.
+    std::vector<uint8_t> w0;
+    w0.push_back(0);
+    w0.push_back(1);
+    AppendU16(w0, 32768);
+    AppendU16(w0, 32768 / 64);
+    AppendU16(w0, 0);
+    AppendU32(w0, 74);
+    for (int i = 0; i < 296; i++)
+    {
+        double ph = 2.0 * 3.14159265 * (double)(i % 74) / 74.0;
+        w0.push_back((uint8_t)(int8_t)(std::sin(ph) * 100.0));
+    }
+    const uint32_t nWaves = 605;
+    std::vector<uint8_t> fSwar(0x3C + nWaves * 4, 0);
+    PutTag(fSwar, 0, "SWAR");
+    PutU32(fSwar, 4, 0x0100FEFFu);
+    PutU16(fSwar, 12, 0x10);
+    PutU16(fSwar, 14, 1);
+    PutTag(fSwar, 0x10, "DATA");
+    PutU32(fSwar, 0x38, nWaves);
+    const uint32_t waveOff = (uint32_t)fSwar.size();
+    AppendVec(fSwar, w0);
+    Pad4(fSwar);
+    for (uint32_t i = 0; i < nWaves; i++) PutU32(fSwar, 0x3C + i * 4, waveOff);
+    PutU32(fSwar, 8, (uint32_t)fSwar.size());
+    PutU32(fSwar, 0x14, (uint32_t)fSwar.size() - 0x10);
+
+    // SBNK referencing swav index 600 (> 512)
+    std::vector<uint8_t> fBank(0x3C + 4, 0);
+    PutTag(fBank, 0, "SBNK");
+    PutU32(fBank, 4, 0x0100FEFFu);
+    PutU16(fBank, 12, 0x10);
+    PutU16(fBank, 14, 1);
+    PutTag(fBank, 0x10, "DATA");
+    PutU32(fBank, 0x38, 1);
+    const uint32_t instOff = (uint32_t)fBank.size();
+    PutU32(fBank, 0x3C, 1u | (instOff << 8));
+    AppendU16(fBank, 600);
+    AppendU16(fBank, 0);
+    fBank.push_back(69);
+    fBank.push_back(125); fBank.push_back(100); fBank.push_back(120); fBank.push_back(90); fBank.push_back(64);
+    PutU32(fBank, 8, (uint32_t)fBank.size());
+    PutU32(fBank, 0x14, (uint32_t)fBank.size() - 0x10);
+
+    // Highest-scored candidate plays rests only (silent -> skipped by ProbeAudible).
+    std::vector<uint8_t> silentSeq = {
+        0xFE, 0x01, 0x00,
+        0xE1, 120, 0x00,
+        0x80, 96,
+        0x94, 6, 0, 0
+    };
+    while (silentSeq.size() < 0x80) silentSeq.push_back(0);
+    const auto fSilent = BuildSseq(silentSeq);
+
+    // Second candidate uses swav 600 (audible!).
+    std::vector<uint8_t> audibleSeq = {
+        0xFE, 0x01, 0x00,
+        0xE1, 125, 0x00,
+        0xC1, 120,
+        0x81, 0x00,
+        0xC7, 0x01,
+        0x45, 118, 24,
+        0x49, 118, 24,
+        0x94, 10, 0, 0
+    };
+    const auto fAudible = BuildSseq(audibleSeq);
+
+    std::vector<uint8_t> symb(8 + 32, 0);
+    PutTag(symb, 0, "SYMB");
+    PutU32(symb, 8, (uint32_t)symb.size());
+    const uint32_t sListOff = (uint32_t)symb.size();
+    AppendU32(symb, 2);
+    const char n0[] = "SEQ_BGM_SILENT_FIRST";
+    const char n1[] = "SEQ_BGM_ROUTE_600";
+    const uint32_t str0Off = sListOff + 12;
+    const uint32_t str1Off = str0Off + (uint32_t)sizeof(n0);
+    AppendU32(symb, str0Off);
+    AppendU32(symb, str1Off);
+    AppendBytes(symb, n0, sizeof(n0));
+    AppendBytes(symb, n1, sizeof(n1));
+    Pad4(symb);
+    PutU32(symb, 4, (uint32_t)symb.size());
+
+    std::vector<uint8_t> info(8 + 32, 0);
+    PutTag(info, 0, "INFO");
+    const uint32_t seqRecOff = (uint32_t)info.size();
+    PutU32(info, 8 + 0 * 4, seqRecOff);
+    AppendU32(info, 2);
+    const uint32_t e0 = seqRecOff + 12, e1 = e0 + 12;
+    AppendU32(info, e0);
+    AppendU32(info, e1);
+    for (uint16_t fid = 0; fid < 2; fid++)
+    {
+        AppendU16(info, fid); AppendU16(info, 0);
+        AppendU16(info, 0);
+        info.push_back(120); info.push_back(64); info.push_back(64); info.push_back(0);
+        AppendU16(info, 0);
+    }
+    const uint32_t bankRecOff = (uint32_t)info.size();
+    PutU32(info, 8 + 2 * 4, bankRecOff);
+    AppendU32(info, 1);
+    AppendU32(info, bankRecOff + 8);
+    AppendU16(info, 2); AppendU16(info, 0);
+    AppendU16(info, 0); AppendU16(info, 0xFFFF); AppendU16(info, 0xFFFF); AppendU16(info, 0xFFFF);
+    const uint32_t swarRecOff = (uint32_t)info.size();
+    PutU32(info, 8 + 3 * 4, swarRecOff);
+    AppendU32(info, 1);
+    AppendU32(info, swarRecOff + 8);
+    AppendU16(info, 3); AppendU16(info, 0);
+    Pad4(info);
+    PutU32(info, 4, (uint32_t)info.size());
+
+    const uint32_t symbOff = 0x40;
+    const uint32_t infoOff = symbOff + (uint32_t)symb.size();
+    const uint32_t fatOff = infoOff + (uint32_t)info.size();
+    const uint32_t fatSize = 12 + 4 * 16;
+    const uint32_t fileOff = fatOff + fatSize;
+    const std::vector<const std::vector<uint8_t>*> files = { &fSilent, &fAudible, &fBank, &fSwar };
+
+    std::vector<uint8_t> fat(fatSize, 0);
+    PutTag(fat, 0, "FAT ");
+    PutU32(fat, 4, fatSize);
+    PutU32(fat, 8, 4);
+    std::vector<uint8_t> fileBlk(8, 0);
+    PutTag(fileBlk, 0, "FILE");
+    for (size_t i = 0; i < files.size(); i++)
+    {
+        const uint32_t relOff = fileOff + (uint32_t)fileBlk.size();
+        PutU32(fat, 12 + i * 16, relOff);
+        PutU32(fat, 12 + i * 16 + 4, (uint32_t)files[i]->size());
+        AppendVec(fileBlk, *files[i]);
+        Pad4(fileBlk);
+    }
+    PutU32(fileBlk, 4, (uint32_t)fileBlk.size());
+
+    std::vector<uint8_t> sdat(0x40, 0);
+    PutTag(sdat, 0, "SDAT");
+    PutU32(sdat, 4, 0x0100FEFFu);
+    PutU16(sdat, 12, 0x40);
+    PutU16(sdat, 14, 4);
+    PutU32(sdat, 0x10, symbOff); PutU32(sdat, 0x14, (uint32_t)symb.size());
+    PutU32(sdat, 0x18, infoOff); PutU32(sdat, 0x1C, (uint32_t)info.size());
+    PutU32(sdat, 0x20, fatOff);  PutU32(sdat, 0x24, fatSize);
+    PutU32(sdat, 0x28, fileOff); PutU32(sdat, 0x2C, (uint32_t)fileBlk.size());
+    AppendVec(sdat, symb);
+    AppendVec(sdat, info);
+    AppendVec(sdat, fat);
+    AppendVec(sdat, fileBlk);
+    PutU32(sdat, 8, (uint32_t)sdat.size());
+
+    if (corruptFnt)
+    {
+        std::vector<uint8_t> nds(0x2000, 0xA5);
+        PutU32(nds, 0x40, 0); PutU32(nds, 0x44, 0);
+        PutU32(nds, 0x48, 0); PutU32(nds, 0x4C, 0);
+        AppendVec(nds, sdat);
+        return nds;
+    }
+
+    const char sdatName[] = "sound_data.sdat";
+    std::vector<uint8_t> fnt(8, 0);
+    PutU32(fnt, 0, 8);
+    PutU16(fnt, 4, 0);
+    PutU16(fnt, 6, 1);
+    fnt.push_back((uint8_t)strlen(sdatName));
+    AppendBytes(fnt, sdatName, strlen(sdatName));
+    fnt.push_back(0);
+    Pad4(fnt);
+    const uint32_t ndsFntOff = 0x200;
+    const uint32_t ndsFatOff = ndsFntOff + (uint32_t)fnt.size();
+    const uint32_t ndsSdatOff = ndsFatOff + 8;
+    std::vector<uint8_t> nds(ndsSdatOff, 0);
+    PutU32(nds, 0x40, ndsFntOff); PutU32(nds, 0x44, (uint32_t)fnt.size());
+    PutU32(nds, 0x48, ndsFatOff); PutU32(nds, 0x4C, 8);
+    PutVec(nds, ndsFntOff, fnt);
+    PutU32(nds, ndsFatOff + 0, ndsSdatOff);
+    PutU32(nds, ndsFatOff + 4, ndsSdatOff + (uint32_t)sdat.size());
+    AppendVec(nds, sdat);
+    return nds;
+}
+
 std::vector<uint8_t> BuildSyntheticGba()
 {
     std::vector<uint8_t> rom(64 * 1024, 0);
@@ -551,6 +735,20 @@ int main()
         float bandSum = 0.0f;
         for (float v : bands) bandSum += v;
         assert(bandSum > 0.15f);
+    }
+
+    // 4. NDS >512 SWAV waves, silent highest-scored candidate skipped, and raw-ROM SDAT fallback
+    for (bool corruptFnt : { false, true })
+    {
+        const auto ndsPath = tmp / (corruptFnt ? "fnt_fallback.nds" : "large_swar_skip_silent.nds");
+        WriteBytes(ndsPath, BuildSyntheticNdsLargeSwarAndFallback(corruptFnt));
+        RomMusic::Player p;
+        p.SetVolume(100);
+        assert(p.LoadFromRom(ndsPath.string(), 0, "IRBS"));
+        assert(p.IsLoaded());
+        std::vector<int16_t> out(24000 * 2);
+        p.Mix(out.data(), 24000);
+        assert(ComputeRms(out) > 400.0);
     }
 
     std::filesystem::remove_all(tmp);

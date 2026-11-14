@@ -91,6 +91,45 @@ public:
         fprintf(stderr, "[bw1] Pokemon Black: badges %d, card edit %d, save %d\n", badges, cardEdit, report);
     }
 
+    // White bottom-edge strip ("Look at the touch screen ▼") on the top screen during overworld
+    // submenus (such as SAVE in Spanish Black) where the game expects interaction on the bottom.
+    static bool TopHasBottomArrowBanner(const uint32_t* px)
+    {
+        if (!px) return false;
+        int whiteRows = 0, darkAbove = 0, cyan = 0;
+        for (int y = 176; y <= 188; y += 3)
+        {
+            const uint32_t lc = px[y * 256 + 24], rc = px[y * 256 + 232];
+            const bool lw = ((lc >> 16) & 0xFF) > 215 && ((lc >> 8) & 0xFF) > 215 && (lc & 0xFF) > 215;
+            const bool rw = ((rc >> 16) & 0xFF) > 215 && ((rc >> 8) & 0xFF) > 215 && (rc & 0xFF) > 215;
+            if (lw && rw) whiteRows++;
+        }
+        for (int x = 32; x <= 224; x += 48)
+        {
+            const uint32_t c = px[160 * 256 + x];
+            if (((c >> 16) & 0xFF) + ((c >> 8) & 0xFF) + (c & 0xFF) < 645) darkAbove++;
+        }
+        for (int y = 170; y <= 190; y++)
+            for (int x = 118; x <= 138; x++)
+            {
+                const uint32_t c = px[y * 256 + x];
+                const int r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
+                if (b > r + 40 && g > r + 30) cyan++;
+            }
+        return whiteRows >= 3 && darkAbove >= 3 && cyan >= 12;
+    }
+
+    // Save card / save prompt drawn on the Gen 5 touch screen (SaveScreenPieces reads the same).
+    static bool BottomScreenIsSave(const uint32_t* px)
+    {
+        if (!px) return false;
+        auto lum = [&](int x, int y) {
+            const uint32_t c = px[y * 256 + x];
+            return (((c >> 16) & 0xFF) + ((c >> 8) & 0xFF) + (c & 0xFF)) / 3;
+        };
+        return (lum(5, 24) > 220 && lum(250, 24) > 220) || (lum(20, 108) > 200 && lum(200, 108) > 200);
+    }
+
     void Adjust(Scene& sc, float viewWidth, const ScreenImage* screens)
     {
         if (!on || !Fw) return;
@@ -100,22 +139,42 @@ public:
         const float viewLeft = 128 - viewWidth / 2, viewRight = 128 + viewWidth / 2;
         // (It skips a few frames as it opens; and while the save is written, for a second or
         // two, the game does nothing else, the overworld included: the save stays until the
-        // overworld runs again.)
-        if (Fw->Ran(report, 10) || (saving && !Fw->Ran(field, 1)))
+        // overworld runs again. Also match the bottom arrow banner + touch-screen save UI so
+        // versions whose REPORT_EVENT_Main address missed never show the cut-off ▼ strip.)
+        const bool pixelSave = screens && TopHasBottomArrowBanner(screens[0].pixels) && BottomScreenIsSave(screens[1].pixels);
+        if (Fw->Ran(report, 10) || (saving && !Fw->Ran(field, 1)) || pixelSave)
         {
             // Laid out as Black 2's (merged.h, SaveScreenPieces): the overworld, without the
             // strip on its bottom that points at the other screen, the message box along the
             // bottom and the rest of the touch screen in the upper right corner.
             saving = true;
             const bool weather = sc.weatherObj;
+            const bool narrow = sc.narrow;
+            const bool softBars = sc.softBars;
             Only(sc, "save", 0);
             sc.wide = wideView;
+            sc.narrow = narrow;
+            sc.softBars = softBars;
             sc.weatherObj = weather;
             sc.items[0].drop = LAYER_BG1;
+            if (sc.items[0].holeCount < 4)
+            {
+                const int h[4] = { 0, 166, 256, 192 };
+                std::copy(h, h + 4, sc.items[0].holes[sc.items[0].holeCount++]);
+            }
             SaveScreenPieces(sc, wideView, viewRight, screens);
             return;
         }
         saving = false;
+        if (!strcmp(sc.name, "top") && screens && TopHasBottomArrowBanner(screens[0].pixels) && !sc.items.empty())
+        {
+            sc.items[0].drop = LAYER_BG1;
+            if (sc.items[0].holeCount < 4)
+            {
+                const int h[4] = { 0, 166, 256, 192 };
+                std::copy(h, h + 4, sc.items[0].holes[sc.items[0].holeCount++]);
+            }
+        }
         if (Fw->Ran(dexRegister, 2))
         {
             if (Fw->Ran(touchInput, 2))
@@ -183,7 +242,7 @@ public:
             // (A double, triple or rotation battle has the player's boxes down to the message
             // box, where the corner panel would stand: there the panel takes the box's band.)
             const int buttons = many && battleButtons == BUTTONS_CORNER ? BUTTONS_PANEL : battleButtons;
-            if (buttons != BUTTONS_CORNER && wideView && screens)
+            if (wideView && screens)
             {
                 const bool moves = Fw->Ran(moveMenu, 1), command = !moves && Fw->Ran(commandMenu, 1);
                 // (Choosing a move's target, in a double, triple or rotation battle: the foes'
@@ -191,14 +250,44 @@ public:
                 const bool target = !moves && !command && Fw->Ran(targetMenu, 1);
                 if (moves || command || target)
                 {
-                    // The panel pickSceneBw2 put in the corner (a bordered backing and a piece
-                    // of the touch screen) goes; the strip or the smaller panel takes its place.
-                    std::vector<Element> keep;
+                    // Move any corner panel aside while inserting the full-width command tray and
+                    // left-aligned prompt box so the buttons render cleanly above the tray.
+                    std::vector<Element> cornerKeep, keep;
                     for (const Element& e : sc.items)
-                        if (e.screen != 1 && !(e.screen == -1 && e.border)) keep.push_back(e);
-                    sc.items = keep;
-                    if (buttons == BUTTONS_STRIP && !target)
-                        BattleStrip(sc, viewRight, screens[0].pixels, screens[1].pixels, moves);
+                    {
+                        if (e.screen == 1 || (e.screen == -1 && e.border)) cornerKeep.push_back(e);
+                        else keep.push_back(e);
+                    }
+                    sc.items = std::move(keep);
+                    float promptRight = viewLeft + 4.0f;
+                    const float minButtonsW = (buttons == BUTTONS_STRIP && !target) ? 116.0f
+                        : buttons == BUTTONS_CORNER ? 100.0f : 96.0f;
+                    AdaptGen5BattlePrompt(sc, viewWidth, screens, minButtonsW, promptRight);
+                    const float availW = std::max(84.0f, viewRight - 2.0f - (promptRight + 6.0f));
+                    if (buttons == BUTTONS_CORNER)
+                    {
+                        for (Element& e : cornerKeep)
+                        {
+                            if (e.screen == 1 && e.dx < promptRight + 6.0f && e.sw > 0)
+                            {
+                                e.scale = std::max(0.28f, std::min(e.scale, (availW - 4.0f) / (float)e.sw));
+                                e.dx = viewRight - 4.0f - e.sw * e.scale;
+                                e.dy = 189.0f - e.sh * e.scale;
+                            }
+                        }
+                        if (cornerKeep.size() == 2 && cornerKeep[0].screen == -1 && cornerKeep[1].screen == 1)
+                        {
+                            const Element& c = cornerKeep[1];
+                            const float pad = 2.0f;
+                            cornerKeep[0].dx = c.dx - pad;
+                            cornerKeep[0].dy = c.dy - pad;
+                            cornerKeep[0].sw = (int)(c.sw * c.scale + 2 * pad);
+                            cornerKeep[0].sh = (int)(c.sh * c.scale + 2 * pad);
+                        }
+                        for (const Element& e : cornerKeep) sc.items.push_back(e);
+                    }
+                    else if (buttons == BUTTONS_STRIP && !target)
+                        BattleStrip(sc, viewRight, screens[1].pixels, moves, promptRight);
                     else
                     {
                         // The same pieces as the corner panel (pickSceneBw2's: the four moves,
@@ -206,20 +295,7 @@ public:
                         // tall as the message box (rows 147-189), against the view's right edge.
                         Element c = moves ? Crop(1, 0, 30, 256, 98) : target ? Crop(1, 0, 32, 256, 103)
                             : Crop(1, 0, 78, 256, 114);
-                        c.scale = 43.0f / c.sh;
-                        if (command && screens[0].pixels)
-                        {
-                            int textEnd = 150;
-                            for (int y = 152; y < 184; y++)
-                                for (int x = 150; x < 235; x++)
-                                {
-                                    const uint32_t px = screens[0].pixels[y * 256 + x];
-                                    if (((px >> 16) & 0xFF) > 200 && ((px >> 8) & 0xFF) > 200 && (px & 0xFF) > 200)
-                                        textEnd = std::max(textEnd, x);
-                                }
-                            const float maxW = std::max(84.0f, viewRight - 2.0f - (textEnd + 6.0f));
-                            c.scale = std::min(c.scale, maxW / c.sw);
-                        }
+                        c.scale = std::min(43.0f / c.sh, availW / c.sw);
                         c.dx = viewRight - 2 - c.sw * c.scale;
                         c.dy = 190 - c.sh * c.scale;
                         c.border = true;
@@ -334,33 +410,22 @@ private:
     // game's cursor (magenta brackets, 0xFB0092, at its corners) is on gets a magenta frame. The
     // D-pad moves the cursor as it looks: the cells are where the buttons are on the DS.
 public:
-    static void BattleStrip(Scene& sc, float viewRight, const uint32_t* topPx, const uint32_t* px, bool moves)
+    static void BattleStrip(Scene& sc, float viewRight, const uint32_t* px, bool moves, float promptRight)
     {
         struct Cell { int sx, sy, sw, sh; int hit[4]; float dx, dy, scale; }; // hit: the button's area
         // Lined up with the message box (rows 147-189 of the top screen, a band across it):
-        // the buttons fill its rows, 2 pixels in, out to the view's right edge, on the box itself.
+        // the buttons fill its rows, 2 pixels in, out to the view's right edge, on the tray.
         // One scale for all the pieces of a menu.
         const float boxTop = 147, boxBottom = 190, gap = 2, right = viewRight - 2;
         const float top = boxTop + 2, bottom = boxBottom - 1, height = bottom - top;
+        const float availW = std::max(84.0f, right - (promptRight + 6.0f));
         std::vector<Cell> cells;
         float width;
         if (!moves)
         {
             // Touch-screen pieces (x, y, w, h) and the buttons' areas (x0, y0, x1, y1): FIGHT's
-            // middle (its label) above BAG, RUN and POKEMON. If a translated prompt on the top
-            // screen extends past x 150 (e.g. Spanish "¿Qué debería hacer Oshawott?"), scale the
-            // strip so it stays to the right of the text.
-            int textEnd = 150;
-            if (topPx)
-                for (int y = 152; y < 184; y++)
-                    for (int x = 150; x < 235; x++)
-                    {
-                        const uint32_t c = topPx[y * 256 + x];
-                        if (((c >> 16) & 0xFF) > 200 && ((c >> 8) & 0xFF) > 200 && (c & 0xFF) > 200)
-                            textEnd = std::max(textEnd, x);
-                    }
-            const float maxW = std::max(84.0f, right - (textEnd + 6));
-            const float sc1 = std::min((height - gap) / (23 + 36), (maxW - 2 * gap) / 204.0f);
+            // middle (its label) above BAG, RUN and POKEMON, scaled so it clears the framed prompt.
+            const float sc1 = std::min((height - gap) / (23 + 36), (availW - 2 * gap) / 204.0f);
             const float cw = 68 * sc1, totalH = (23 + 36) * sc1 + gap;
             width = 3 * cw + 2 * gap;
             const float left = right - width, rowT = top + (height - totalH) / 2.0f, rowB = rowT + 23 * sc1 + gap;
@@ -372,7 +437,7 @@ public:
         else
         {
             // Each move's name, type and PP (the middle of its button), two by two.
-            const float ms = (height - gap) / (2 * 32), cw = 128 * ms;
+            const float ms = std::min((height - gap) / (2 * 32), (availW - gap) / 256.0f), cw = 128 * ms;
             width = 2 * cw + gap;
             const float left = right - width;
             for (int i = 0; i < 4; i++)
@@ -382,7 +447,7 @@ public:
                     left + c * (cw + gap), r ? bottom - 32 * ms : top, ms });
             }
         }
-        const float left = right - width;
+        (void)width;
         // Which cell the cursor is on: its brackets' outline (the box around all magenta
         // pixels). FIGHT is the whole upper part of the screen, so its brackets span most of
         // it; the others are the button nearest the brackets' middle.

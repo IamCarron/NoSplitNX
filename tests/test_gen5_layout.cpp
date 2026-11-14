@@ -76,6 +76,70 @@ int main()
     assert(BagScene(341.33f, screens).items.back().screen != 0);
     assert(BagScene(341.33f, nullptr).items.size() == 1);
 
+    // Uniform black fade frames must never keep the Bag blue FillRect or empty card border.
+    std::fill(top.begin(), top.end(), 0xFF000000u);
+    std::fill(bottom.begin(), bottom.end(), 0xFF000000u);
+    {
+        const Scene fadedBag = BagScene(341.33f, screens);
+        assert(fadedBag.items.size() == 1);
+        assert(fadedBag.items[0].screen == 1 && !fadedBag.items[0].border);
+    }
+
+    // Gen 5 battle prompt adaptation: moves bottom prompt into a framed left box on a dark tray
+    // across wide screens, leaving generous room for right-hand command buttons on both compositors.
+    {
+        constexpr uint32_t darkTray = 0xFF1A2024u, crimson = 0xFF682428u, arena = 0xFF103020u;
+        std::fill(top.begin(), top.end(), arena);
+        std::fill(bottom.begin(), bottom.end(), 0xFF202028u);
+        for (int x = 0; x < 256; x++)
+        {
+            for (int y = 147; y < 150; y++) top[y * 256 + x] = crimson;
+            for (int y = 150; y < 192; y++) top[y * 256 + x] = darkTray;
+        }
+        // Prompt glyphs spanning x=16..196 (similar to "¿Qué debería hacer Latios?").
+        for (int y = 158; y < 178; y++)
+            for (int x = 16; x < 196; x++)
+                top[y * 256 + x] = white;
+
+        Scene battle;
+        battle.name = "battle";
+        battle.wide = true;
+        battle.items = { FullScreen(0) };
+        float promptRight = 0.0f;
+        const float viewW = 341.333f;
+        const float viewLeft = 128.0f - viewW / 2.0f;
+        assert(AdaptGen5BattlePrompt(battle, viewW, screens, 112.0f, promptRight));
+        assert(battle.items[0].holeCount == 1);
+        assert(battle.items[0].holes[0][1] == 147 && battle.items[0].holes[0][3] == 192);
+        const Element& box = battle.items.back();
+        assert(box.screen == 0 && box.border);
+        assert(box.dx < 0.0f && box.dx <= viewLeft + 4.5f); // shifted into widescreen left margin
+        assert(promptRight <= 128.0f + viewW / 2.0f - 112.0f);
+
+        std::vector<uint32_t> cpu;
+        MergedCompose(battle, screens, 1280, 720, cpu, false, nullptr);
+        const MergedView mv = MergedMakeView(1280, 720);
+        const int gx = (int)(mv.originX + (box.dx + 12.0f) * mv.unit);
+        const int gy = (int)(mv.originY + 166.0f * mv.unit);
+        assert(gx >= 0 && gx < 1280 && gy >= 0 && gy < 720);
+        assert((cpu[gy * 1280 + gx] & 0xFFFFFF) == (white & 0xFFFFFF));
+
+        SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 1280, 720, 32, SDL_PIXELFORMAT_ARGB8888);
+        assert(surface);
+        SDL_Renderer* renderer = SDL_CreateSoftwareRenderer(surface);
+        assert(renderer);
+        {
+            GpuCompositor compositor(renderer);
+            compositor.Draw(battle, screens, 1280, 720, false, nullptr);
+            SDL_RenderPresent(renderer);
+            const auto* row = reinterpret_cast<const uint32_t*>(
+                static_cast<const uint8_t*>(surface->pixels) + gy * surface->pitch);
+            assert((row[gx] & 0xFFFFFF) == (white & 0xFFFFFF));
+        }
+        SDL_DestroyRenderer(renderer);
+        SDL_FreeSurface(surface);
+    }
+
     // Battle questions: the question at full size, both answers in the message bar,
     // right of the text and inside the window.
     for (float width : { 256.0f, 341.33f, 455.11f, 512.0f })

@@ -732,7 +732,7 @@ struct Menu
 
     // Where the box and its rows were last drawn (Draw), in the canvas's pixels, and the first
     // row shown (a list longer than the screen scrolls with the chosen row: CHEATS).
-    mutable int drawnX = 0, drawnY = 0, drawnW = 0, drawnH = 0, drawnLineH = 0, drawnFirstY = 0;
+    mutable int drawnX = 0, drawnY = 0, drawnW = 0, drawnH = 0, drawnLineH = 0, drawnFirstY = 0, drawnShown = 0;
     mutable int scroll = 0;
     // Where a slider's bar was drawn (the same on every row): its left edge and one block's step.
     mutable int barX = 0, barStep = 0;
@@ -752,7 +752,9 @@ struct Menu
     {
         if (drawnW <= 0 || x < drawnX || x >= drawnX + drawnW || y < drawnY || y >= drawnY + drawnH) return -2;
         if (drawnLineH <= 0 || y < drawnFirstY) return -1;
-        const int i = scroll + (y - drawnFirstY) / drawnLineH;
+        const int rel = (y - drawnFirstY) / drawnLineH;
+        if (rel < 0 || (drawnShown > 0 && rel >= drawnShown)) return -1;
+        const int i = scroll + rel;
         return i < (int)items.size() ? i : -1;
     }
 
@@ -804,29 +806,169 @@ struct Menu
             boxW = std::max(boxW, titleW + 54 * scale);
         }
         if (boxW > c.w - 16) boxW = c.w - 16;
+        // Word-wrap to exact rendered pixel width so translations never spill past the box edges.
+        auto wrapModern = [&](const std::string& text, int fontH, int maxPx, size_t maxLines) {
+            std::vector<std::string> out;
+            if (text.empty() || maxLines == 0) return out;
+            const int limit = std::max(24, maxPx);
+            std::string cur;
+            bool truncated = false;
+            auto pushLine = [&](std::string line) {
+                if (out.size() < maxLines) out.push_back(std::move(line));
+                else truncated = true;
+            };
+            auto splitWord = [&](const std::string& word) {
+                std::string chunk;
+                for (size_t at = 0; at < word.size(); )
+                {
+                    const size_t prev = at;
+                    UiLang::Next(word, at);
+                    std::string ch = word.substr(prev, at - prev);
+                    if (!chunk.empty() && c.ModernTextWidth(chunk + ch, fontH) > limit)
+                    {
+                        pushLine(std::move(chunk));
+                        chunk = std::move(ch);
+                    }
+                    else
+                    {
+                        chunk += ch;
+                    }
+                }
+                if (!chunk.empty()) cur = std::move(chunk);
+            };
+            size_t pos = 0;
+            while (pos < text.size() && out.size() < maxLines)
+            {
+                if (text[pos] == '\n')
+                {
+                    pushLine(std::move(cur));
+                    cur.clear();
+                    pos++;
+                    continue;
+                }
+                if (text[pos] == ' ') { pos++; continue; }
+                size_t end = pos;
+                while (end < text.size() && text[end] != ' ' && text[end] != '\n') end++;
+                const std::string word = text.substr(pos, end - pos);
+                pos = end;
+                const std::string cand = cur.empty() ? word : cur + " " + word;
+                if (c.ModernTextWidth(cand, fontH) <= limit)
+                {
+                    cur = cand;
+                }
+                else if (!cur.empty())
+                {
+                    pushLine(std::move(cur));
+                    cur.clear();
+                    if (c.ModernTextWidth(word, fontH) <= limit) cur = word;
+                    else splitWord(word);
+                }
+                else
+                {
+                    splitWord(word);
+                }
+                if (truncated) break;
+            }
+            if (!cur.empty()) pushLine(std::move(cur));
+            if (truncated && !out.empty())
+            {
+                std::string& last = out.back();
+                while (!last.empty() && c.ModernTextWidth(last + "...", fontH) > limit)
+                {
+                    size_t len = last.size();
+                    while (len > 0 && (last[len - 1] & 0xC0) == 0x80) len--;
+                    if (len > 0) len--;
+                    last.resize(len);
+                    while (!last.empty() && last.back() == ' ') last.pop_back();
+                }
+                last += "...";
+            }
+            return out;
+        };
+
         // The note's lines (up to 4, the last cut short), and the box moved up to make room.
         std::vector<std::string> noteLines;
         const int noteFontH = std::max(16, 7 * scale);
         if (!note.empty())
-        {
-            const int maxW = boxW - 20 * scale;
-            const int maxChars = std::max(10, maxW / (7 * scale));
-            noteLines = UiLang::Wrap(ToNiceSentence(UiLang::Tr(note)), maxChars * 6);
-            if (noteLines.size() > 4) { noteLines.resize(4); noteLines[3] = UiLang::Elide(noteLines[3] + "...", maxChars); }
-        }
+            noteLines = wrapModern(ToNiceSentence(UiLang::Tr(note)), noteFontH, boxW - 20 * scale, 4);
         const int noteH = noteLines.empty() ? 0 : (int)noteLines.size() * (noteFontH + 3 * scale) + 8 * scale;
-        // (As many rows as fit at the smallest spacing; the rest scroll into view.)
-        const int fit = std::max(1, (c.h - 4 - 6 * scale - (noteH ? noteH + 3 * scale : 0)) / ((UiLang::Tall() ? 15 : 12) * scale) - (hasTitle ? 2 : 1));
+
+        // Parse footer badges/lines before sizing height so wrapped hints expand the box cleanly.
+        const int hintFontH = std::max(16, 8 * scale);
+        const std::string niceHint = ToNiceSentence(UiLang::Tr(hint));
+        struct HintBadge { std::string key, label; };
+        std::vector<HintBadge> badges;
+        if (!hint.empty())
+        {
+            const std::string trRaw = UiLang::Tr(hint);
+            size_t pos = 0;
+            while (pos < trRaw.size())
+            {
+                while (pos < trRaw.size() && trRaw[pos] == ' ') pos++;
+                if (pos >= trRaw.size()) break;
+                size_t nextSep = trRaw.find("  ", pos);
+                std::string part = (nextSep == std::string::npos) ? trRaw.substr(pos) : trRaw.substr(pos, nextSep - pos);
+                pos = (nextSep == std::string::npos) ? trRaw.size() : nextSep;
+                size_t colon = part.find(':');
+                if (colon == std::string::npos || colon == 0) { badges.clear(); break; }
+                std::string k = part.substr(0, colon);
+                while (!k.empty() && k.back() == ' ') k.pop_back();
+                if (k.empty() || k.size() > 5) { badges.clear(); break; }
+                std::string l = part.substr(colon + 1);
+                size_t ls = l.find_first_not_of(' ');
+                if (ls == std::string::npos) { badges.clear(); break; }
+                badges.push_back({ k, ToNiceTitle(l.substr(ls)) });
+            }
+        }
+        const int badgeScale = std::max(1, scale - (scale >= 3 ? 1 : 0));
+        const int bh = 12 * badgeScale;
+        int badgesW = 0;
+        const int badgeGap = 14 * scale;
+        if (badges.size() >= 2)
+        {
+            for (size_t i = 0; i < badges.size(); i++)
+            {
+                badgesW += c.ButtonBadgeWidth(badges[i].key, badgeScale) + 4 * scale + c.ModernTextWidth(badges[i].label, hintFontH);
+                if (i + 1 < badges.size()) badgesW += badgeGap;
+            }
+            if (badgesW > boxW - 16 * scale) badges.clear();
+        }
+        std::vector<std::string> hintLines;
+        if (badges.size() < 2 && !niceHint.empty())
+            hintLines = wrapModern(niceHint, hintFontH, boxW - 16 * scale, 4);
+        // Keep an outer vertical margin so tall overlays (such as Cheats) never touch screen edges,
+        // and use one consistent minimum row height so fitted rows never exceed availH.
+        const int marginY = (c.h >= 480) ? std::max(12, c.h / 24) : 4;
+        const int minLineH = std::max(itemFontH + 4 * scale, (UiLang::Tall() ? 15 : 12) * scale);
+        const int minFooterH = hint.empty() ? 4 * scale
+            : (hintLines.size() > 1
+                ? std::max(minLineH, (int)hintLines.size() * (hintFontH + 3 * scale) + 10 * scale)
+                : minLineH);
+        const int noteReserve = noteH ? noteH + 4 * scale : 0;
+        const int availH = std::max(2 * minLineH, c.h - 2 * marginY - noteReserve);
+        const int fit = std::max(1, (availH - 6 * scale - (hasTitle ? minLineH : 0) - minFooterH) / minLineH);
         const int shown = std::min((int)items.size(), fit);
         if (selected < scroll) scroll = selected;
         if (selected >= scroll + shown) scroll = selected - shown + 1;
         scroll = std::max(0, std::min(scroll, (int)items.size() - shown));
         // (The note's strip sits under the box, so the box leaves room for it: at 800x480 it was cut off.)
-        const int availH = c.h - 4 - (noteH ? noteH + 3 * scale : 0);
-        const int rows = shown + (hasTitle ? 2 : 1);
-        if (lineH * rows + 6 * scale > availH) lineH = std::max(itemFontH + 4 * scale, (availH - 6 * scale) / rows);
-        int boxH = lineH * rows + 6 * scale;
-        int bx = (c.w - boxW) / 2, by = std::max(2, (c.h - boxH - noteH) / 2);
+        const int itemRows = shown + (hasTitle ? 1 : 0);
+        int footerH = minFooterH;
+        if (hint.empty())
+        {
+            if (lineH * itemRows + footerH + 6 * scale > availH)
+                lineH = std::max(minLineH, (availH - footerH - 6 * scale) / std::max(1, itemRows));
+        }
+        else if (hintLines.size() <= 1)
+        {
+            if (lineH * (itemRows + 1) + 6 * scale > availH)
+                lineH = std::max(minLineH, (availH - 6 * scale) / std::max(1, itemRows + 1));
+            footerH = lineH;
+        }
+        else if (lineH * itemRows + footerH + 6 * scale > availH)
+            lineH = std::max(minLineH, (availH - footerH - 6 * scale) / std::max(1, itemRows));
+        int boxH = lineH * itemRows + footerH + 6 * scale;
+        int bx = (c.w - boxW) / 2, by = std::max(marginY, (c.h - boxH - noteReserve) / 2);
         // (Kept for ItemAt: where the rows were drawn.)
         drawnX = bx;
         drawnY = by;
@@ -834,6 +976,7 @@ struct Menu
         drawnH = boxH;
         drawnLineH = lineH;
         drawnFirstY = by + (hasTitle ? lineH : 0) + 5 * scale - 2 * scale;
+        drawnShown = shown;
 
         if (dimBackdrop)
         {
@@ -938,63 +1081,32 @@ struct Menu
             y += lineH;
         }
         if (!hint.empty()) c.Fill(bx + 6 * scale, y + scale, boxW - 12 * scale, std::max(1, scale / 2), 0xFF26354A);
-        const int hintFontH = std::max(16, 8 * scale);
-        const std::string niceHint = ToNiceSentence(UiLang::Tr(hint));
         const int footerAreaH = (by + boxH) - (y + scale);
-        struct HintBadge { std::string key, label; };
-        std::vector<HintBadge> badges;
-        if (!hint.empty())
-        {
-            const std::string trRaw = UiLang::Tr(hint);
-            size_t pos = 0;
-            while (pos < trRaw.size())
-            {
-                while (pos < trRaw.size() && trRaw[pos] == ' ') pos++;
-                if (pos >= trRaw.size()) break;
-                size_t nextSep = trRaw.find("  ", pos);
-                std::string part = (nextSep == std::string::npos) ? trRaw.substr(pos) : trRaw.substr(pos, nextSep - pos);
-                pos = (nextSep == std::string::npos) ? trRaw.size() : nextSep;
-                size_t colon = part.find(':');
-                if (colon == std::string::npos || colon == 0) { badges.clear(); break; }
-                std::string k = part.substr(0, colon);
-                while (!k.empty() && k.back() == ' ') k.pop_back();
-                if (k.empty() || k.size() > 5) { badges.clear(); break; }
-                std::string l = part.substr(colon + 1);
-                size_t ls = l.find_first_not_of(' ');
-                if (ls == std::string::npos) { badges.clear(); break; }
-                badges.push_back({ k, ToNiceTitle(l.substr(ls)) });
-            }
-        }
-        const int badgeScale = std::max(1, scale - (scale >= 3 ? 1 : 0));
-        const int bh = 12 * badgeScale;
         bool drewBadges = false;
         if (badges.size() >= 2 && footerAreaH >= bh + 2 * scale)
         {
-            int totalW = 0;
-            const int gap = 14 * scale;
+            int hx = bx + (boxW - badgesW) / 2;
+            const int hy = y + scale + (footerAreaH - bh) / 2;
             for (size_t i = 0; i < badges.size(); i++)
             {
-                totalW += c.ButtonBadgeWidth(badges[i].key, badgeScale) + 4 * scale + c.ModernTextWidth(badges[i].label, hintFontH);
-                if (i + 1 < badges.size()) totalW += gap;
+                const int bw = c.ButtonBadgeWidth(badges[i].key, badgeScale);
+                const_cast<Canvas&>(c).DrawButtonBadge(hx, hy, badges[i].key, badgeScale, 0xFF222B3D, 0xFFFFFFFF, 0xFF3D4B66);
+                c.ModernText(hx + bw + 4 * scale, y + scale + (footerAreaH - hintFontH) / 2, badges[i].label, hintFontH, hintCol);
+                hx += bw + 4 * scale + c.ModernTextWidth(badges[i].label, hintFontH) + badgeGap;
             }
-            if (totalW <= boxW - 16 * scale)
-            {
-                int hx = bx + (boxW - totalW) / 2;
-                const int hy = y + scale + (footerAreaH - bh) / 2;
-                for (size_t i = 0; i < badges.size(); i++)
-                {
-                    const int bw = c.ButtonBadgeWidth(badges[i].key, badgeScale);
-                    const_cast<Canvas&>(c).DrawButtonBadge(hx, hy, badges[i].key, badgeScale, 0xFF222B3D, 0xFFFFFFFF, 0xFF3D4B66);
-                    c.ModernText(hx + bw + 4 * scale, y + scale + (footerAreaH - hintFontH) / 2, badges[i].label, hintFontH, hintCol);
-                    hx += bw + 4 * scale + c.ModernTextWidth(badges[i].label, hintFontH) + gap;
-                }
-                drewBadges = true;
-            }
+            drewBadges = true;
         }
-        if (!drewBadges)
+        if (!drewBadges && !hintLines.empty())
         {
-            const int hw = c.ModernTextWidth(niceHint, hintFontH);
-            c.ModernText(bx + (boxW - hw) / 2, y + scale + std::max(2 * scale, (footerAreaH - hintFontH) / 2), niceHint, hintFontH, hintCol);
+            const int stepH = hintFontH + 3 * scale;
+            const int totalTextH = (int)hintLines.size() * hintFontH + ((int)hintLines.size() - 1) * (3 * scale);
+            int hy = y + scale + std::max(2 * scale, (footerAreaH - totalTextH) / 2);
+            for (const std::string& hline : hintLines)
+            {
+                const int hw = c.ModernTextWidth(hline, hintFontH);
+                c.ModernText(bx + std::max(8 * scale, (boxW - hw) / 2), hy, hline, hintFontH, hintCol);
+                hy += stepH;
+            }
         }
         if (!noteLines.empty())
         {

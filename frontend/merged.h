@@ -663,6 +663,24 @@ inline Scene BattleChoiceScene(float viewWidth)
     return sc;
 }
 
+// True when an entire DS screen is a single flat colour (such as during a fade to black or white),
+// avoiding adding synthetic trays, frames or patches over transition frames.
+inline bool IsUniformScreen(const uint32_t* px)
+{
+    if (!px) return true;
+    int lo = 255 * 3, hi = 0;
+    for (int y = 4; y < 192; y += 12)
+        for (int x = 4; x < 256; x += 16)
+        {
+            const uint32_t c = px[y * 256 + x];
+            const int l = ((c >> 16) & 0xFF) + ((c >> 8) & 0xFF) + (c & 0xFF);
+            lo = std::min(lo, l);
+            hi = std::max(hi, l);
+            if (hi - lo > 18) return false;
+        }
+    return true;
+}
+
 // Black and Black 2's Bag: single-screen layout with the item list against the right edge,
 // the bottom pocket bar extended across the full widescreen width, and the item description
 // card on the left (dynamically sized for normal items vs TMs, and shifted below the dialogue
@@ -670,8 +688,10 @@ inline Scene BattleChoiceScene(float viewWidth)
 inline Scene BagScene(float viewWidth, const ScreenImage* screens)
 {
     const float viewLeft = 128 - viewWidth / 2, viewRight = 128 + viewWidth / 2;
+    const bool topUniform = !screens || !screens[0].pixels || IsUniformScreen(screens[0].pixels);
+    const bool botUniform = !screens || !screens[1].pixels || IsUniformScreen(screens[1].pixels);
     int text = 0, tmStats = 0;
-    if (screens && screens[0].pixels)
+    if (!topUniform)
     {
         for (int y = 28; y < 152; y += 2)
             for (int x = 8; x < 248; x += 2)
@@ -691,7 +711,7 @@ inline Scene BagScene(float viewWidth, const ScreenImage* screens)
     Element list = FullScreen(1);
     list.dx = viewRight - 256;
     sc.items = { list };
-    if (list.dx > viewLeft && screens && screens[1].pixels)
+    if (list.dx > viewLeft && !botUniform)
     {
         // Extend the bottom pocket bar (rows 168..191) to the left edge of the widescreen view.
         Element barExt = Crop(1, 0, 168, 2, 24);
@@ -704,12 +724,12 @@ inline Scene BagScene(float viewWidth, const ScreenImage* screens)
     if (text >= 12)
     {
         const auto white = [&](int x, int y) {
-            if (!screens || !screens[1].pixels) return false;
+            if (botUniform) return false;
             const uint32_t c = screens[1].pixels[y * 256 + x];
             return ((c >> 16) & 0xFF) > 230 && ((c >> 8) & 0xFF) > 230 && (c & 0xFF) > 230;
         };
         const bool message = white(5, 24) && white(250, 24);
-        if (!message && screens && screens[1].pixels)
+        if (!message && !botUniform)
         {
             // Hide the decorative Bag emblem on the unused left side of the touch screen so it
             // does not peek out from behind or below the item card.
@@ -780,6 +800,106 @@ inline void SaveScreenPieces(Scene& sc, bool wideView, float viewRight, const Sc
         box.crisp = true;
         sc.items.push_back(box);
     }
+}
+
+// Moves Gen 5's bottom battle prompt ("What will X do?" / "¿Qué debería hacer X?") into a framed
+// box anchored on the left of a full-width dark tray (matching HeartGold's wide command bar) so
+// translated prompts never collide with the right-hand command buttons and use the left margin.
+inline bool AdaptGen5BattlePrompt(Scene& sc, float viewWidth, const ScreenImage* screens,
+    float minButtonsWidth, float& outPromptRight)
+{
+    const float viewLeft = 128.0f - viewWidth / 2.0f;
+    outPromptRight = viewLeft + 4.0f;
+    if (sc.items.empty() || !screens || !screens[0].pixels || IsUniformScreen(screens[0].pixels))
+        return false;
+
+    const uint32_t* px = screens[0].pixels;
+    auto rgb = [](uint32_t c, int& r, int& g, int& b) {
+        r = (c >> 16) & 0xFF;
+        g = (c >> 8) & 0xFF;
+        b = c & 0xFF;
+    };
+    auto lum = [&](int x, int y) {
+        int r, g, b;
+        rgb(px[y * 256 + x], r, g, b);
+        return (r + g + b) / 3;
+    };
+
+    const uint32_t fillPx = px[158 * 256 + 4] & 0xFFFFFF;
+    int fr, fg, fb;
+    rgb(fillPx, fr, fg, fb);
+    const int fillLum = (fr + fg + fb) / 3;
+
+    // Sample the prompt bar's top border row (y=147..149) for a matching accent colour.
+    uint32_t bestBorder = fillPx;
+    int bestDiff = 0;
+    for (int y = 147; y <= 149; y++)
+    {
+        const uint32_t bc = px[y * 256 + 4] & 0xFFFFFF;
+        int br, bgc, bb;
+        rgb(bc, br, bgc, bb);
+        const int diff = std::abs(br - fr) + std::abs(bgc - fg) + std::abs(bb - fb);
+        if (diff > bestDiff) { bestDiff = diff; bestBorder = bc; }
+    }
+
+    auto scaleRgb = [](uint32_t c, float k, int floorMin) -> uint32_t {
+        const int r = std::clamp((int)(((c >> 16) & 0xFF) * k) + floorMin, 0, 255);
+        const int g = std::clamp((int)(((c >> 8) & 0xFF) * k) + floorMin, 0, 255);
+        const int b = std::clamp((int)((c & 0xFF) * k) + floorMin, 0, 255);
+        return (uint32_t)((r << 16) | (g << 8) | b);
+    };
+
+    Element& top = sc.items[0];
+    if (top.holeCount < 4)
+    {
+        const int h[4] = { 0, 147, 256, 192 };
+        std::copy(h, h + 4, top.holes[top.holeCount++]);
+    }
+
+    const uint32_t trayBg = scaleRgb(fillPx, 0.55f, 0);
+    const uint32_t hairlineCol = bestDiff > 24 ? bestBorder : scaleRgb(fillPx, 1.4f, 44);
+    const uint32_t boxBorder = bestDiff > 24 ? scaleRgb(bestBorder, 1.15f, 22) : scaleRgb(fillPx, 1.5f, 52);
+
+    sc.items.push_back(FillRect(viewLeft - 2.0f, 147.0f, (int)std::ceil(viewWidth) + 4, 46, trayBg));
+    sc.items.push_back(FillRect(viewLeft - 2.0f, 147.0f, (int)std::ceil(viewWidth) + 4, 1, hairlineCol));
+
+    // Find tight horizontal span of the bright prompt text inside rows 150..186.
+    int minX = 256, maxX = -1, minY = 192, maxY = -1;
+    const int thresh = std::min(190, fillLum + 55);
+    for (int y = 150; y <= 186; y++)
+    {
+        for (int x = 4; x < 252; x++)
+        {
+            if (lum(x, y) > thresh)
+            {
+                minX = std::min(minX, x);
+                maxX = std::max(maxX, x);
+                minY = std::min(minY, y);
+                maxY = std::max(maxY, y);
+            }
+        }
+    }
+    if (maxX < minX || maxY < minY)
+        return true;
+
+    const int sx = std::max(0, minX - 6);
+    const int ex = std::min(256, maxX + 8);
+    const int desiredW = std::min(std::max(ex - sx, 168), 256 - sx);
+    const int sy = 150;
+    const int sh = 38;
+    Element box = Crop(0, sx, sy, desiredW, sh);
+    const float maxPromptW = std::max(80.0f, viewWidth - 12.0f - minButtonsWidth);
+    box.scale = std::min(1.0f, maxPromptW / (float)box.sw);
+    box.dx = viewLeft + 4.0f;
+    box.dy = 150.0f + (38.0f - box.sh * box.scale) * 0.5f;
+    box.border = true;
+    box.borderRadius = 2.5f;
+    box.borderWidth = 8;
+    box.borderColor = boxBorder;
+    box.crisp = box.scale >= 0.99f;
+    sc.items.push_back(box);
+    outPromptRight = box.dx + box.sw * box.scale;
+    return true;
 }
 
 inline Scene Stack(const char* name, std::vector<Element> crops, bool horizontal, float viewWidth)

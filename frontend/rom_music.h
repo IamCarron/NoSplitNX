@@ -143,7 +143,7 @@ inline bool DecodeSwav(const uint8_t* data, size_t len, Sample& out)
     const uint16_t sampleRate = RdU16(data, len, 2);
     const uint16_t loopOffsetWords = RdU16(data, len, 6);
     const uint32_t nonLoopWords = RdU32(data, len, 8);
-    if (sampleRate < 1000 || sampleRate > 65000) return false;
+    if (sampleRate < 500) return false;
 
     const size_t dataOff = 12;
     const size_t totalBytes = ((size_t)loopOffsetWords + (size_t)nonLoopWords) * 4;
@@ -324,6 +324,35 @@ inline bool FindSdatInNds(FILE* f, uint64_t fsz, uint64_t& sdatOff, uint32_t& sd
             }
         }
     }
+
+    // Fallback scan for malformed/trimmed ROM FNT tables: locate "SDAT\xFE\xFF\x00\x01" directly.
+    const uint64_t scanLimit = std::min<uint64_t>(fsz, 192ull * 1024ull * 1024ull);
+    const size_t kChunk = 256u * 1024u;
+    std::vector<uint8_t> buf;
+    for (uint64_t base = 0x200; base + 0x40 <= scanLimit; base += kChunk)
+    {
+        const size_t sz = (size_t)std::min<uint64_t>(kChunk + 0x40, scanLimit - base);
+        if (!ReadFileSlice(f, base, sz, buf)) break;
+        for (size_t i = 0; i + 0x40 <= buf.size(); i += 4)
+        {
+            if (buf[i] == 'S' && buf[i + 1] == 'D' && buf[i + 2] == 'A' && buf[i + 3] == 'T' &&
+                RdU32(buf.data(), buf.size(), i + 4) == 0x0100FEFFu)
+            {
+                const uint32_t sl = RdU32(buf.data(), buf.size(), i + 8);
+                const uint32_t io = RdU32(buf.data(), buf.size(), i + 0x18);
+                const uint32_t isz = RdU32(buf.data(), buf.size(), i + 0x1C);
+                const uint32_t fo = RdU32(buf.data(), buf.size(), i + 0x20);
+                const uint32_t fsz2 = RdU32(buf.data(), buf.size(), i + 0x24);
+                if (sl >= 0x40 && sl <= 256u * 1024u * 1024u && base + i + sl <= fsz &&
+                    isz >= 0x28 && fsz2 >= 12 && (uint64_t)io + isz <= sl && (uint64_t)fo + fsz2 <= sl)
+                {
+                    sdatOff = base + i;
+                    sdatSize = sl;
+                    return true;
+                }
+            }
+        }
+    }
     return false;
 }
 
@@ -455,6 +484,7 @@ public:
         masterVol_ = 127;
         samples_.clear();
         insts_.clear();
+        progs_.clear();
         keySplitMap_.clear();
         seqData_.clear();
         seqBaseRomOff_ = 0;
@@ -619,7 +649,7 @@ private:
         size_t loopStartPc = 0;
         uint8_t loopRemain = 0;
         bool inLoop = false;
-        std::array<size_t, 4> callStack{};
+        std::array<size_t, 8> callStack{};
         int callSp = 0;
     };
 
@@ -1065,7 +1095,7 @@ private:
             {
                 if (tr.pc + 3 > n) { tr.active = false; break; }
                 const uint32_t off = RdU24(d, n, tr.pc); tr.pc += 3;
-                if (exec && off < n && tr.callSp >= 0 && tr.callSp < 4)
+                if (exec && off < n && tr.callSp >= 0 && tr.callSp < (int)tr.callStack.size())
                 {
                     tr.callStack[tr.callSp++] = tr.pc;
                     tr.pc = off;
@@ -1153,7 +1183,7 @@ private:
             }
             if (cmd == 0xFD) // return
             {
-                if (exec && tr.callSp > 0 && tr.callSp <= 4) tr.pc = tr.callStack[--tr.callSp];
+                if (exec && tr.callSp > 0 && tr.callSp <= (int)tr.callStack.size()) tr.pc = tr.callStack[--tr.callSp];
                 continue;
             }
             if (cmd == 0xFE) { tr.pc += 2; continue; } // alloctrack bitmask
@@ -1301,13 +1331,57 @@ private:
         }
     }
 
+    bool ProbeAudible(int maxSamples)
+    {
+        for (Voice& v : voices_) v.active = false;
+        tickAccum_ = 0.0;
+        tempoBpm_ = 120.0;
+        masterVol_ = 127;
+        dcPrevInL_ = dcPrevOutL_ = dcPrevInR_ = dcPrevOutR_ = 0.0;
+        tracks_.assign(kMaxTracks, Track{});
+        tracks_[0].active = true;
+        tracks_[0].pc = 0;
+
+        bool audible = false;
+        int nonZeroSamples = 0;
+        for (int i = 0; i < maxSamples; i++)
+        {
+            StepSequencerOneSample();
+            double mix = 0.0;
+            for (Voice& v : voices_)
+            {
+                if (!v.active) continue;
+                const double env = StepEnvelope(v);
+                if (!v.active) continue;
+                const double samp = SampleVoice(v) * env * v.gain;
+                mix += std::abs(samp);
+            }
+            if (mix > 1e-4 && ++nonZeroSamples >= 64)
+            {
+                audible = true;
+                break;
+            }
+        }
+
+        for (Voice& v : voices_) v.active = false;
+        tickAccum_ = 0.0;
+        tempoBpm_ = 120.0;
+        masterVol_ = 127;
+        dcPrevInL_ = dcPrevOutL_ = dcPrevInR_ = dcPrevOutR_ = 0.0;
+        bands_.fill(0.0f);
+        tracks_.assign(kMaxTracks, Track{});
+        tracks_[0].active = true;
+        tracks_[0].pc = 0;
+        return audible;
+    }
+
     // ---- NDS SDAT Loader ----
     bool LoadNds(FILE* f, uint64_t fsz)
     {
         uint64_t sdatOff = 0;
         uint32_t sdatSize = 0;
         if (!Nitro::FindSdatInNds(f, fsz, sdatOff, sdatSize)) return false;
-        if (sdatSize < 0x40 || sdatSize > 64u * 1024u * 1024u) return false;
+        if (sdatSize < 0x40 || sdatSize > 256u * 1024u * 1024u) return false;
 
         std::vector<uint8_t> hdr;
         if (!ReadFileSlice(f, sdatOff, std::min<uint32_t>(sdatSize, 0x40), hdr)) return false;
@@ -1324,7 +1398,7 @@ private:
             return false;
 
         std::vector<uint8_t> symb, info, fat;
-        if (symbOff != 0 && symbSize >= 0x28 && (uint64_t)symbOff + symbSize <= sdatSize && symbSize <= 8u * 1024u * 1024u)
+        if (symbOff != 0 && symbSize >= 0x28 && (uint64_t)symbOff + symbSize <= sdatSize && symbSize <= 16u * 1024u * 1024u)
         {
             if (!ReadFileSlice(f, sdatOff + symbOff, symbSize, symb)) symb.clear();
         }
@@ -1382,7 +1456,7 @@ private:
         if (cands.empty()) return false;
         std::stable_sort(cands.begin(), cands.end(), [](const Candidate& a, const Candidate& b) { return a.score > b.score; });
 
-        for (size_t ci = 0; ci < std::min<size_t>(8, cands.size()); ci++)
+        for (size_t ci = 0; ci < std::min<size_t>(16, cands.size()); ci++)
         {
             const Candidate& c = cands[ci];
             if (c.bankId >= bankCount) continue;
@@ -1394,7 +1468,7 @@ private:
 
             uint32_t sseqOff = 0, sseqLen = 0, sbnkOff = 0, sbnkLen = 0;
             if (!readFatRange(c.fid, sseqOff, sseqLen) || !readFatRange(sbnkFid, sbnkOff, sbnkLen)) continue;
-            if (sseqLen > 512u * 1024u || sbnkLen > 512u * 1024u) continue;
+            if (sseqLen > 2u * 1024u * 1024u || sbnkLen > 2u * 1024u * 1024u) continue;
 
             std::vector<uint8_t> sseqBuf, sbnkBuf;
             if (!ReadFileSlice(f, sdatOff + sseqOff, sseqLen, sseqBuf)) continue;
@@ -1407,7 +1481,7 @@ private:
 
             // Load SWARs for the 4 slots (map [slot][swavIdx] -> samples_ index)
             samples_.clear();
-            std::vector<int> swarMap(4 * 512, -1);
+            std::array<std::vector<int>, 4> swarMap;
 
             for (int w = 0; w < 4; w++)
             {
@@ -1416,12 +1490,14 @@ private:
                 if (swarEntOff == 0 || swarEntOff + 4 > info.size()) continue;
                 const uint16_t swarFid = RdU16(info.data(), info.size(), swarEntOff);
                 uint32_t woff = 0, wlen = 0;
-                if (!readFatRange(swarFid, woff, wlen) || wlen > 16u * 1024u * 1024u) continue;
+                if (!readFatRange(swarFid, woff, wlen) || wlen > 64u * 1024u * 1024u) continue;
                 std::vector<uint8_t> swarBuf;
                 if (!ReadFileSlice(f, sdatOff + woff, wlen, swarBuf) || swarBuf.size() < 0x40) continue;
                 if (!HasTag(swarBuf, 0, "SWAR")) continue;
 
-                const uint32_t nWaves = std::min<uint32_t>(512, RdU32(swarBuf.data(), swarBuf.size(), 0x38));
+                const uint32_t nWaves = std::min<uint32_t>(4096, RdU32(swarBuf.data(), swarBuf.size(), 0x38));
+                if (0x3C + nWaves * 4 > swarBuf.size()) continue;
+                swarMap[w].assign(nWaves, -1);
                 for (uint32_t si = 0; si < nWaves; si++)
                 {
                     const uint32_t soff = RdU32(swarBuf.data(), swarBuf.size(), 0x3C + si * 4);
@@ -1431,7 +1507,7 @@ private:
                     Sample smp;
                     if (Nitro::DecodeSwav(swarBuf.data() + soff, avail, smp))
                     {
-                        swarMap[w * 512 + si] = (int)samples_.size();
+                        swarMap[w][si] = (int)samples_.size();
                         samples_.push_back(std::move(smp));
                     }
                 }
@@ -1456,10 +1532,10 @@ private:
                 outInst.pan = sbnkBuf[off + 9];
                 if (recType == 2) { outInst.kind = WaveKind::Pulse; outInst.duty = (uint8_t)(swav & 7); return true; }
                 if (recType == 3) { outInst.kind = WaveKind::Noise; return true; }
-                if ((recType == 1 || recType == 4) && slot < 4 && swav < 512 && swarMap[slot * 512 + swav] >= 0)
+                if ((recType == 1 || recType == 4) && slot < 4 && swav < swarMap[slot].size() && swarMap[slot][swav] >= 0)
                 {
                     outInst.kind = WaveKind::Pcm;
-                    outInst.sampleIndex = swarMap[slot * 512 + swav];
+                    outInst.sampleIndex = swarMap[slot][swav];
                     return true;
                 }
                 return false;
@@ -1467,9 +1543,10 @@ private:
 
             for (uint32_t pi = 0; pi < pCount; pi++)
             {
+                if (0x3C + (pi + 1) * 4 > sbnkBuf.size()) break;
                 const uint32_t entry = RdU32(sbnkBuf.data(), sbnkBuf.size(), 0x3C + pi * 4);
                 const uint8_t fRec = (uint8_t)(entry & 0xFFu);
-                const size_t off = (size_t)((entry >> 8) & 0xFFFFu);
+                const size_t off = (size_t)((entry >> 8) & 0xFFFFFFu);
                 if (fRec == 0 || off >= sbnkBuf.size()) continue;
                 ProgramSlot& ps = progs_[pi];
                 if (fRec >= 1 && fRec <= 4)
@@ -1541,11 +1618,11 @@ private:
             for (size_t i = 0; i < seqLen; i++) seqData_[i] = sseqBuf[dataStart + i];
 
             mode_ = SeqMode::NitroSseq;
-            tracks_.assign(kMaxTracks, Track{});
-            tracks_[0].active = true;
-            tracks_[0].pc = 0;
-            tempoBpm_ = 120.0;
-            masterVol_ = 127;
+            if (!ProbeAudible(96000))
+            {
+                mode_ = SeqMode::None;
+                continue;
+            }
             return true;
         }
         return false;

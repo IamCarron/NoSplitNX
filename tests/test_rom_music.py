@@ -35,6 +35,8 @@ class RomMusicTests(unittest.TestCase):
         self.assertIn('rom_music.h', sw_plat)
         self.assertIn('MusicAudioSession', sw_plat)
         self.assertIn('music.Shutdown();', sw_plat)
-        # SDL audio subsystem opened inside PickGame must always be shut down cleanly before handover.
-        self.assertEqual(sw_plat.count('SDL_OpenAudioDevice('), sw_plat.count('SDL_CloseAudioDevice('))
-        self.assertEqual(sw_plat.count('SDL_InitSubSystem(SDL_INIT_AUDIO)'), sw_plat.count('SDL_QuitSubSystem(SDL_INIT_AUDIO)'))
+        # Switch launcher music uses libnx audout directly and tears down before main.cpp SDL_Init.
+        self.assertGreaterEqual(sw_plat.count('audoutInitialize()'), 1)
+        self.assertGreaterEqual(sw_plat.count('audoutExit()'), sw_plat.count('audoutInitialize()'))
+        self.assertEqual(sw_plat.count('SDL_OpenAudioDevice('), 0)
+        self.assertEqual(sw_plat.count('SDL_InitSubSystem(SDL_INIT_AUDIO)'), 0)

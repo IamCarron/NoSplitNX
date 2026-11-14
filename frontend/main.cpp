@@ -3422,42 +3422,32 @@ int main(int argc, char** argv)
             // panel would cover: it always has the panel, in the message box's band below them.
             int style = bw1.on || !wideView || !screens ? 0 : cfg.battleButtons;
             if (wideView && screens && !bw1.on && kind == 2) style = 2;
-            float cmdScale = 0.44f;
-            if (command && !bw1.on && wideView && screens && screens[0].pixels)
+            float promptRight = viewLeft + 4.0f;
+            if (!bw1.on && wideView && screens && (moves || command || target))
             {
-                // Longer prompts in Spanish/German ("¿Qué debería hacer Oshawott?") extend further
-                // across the message box: shrink the command panel slightly so it stays to the
-                // right of the prompt without moving or cropping the top screen.
-                int textEnd = 150;
-                const uint32_t* tpx = screens[0].pixels;
-                for (int y = 152; y < 184; y++)
-                    for (int x = 150; x < 224; x++)
-                    {
-                        const uint32_t c = tpx[y * 256 + x];
-                        if (((c >> 16) & 0xFF) > 210 && ((c >> 8) & 0xFF) > 210 && (c & 0xFF) > 210)
-                            textEnd = std::max(textEnd, x);
-                    }
-                const float maxW = viewRight - 6.0f - (textEnd + 6.0f);
-                if (maxW < 256.0f * cmdScale)
-                    cmdScale = std::max(0.34f, maxW / 256.0f);
+                const float minButtonsW = style == 2 ? 96.0f : (moves ? 126.0f : 112.0f);
+                AdaptGen5BattlePrompt(sc, viewWidth, screens, minButtonsW, promptRight);
             }
+            const float availBtnW = std::max(84.0f, viewRight - 4.0f - (promptRight + 6.0f));
             if ((moves || command || target) && style == 2)
             {
                 // PANEL: the corner panel's piece as tall as the message box (rows 147-189),
-                // against the view's right edge.
+                // against the view's right edge, shrunk if needed so translated prompts never overlap.
                 Element c = moves ? Crop(1, 0, 30, 256, 98) : target ? Crop(1, 0, 22, 256, 110) : Crop(1, 0, 78, 256, 114);
-                c.scale = command ? std::min(43.0f / c.sh, cmdScale) : 43.0f / c.sh;
+                c.scale = std::min(43.0f / c.sh, (availBtnW + 2.0f) / c.sw);
                 c.dx = viewRight - 2 - c.sw * c.scale;
                 c.dy = 190 - c.sh * c.scale;
                 c.border = true;
+                c.borderRadius = 3.0f;
+                c.borderColor = 0x2A2E38;
                 sc.items.push_back(c);
             }
             else if (moves)
-                cornerPanel(Crop(1, 0, 30, 256, 98), 0.5f);   // the four moves, two by two (49 high)
+                cornerPanel(Crop(1, 0, 30, 256, 98), std::min(0.5f, availBtnW / 256.0f)); // the four moves, two by two (49 high)
             else if (command)
-                cornerPanel(Crop(1, 0, 78, 256, 114), cmdScale); // FIGHT above BAG, RUN and POKEMON
+                cornerPanel(Crop(1, 0, 78, 256, 114), std::min(0.44f, availBtnW / 256.0f)); // FIGHT above BAG, RUN and POKEMON
             else if (target)
-                cornerPanel(Crop(1, 0, 22, 256, 110), 0.45f); // the targets (50 high)
+                cornerPanel(Crop(1, 0, 22, 256, 110), std::min(0.45f, availBtnW / 256.0f)); // the targets (50 high)
         }
         else if (funcWatch.Ran(bw2.save, 8) || (funcWatch.Ran(bw2.saveWrite, 8) && !strcmp(lastKnownBw2.name, "save")))
         {
@@ -3626,26 +3616,23 @@ int main(int argc, char** argv)
         }
         else
         {
-            // Nothing recognised. Mostly a moment between screens (a fade, a button pressed in
-            // battle) in which none of the watched functions runs: the last layout stays for
-            // up to 45 frames. After that this is a screen without a layout of its own, and
-            // both screens are shown side by side, so nothing is hidden.
-            if (lastKnownBw2Frame && funcWatch.CurrentFrame() - lastKnownBw2Frame <= 45)
-                return lastKnownBw2;
-            // Both screens one colour (a fade to black or white between two screens, however
-            // long): the last layout stays, rather than the two screens side by side popping up.
+            // Both screens one colour (a fade to black or white between two screens): render
+            // cleanly as a uniform fade instead of holding stale synthetic panels, borders or
+            // solid fill rects across blank transition frames.
             const bool topBlank = screens && AutoFocus::Blank(screens[0].pixels);
             const bool bottomBlank = screens && AutoFocus::Blank(screens[1].pixels);
-            if (lastKnownBw2Frame && topBlank && bottomBlank)
-                return lastKnownBw2;
             if (topBlank && bottomBlank)
             {
-                // (Both one colour before any known screen, as the game starts: that colour
-                // over the whole view.)
-                only("one-screen", 0);
+                only("fade", 0);
                 sc.bgScreen = 0;
                 return sc;
             }
+            // Nothing recognised. Mostly a moment between screens (a button pressed in battle) in
+            // which none of the watched functions runs: the last layout stays for up to 45 frames.
+            // After that this is a screen without a layout of its own, and both screens are shown
+            // side by side, so nothing is hidden.
+            if (lastKnownBw2Frame && funcWatch.CurrentFrame() - lastKnownBw2Frame <= 45)
+                return lastKnownBw2;
             // One screen with nothing on it (one colour), as in the logos and the opening
             // before the title screen: the other one alone at full size, the bars beside it
             // in soft colours from its edges (white beside a white logo). A change between that and both screens waits until
@@ -8021,6 +8008,7 @@ int main(int argc, char** argv)
                 // layout can take over at once and is in place when the picture fades in.
                 // (Not around battles: there the timing of the layouts decides which buttons
                 // are on screen.)
+                (!strcmp(picked.name, "fade") && shownName.compare(0, 6, "battle") != 0) ||
                 (AutoFocus::Blank(top) && AutoFocus::Blank(bot) && !sectionActive("OVY_12") && !sectionActive("OVY_8") &&
                  (menuScene(picked.name) || menuScene(shownName.c_str()))))
             {
@@ -8046,10 +8034,18 @@ int main(int argc, char** argv)
                     // Held while the next layout (not another of the battle's) waits its turn:
                     // without its holes and the pieces drawn elsewhere (Black 2's HP boxes), which
                     // belong to the screen they were made for. A battle fading out into an
-                    // evolution showed the evolution's world through the holes.
-                    for (Element& el : scene.items) el.holeCount = 0;
+                    // evolution showed the evolution's world through the holes. If both screens
+                    // have already faded to a single flat colour, also drop synthetic FillRects
+                    // and borders so they do not float over the black transition.
+                    const bool allBlank = AutoFocus::Blank(top) && AutoFocus::Blank(bot);
+                    for (Element& el : scene.items)
+                    {
+                        el.holeCount = 0;
+                        if (allBlank) el.border = false;
+                    }
                     scene.items.erase(std::remove_if(scene.items.begin(), scene.items.end(),
-                        [](const Element& el) { return el.wideOnly; }), scene.items.end());
+                        [allBlank](const Element& el) { return el.wideOnly || (allBlank && el.screen < 0); }),
+                        scene.items.end());
                 }
             }
         }
@@ -8523,6 +8519,8 @@ int main(int argc, char** argv)
             if (selId == M_RA_LOGIN) hint = Achievements::LoggedIn() ? "FORGETS THE ACCOUNT HERE" : "YOUR USER NAME AND PASSWORD";
             if (selId == M_RA_TYPED)
                 hint = ctlHasKeyboard ? "ENTER: NEXT   ESC: CANCEL" : "TYPE IT  THEN A";
+            if (selId == M_CSEARCH || selId == M_CINFO)
+                hint = btn(Controls::A) + ": " + UiLang::Tr("OPEN") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
             if (selId >= M_CHEAT0 && selId < M_ACH0) hint = btn(Controls::A) + ": " + UiLang::Tr("ON / OFF") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
             if (selId == M_CHEAT_ON || (selId >= M_CFOLDER0 && selId < M_CFOLDER0 + (int)cheats.folders.size()))
                 hint = btn(Controls::A) + ": " + UiLang::Tr("OPEN") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
