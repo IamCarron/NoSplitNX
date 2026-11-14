@@ -39,5 +39,6 @@ class RomMusicTests(unittest.TestCase):
         self.assertGreaterEqual(sw_plat.count('audoutInitialize()'), 1)
         self.assertGreaterEqual(sw_plat.count('audoutExit()'), sw_plat.count('audoutInitialize()'))
         self.assertEqual(sw_plat.count('audoutGetAudioOutState()'), 0)
+        self.assertEqual(sw_plat.count('posix_memalign('), 0)
         self.assertEqual(sw_plat.count('SDL_OpenAudioDevice('), 0)
         self.assertEqual(sw_plat.count('SDL_InitSubSystem(SDL_INIT_AUDIO)'), 0)

@@ -83,6 +83,8 @@ struct MusicAudioSession
     static constexpr int kBufCount = 2;
     static constexpr size_t kBufFrames = 1024;
     static constexpr size_t kBufBytes = kBufFrames * 4;
+    static_assert(kBufBytes % 0x1000 == 0 && (kBufCount * kBufBytes) % 0x1000 == 0,
+                  "Switch audout buffers must stay 4 KB aligned");
 
     RomMusic::Player player;
     std::mutex mtx;
@@ -147,8 +149,9 @@ struct MusicAudioSession
             audoutExit();
             return;
         }
-        void* mem = nullptr;
-        if (posix_memalign(&mem, 0x1000, (size_t)kBufCount * kBufBytes) != 0 || !mem)
+        // Horizon audout requires 4 KB-aligned buffers; newlib provides aligned_alloc (not posix_memalign).
+        void* mem = aligned_alloc(0x1000, (size_t)kBufCount * kBufBytes);
+        if (!mem)
         {
             fprintf(stderr, "[music] aligned audio buffer alloc failed\n");
             audoutStopAudioOut();
