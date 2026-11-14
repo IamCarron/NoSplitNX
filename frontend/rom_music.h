@@ -1469,7 +1469,7 @@ private:
             {
                 const uint32_t entry = RdU32(sbnkBuf.data(), sbnkBuf.size(), 0x3C + pi * 4);
                 const uint8_t fRec = (uint8_t)(entry & 0xFFu);
-                const uint16_t off = (uint16_t)((entry >> 8) & 0xFFFFu);
+                const size_t off = (size_t)((entry >> 8) & 0xFFFFu);
                 if (fRec == 0 || off >= sbnkBuf.size()) continue;
                 ProgramSlot& ps = progs_[pi];
                 if (fRec >= 1 && fRec <= 4)
