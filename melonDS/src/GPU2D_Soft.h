@@ -74,6 +74,9 @@ private:
 
     alignas(8) u32 OBJLine[2][256];
     alignas(8) u8 OBJWindow[2][256];
+    // ssrecomp: tracks whether OBJLine/OBJWindow are already known all-zero for each 2D engine
+    // so zero-sprite scanlines avoid repeated clears, memcmps, and SpriteCache/LineCache copies.
+    bool LineObjEmpty[2] = { false, false };
 
     u32 NumSprites[2];
 

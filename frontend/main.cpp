@@ -7656,7 +7656,12 @@ int main(int argc, char** argv)
                     if (presentDue(false)) continue;
                     renderAhead();
                     if (presentDue(false)) continue;
-                    if (emuThread.WaitFor(aheadCount && speed == 1 ? std::max(0.0001, secondsToTick()) : 0.0005)) break;
+                    if (!aheadCount || speed > 1)
+                    {
+                        emuThread.Wait();
+                        break;
+                    }
+                    if (emuThread.WaitFor(std::max(0.0001, secondsToTick()))) break;
                 }
                 perfEmu += emuMs;
             }

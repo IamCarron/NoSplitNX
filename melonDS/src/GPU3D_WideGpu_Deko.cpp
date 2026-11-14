@@ -476,6 +476,11 @@ public:
         dkBlendStateSetFactors(&blend, DkBlendFactor_SrcAlpha, DkBlendFactor_InvSrcAlpha, DkBlendFactor_One, DkBlendFactor_One);
         dkCmdBufBindBlendStates(Cmd, 0, &blend, 1);
 
+        DkDepthStencilState prevDs {};
+        DkColorState prevCs {};
+        DkColorWriteState prevCw {};
+        u32 prevStencilRef = 0, prevStencilMask = 0;
+        bool haveDrawState = false;
         for (const WideGpuDraw& d : f.Draws)
         {
             const bool wantEarly = d.Early && Sh->HaveEarly;
@@ -486,7 +491,7 @@ public:
             }
             const u32 params[4] = { d.First, d.Pixels, (u32)d.DepthBias, f.WDepth ? 1u : 0u };
             dkCmdBufPushConstants(Cmd, draw.addr, draw.size, 0, sizeof(params), params);
-            DkDepthStencilState ds;
+            DkDepthStencilState ds {};
             dkDepthStencilStateDefaults(&ds);
             ds.depthTestEnable = true;
             ds.depthWriteEnable = d.DepthWrite;
@@ -499,17 +504,35 @@ public:
             ds.stencilFrontDepthFailOp = ds.stencilBackDepthFailOp = DkStencilOp_Keep;
             ds.stencilFrontPassOp = ds.stencilBackPassOp = DkStencilOp_Replace;
             ds.stencilFrontCompareOp = ds.stencilBackCompareOp = op;
-            dkCmdBufBindDepthStencilState(Cmd, &ds);
-            dkCmdBufSetStencil(Cmd, DkFace_FrontAndBack, 0xFF, d.StencilRef, d.StencilMask);
-            DkColorState cs;
+            if (!haveDrawState || memcmp(&ds, &prevDs, sizeof(ds)) != 0)
+            {
+                dkCmdBufBindDepthStencilState(Cmd, &ds);
+                prevDs = ds;
+            }
+            if (!haveDrawState || prevStencilRef != d.StencilRef || prevStencilMask != d.StencilMask)
+            {
+                dkCmdBufSetStencil(Cmd, DkFace_FrontAndBack, 0xFF, d.StencilRef, d.StencilMask);
+                prevStencilRef = d.StencilRef;
+                prevStencilMask = d.StencilMask;
+            }
+            DkColorState cs {};
             dkColorStateDefaults(&cs);
             dkColorStateSetBlendEnable(&cs, 0, d.Blend);
-            dkCmdBufBindColorState(Cmd, &cs);
-            DkColorWriteState cw;
+            if (!haveDrawState || memcmp(&cs, &prevCs, sizeof(cs)) != 0)
+            {
+                dkCmdBufBindColorState(Cmd, &cs);
+                prevCs = cs;
+            }
+            DkColorWriteState cw {};
             dkColorWriteStateDefaults(&cw);
             dkColorWriteStateSetMask(&cw, 0, DkColorMask_RGBA);
             dkColorWriteStateSetMask(&cw, 1, Sh->NoAttr ? 0 : (d.WriteDepthAttr ? DkColorMask_R : 0) | (d.WriteFogAttr ? DkColorMask_G : 0));
-            dkCmdBufBindColorWriteState(Cmd, &cw);
+            if (!haveDrawState || memcmp(&cw, &prevCw, sizeof(cw)) != 0)
+            {
+                dkCmdBufBindColorWriteState(Cmd, &cw);
+                prevCw = cw;
+            }
+            haveDrawState = true;
             dkCmdBufDraw(Cmd, DkPrimitive_Triangles, d.Count, 1, 0, 0);
         }
 

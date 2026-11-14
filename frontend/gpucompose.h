@@ -5,6 +5,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstring>
 #include <vector>
 #include <SDL.h>
 #include "merged.h"
@@ -119,19 +120,31 @@ public:
             const int slotIndex = slot++;
             SDL_Texture* tex = Slot(slotIndex, el.sw, el.sh);
             if (!tex) continue;
-            SDL_SetTextureScaleMode(tex, nearest ? SDL_ScaleModeNearest : SDL_ScaleModeLinear);
+            Tex& cached = Slots[slotIndex];
+            const SDL_ScaleMode scaleMode = nearest ? SDL_ScaleModeNearest : SDL_ScaleModeLinear;
+            if (!cached.hasScale || cached.scale != scaleMode)
+            {
+                SDL_SetTextureScaleMode(tex, scaleMode);
+                cached.scale = scaleMode;
+                cached.hasScale = true;
+            }
             // Uploading every piece every frame cost the Switch 13 ms a frame in a Gen 4
             // battle waiting for a command (the strip's thirty-odd pieces, none of them
             // changing): a piece the same as last frame keeps its texture. (Not the piece under
             // the widescreen world, whose holes follow the world's picture.)
-            Tex& cached = Slots[slotIndex];
             const bool canCache = !overWorld || wide->serial != 0;
             const auto tp = std::chrono::steady_clock::now();
             const uint64_t sig = !canCache ? 0 : (Signature(el, src, plain, nearest) ^ (overWorld ? wide->serial * 1099511628211ull : 0ull));
             SignatureMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tp).count();
             if (canCache && cached.hasSig && cached.sig == sig)
             {
-                SDL_SetTextureBlendMode(tex, plain ? SDL_BLENDMODE_NONE : (!nearest && slotIndex < (int)CachedPremul.size() && CachedPremul[slotIndex]) ? Premultiplied : SDL_BLENDMODE_BLEND);
+                const SDL_BlendMode bm = plain ? SDL_BLENDMODE_NONE : (!nearest && slotIndex < (int)CachedPremul.size() && CachedPremul[slotIndex]) ? Premultiplied : SDL_BLENDMODE_BLEND;
+                if (!cached.hasBlend || cached.blend != bm)
+                {
+                    SDL_SetTextureBlendMode(tex, bm);
+                    cached.blend = bm;
+                    cached.hasBlend = true;
+                }
                 DrawPiece(tex, dst, el);
                 continue;
             }
@@ -140,31 +153,68 @@ public:
             const auto tu = std::chrono::steady_clock::now();
             if (plain)
             {
-                SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+                if (!cached.hasBlend || cached.blend != SDL_BLENDMODE_NONE)
+                {
+                    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+                    cached.blend = SDL_BLENDMODE_NONE;
+                    cached.hasBlend = true;
+                }
                 SDL_UpdateTexture(tex, nullptr, src.pixels + el.sy * 256 + el.sx, 256 * 4);
             }
             else
             {
                 // Pixels that are left out get alpha 0.
-                bool premul = !nearest && SDL_SetTextureBlendMode(tex, Premultiplied) == 0;
-                if (!premul) SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+                bool premul = !nearest;
+                if (premul)
+                {
+                    if (!cached.hasBlend || cached.blend != Premultiplied)
+                    {
+                        premul = SDL_SetTextureBlendMode(tex, Premultiplied) == 0;
+                        if (premul) { cached.blend = Premultiplied; cached.hasBlend = true; }
+                    }
+                }
+                if (!premul && (!cached.hasBlend || cached.blend != SDL_BLENDMODE_BLEND))
+                {
+                    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+                    cached.blend = SDL_BLENDMODE_BLEND;
+                    cached.hasBlend = true;
+                }
                 if ((int)CachedPremul.size() <= slotIndex) CachedPremul.resize(slotIndex + 1);
                 CachedPremul[slotIndex] = premul;
                 Buf.resize((size_t)el.sw * el.sh);
                 const uint32_t al = el.alpha;
+                const bool useWideMask = overWorld && src.flags && wide && wide->pixels && wide->w > 0 && wide->h > 0;
+                int wideCol[256];
+                if (useWideMask)
+                {
+                    const int n = std::min(el.sw, 256);
+                    for (int x = 0; x < n; x++)
+                    {
+                        const int wx = (int)std::floor(MergedWideX(v.originX + (el.sx + x + 0.5f) * v.unit, wide->w, outW, outH));
+                        wideCol[x] = (wx >= 0 && wx < wide->w) ? wx : -1;
+                    }
+                }
+                auto div255 = [](uint32_t val) -> uint32_t { return (val + 1u + (val >> 8)) >> 8; };
                 for (int y = 0; y < el.sh; y++)
                 {
                     const int sy = el.sy + y;
                     const uint32_t* row = src.pixels + sy * 256 + el.sx;
                     const uint8_t* frow = src.flags ? src.flags + sy * 256 + el.sx : nullptr;
+                    const uint32_t* wideRow = nullptr;
+                    if (useWideMask)
+                    {
+                        const int wy = (int)((v.originY + (sy + 0.5f) * v.unit) * wide->h / outH);
+                        if (wy >= 0 && wy < wide->h) wideRow = wide->pixels + (size_t)wy * wide->w;
+                    }
                     uint32_t* out = &Buf[(size_t)y * el.sw];
                     for (int x = 0; x < el.sw; x++)
                     {
                         uint32_t c = row[x] & 0xFFFFFF;
                         bool skip = el.Skips(el.sx + x, sy) ||
                             (el.drop && frow && (LayerClass(frow[x]) & el.drop)) ||
-                            (overWorld && frow && LayerClass(frow[x]) == LAYER_BACKDROP &&
-                                MergedWideCovers(*wide, v, outW, outH, el.sx + x, sy)) ||
+                            (wideRow && frow && LayerClass(frow[x]) == LAYER_BACKDROP &&
+                                (x < 256 ? (wideCol[x] >= 0 && (wideRow[wideCol[x]] >> 24) != 0)
+                                         : MergedWideCovers(*wide, v, outW, outH, el.sx + x, sy))) ||
                             (spriteKey && LayerClass(frow[x]) == LAYER_OBJ && std::min(x, el.sw - 1 - x) < el.dropSpriteCorner &&
                                 std::min(y, el.sh - 1 - y) < el.dropSpriteCorner) ||
                             (keyed && MergedKeyed(el, c) &&
@@ -172,8 +222,8 @@ public:
                         if (skip)
                             out[x] = premul ? 0 : c;
                         else if (premul && al != 255)
-                            out[x] = (al << 24) | ((((c >> 16) & 0xFF) * al / 255) << 16) |
-                                ((((c >> 8) & 0xFF) * al / 255) << 8) | ((c & 0xFF) * al / 255);
+                            out[x] = (al << 24) | (div255(((c >> 16) & 0xFF) * al) << 16) |
+                                (div255(((c >> 8) & 0xFF) * al) << 8) | div255((c & 0xFF) * al);
                         else
                             out[x] = (al << 24) | c;
                     }
@@ -194,7 +244,16 @@ public:
 private:
     // A texture, and for the pieces' slots what was last uploaded to it (Signature): a piece
     // whose pixels and settings are as last frame's is not uploaded again.
-    struct Tex { SDL_Texture* t = nullptr; int w = 0, h = 0; uint64_t sig = 0; bool hasSig = false; };
+    struct Tex
+    {
+        SDL_Texture* t = nullptr;
+        int w = 0, h = 0;
+        uint64_t sig = 0;
+        bool hasSig = false;
+        SDL_ScaleMode scale = SDL_ScaleModeNearest;
+        SDL_BlendMode blend = SDL_BLENDMODE_NONE;
+        bool hasScale = false, hasBlend = false;
+    };
 
     SDL_Texture* Make(Tex& x, int w, int h)
     {
@@ -202,6 +261,8 @@ private:
         if (x.t) SDL_DestroyTexture(x.t);
         x.t = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
         x.hasSig = false;
+        x.hasScale = false;
+        x.hasBlend = false;
         x.w = w;
         x.h = h;
         return x.t;
@@ -233,26 +294,53 @@ private:
         for (int i = 0; i < el.holeCount; i++)
             for (int j = 0; j < 4; j++) mix((uint32_t)el.holes[i][j]);
         const bool flags = !plain && src.flags;
+        uint64_t h1 = h ^ 0x9E3779B97F4A7C15ULL;
         for (int y = 0; y < el.sh; y++)
         {
             const uint32_t* row = src.pixels + (el.sy + y) * 256 + el.sx;
-            // (Two pixels a step: the words of a row are mixed as 64-bit values.)
             int x = 0;
-            for (; x + 1 < el.sw; x += 2) mix((uint64_t)row[x] << 32 | row[x + 1]);
-            if (x < el.sw) mix(row[x]);
+            for (; x + 3 < el.sw; x += 4)
+            {
+                uint64_t w0, w1;
+                memcpy(&w0, row + x, 8);
+                memcpy(&w1, row + x + 2, 8);
+                h = (h ^ w0) * 1099511628211ULL;
+                h1 = (h1 ^ w1) * 1099511628211ULL;
+            }
+            for (; x + 1 < el.sw; x += 2)
+            {
+                uint64_t w0;
+                memcpy(&w0, row + x, 8);
+                h = (h ^ w0) * 1099511628211ULL;
+            }
+            if (x < el.sw) h = (h ^ row[x]) * 1099511628211ULL;
             if (flags)
             {
                 const uint8_t* f = src.flags + (el.sy + y) * 256 + el.sx;
-                uint64_t acc = 0;
-                for (int i = 0; i < el.sw; i++)
+                int i = 0;
+                for (; i + 15 < el.sw; i += 16)
                 {
-                    acc = acc << 8 | f[i];
-                    if ((i & 7) == 7) { mix(acc); acc = 0; }
+                    uint64_t w0, w1;
+                    memcpy(&w0, f + i, 8);
+                    memcpy(&w1, f + i + 8, 8);
+                    h = (h ^ w0) * 1099511628211ULL;
+                    h1 = (h1 ^ w1) * 1099511628211ULL;
                 }
-                mix(acc);
+                for (; i + 7 < el.sw; i += 8)
+                {
+                    uint64_t w0;
+                    memcpy(&w0, f + i, 8);
+                    h = (h ^ w0) * 1099511628211ULL;
+                }
+                if (i < el.sw)
+                {
+                    uint64_t tail = 0;
+                    memcpy(&tail, f + i, (size_t)(el.sw - i));
+                    h1 = (h1 ^ tail) * 1099511628211ULL;
+                }
             }
         }
-        return h;
+        return h ^ (h1 * 1099511628211ULL);
     }
 
     SDL_Texture* Slot(int i, int w, int h)

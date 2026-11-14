@@ -202,7 +202,7 @@ namespace
 {
 struct LineCache
 {
-    bool valid;
+    bool valid, emptyObj;
     u32 epoch, hide;
     u8 regs[160];
     u32 obj[256];
@@ -219,7 +219,7 @@ u32 CacheEpoch[2] = { 1, 1 };
 
 struct SpriteCache
 {
-    bool valid;
+    bool valid, empty;
     u32 epoch, count;
     u8 regs[160];
     u32 obj[256];
@@ -329,12 +329,14 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
     {
         cache = &Cache[CurUnit->Num][line];
         const u32 num = CurUnit->Num;
-        u8 regs[sizeof(LineCache::regs)] = {};
-        UnitRegs(CurUnit, regs);
+        u8 regs[sizeof(LineCache::regs)];
+        const size_t regBytes = UnitRegs(CurUnit, regs);
         const bool with3D = num == 0 && (CurUnit->DispCnt & 0x8) && _3DLine;
+        const bool objEmptyNow = LineObjEmpty[num];
         if (cache->valid && cache->epoch == CacheEpoch[num] && cache->hide == rc_hide_layers[num] &&
-            !memcmp(cache->regs, regs, sizeof(regs)) && !memcmp(cache->obj, OBJLine[num], sizeof(cache->obj)) &&
-            !memcmp(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow)) &&
+            !memcmp(cache->regs, regs, regBytes) &&
+            ((cache->emptyObj && objEmptyNow) ||
+             (!memcmp(cache->obj, OBJLine[num], sizeof(cache->obj)) && !memcmp(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow)))) &&
             (!with3D || !memcmp(cache->line3D, _3DLine, sizeof(cache->line3D))))
         {
             // What DrawScanline_BGOBJ changes besides the picture: the mosaic counter.
@@ -357,9 +359,13 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
         cache->valid = false;
         cache->epoch = CacheEpoch[num];
         cache->hide = rc_hide_layers[num];
-        memcpy(cache->regs, regs, sizeof(regs));
-        memcpy(cache->obj, OBJLine[num], sizeof(cache->obj));
-        memcpy(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow));
+        cache->emptyObj = objEmptyNow;
+        memcpy(cache->regs, regs, regBytes);
+        if (!objEmptyNow)
+        {
+            memcpy(cache->obj, OBJLine[num], sizeof(cache->obj));
+            memcpy(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow));
+        }
         if (with3D) memcpy(cache->line3D, _3DLine, sizeof(cache->line3D));
     }
 
@@ -1879,6 +1885,18 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
     }
 
     const u32 num = CurUnit->Num;
+    if (!(CurUnit->DispCnt & 0x1000))
+    {
+        NumSprites[num] = 0;
+        if (!LineObjEmpty[num])
+        {
+            memset(OBJLine[num], 0, 256*4);
+            memset(OBJWindow[num], 0, 256);
+            LineObjEmpty[num] = true;
+        }
+        return;
+    }
+
     bool changed;
     if (num == 0)
     {
@@ -1902,24 +1920,40 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
     SpriteCache* cache = line < 192 ? &SpriteLines[num][line] : nullptr;
     if (cache)
     {
-        u8 regs[sizeof(SpriteCache::regs)] = {};
-        UnitRegs(CurUnit, regs);
-        if (cache->valid && cache->epoch == SpriteEpoch[num] && !memcmp(cache->regs, regs, sizeof(regs)))
+        u8 regs[sizeof(SpriteCache::regs)];
+        const size_t regBytes = UnitRegs(CurUnit, regs);
+        if (cache->valid && cache->epoch == SpriteEpoch[num] && !memcmp(cache->regs, regs, regBytes))
         {
+            if (cache->empty)
+            {
+                NumSprites[num] = 0;
+                if (!LineObjEmpty[num])
+                {
+                    memset(OBJLine[num], 0, 256*4);
+                    memset(OBJWindow[num], 0, 256);
+                    LineObjEmpty[num] = true;
+                }
+                return;
+            }
             memcpy(OBJLine[num], cache->obj, sizeof(cache->obj));
             memcpy(OBJWindow[num], cache->objWindow, sizeof(cache->objWindow));
             NumSprites[num] = cache->count;
+            LineObjEmpty[num] = false;
             return;
         }
         cache->epoch = SpriteEpoch[num];
-        memcpy(cache->regs, regs, sizeof(regs));
+        memcpy(cache->regs, regs, regBytes);
     }
     DrawSpritesLine(line);
     if (cache)
     {
-        memcpy(cache->obj, OBJLine[num], sizeof(cache->obj));
-        memcpy(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow));
         cache->count = NumSprites[num];
+        cache->empty = LineObjEmpty[num];
+        if (!cache->empty)
+        {
+            memcpy(cache->obj, OBJLine[num], sizeof(cache->obj));
+            memcpy(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow));
+        }
         cache->valid = true;
     }
 }
@@ -1927,9 +1961,16 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
 void SoftRenderer::DrawSpritesLine(u32 line)
 {
     NumSprites[CurUnit->Num] = 0;
-    memset(OBJLine[CurUnit->Num], 0, 256*4);
-    memset(OBJWindow[CurUnit->Num], 0, 256);
-    if (!(CurUnit->DispCnt & 0x1000)) return;
+    if (!LineObjEmpty[CurUnit->Num])
+    {
+        memset(OBJLine[CurUnit->Num], 0, 256*4);
+        memset(OBJWindow[CurUnit->Num], 0, 256);
+    }
+    if (!(CurUnit->DispCnt & 0x1000))
+    {
+        LineObjEmpty[CurUnit->Num] = true;
+        return;
+    }
 
     u16* oam = (u16*)&GPU.OAM[CurUnit->Num ? 0x400 : 0];
 
@@ -2035,6 +2076,7 @@ void SoftRenderer::DrawSpritesLine(u32 line)
             }
         }
     }
+    LineObjEmpty[CurUnit->Num] = (NumSprites[CurUnit->Num] == 0);
 }
 
 template<bool window>

@@ -1247,7 +1247,7 @@ index e1c7ddc..57e0b7a 100644
  
          NDS.CheckDMAs(0, 0x02);
 diff --git a/src/GPU2D_Soft.cpp b/src/GPU2D_Soft.cpp
-index 2f8afcb..8282e52 100644
+index 2f8afcb..092ed22 100644
 --- a/src/GPU2D_Soft.cpp
 +++ b/src/GPU2D_Soft.cpp
 @@ -16,9 +16,16 @@
@@ -1373,7 +1373,7 @@ index 2f8afcb..8282e52 100644
 +{
 +struct LineCache
 +{
-+    bool valid;
++    bool valid, emptyObj;
 +    u32 epoch, hide;
 +    u8 regs[160];
 +    u32 obj[256];
@@ -1390,7 +1390,7 @@ index 2f8afcb..8282e52 100644
 +
 +struct SpriteCache
 +{
-+    bool valid;
++    bool valid, empty;
 +    u32 epoch, count;
 +    u8 regs[160];
 +    u32 obj[256];
@@ -1465,7 +1465,7 @@ index 2f8afcb..8282e52 100644
          else if (CurUnit->CaptureLatch && (((CurUnit->CaptureCnt >> 29) & 0x3) != 1))
          {
              _3DLine = GPU.GPU3D.GetLine(n3dline);
-@@ -170,8 +324,56 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
+@@ -170,8 +324,62 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
      u32 dispmode = CurUnit->DispCnt >> 16;
      dispmode &= (CurUnit->Num ? 0x1 : 0x3);
  
@@ -1474,12 +1474,14 @@ index 2f8afcb..8282e52 100644
 +    {
 +        cache = &Cache[CurUnit->Num][line];
 +        const u32 num = CurUnit->Num;
-+        u8 regs[sizeof(LineCache::regs)] = {};
-+        UnitRegs(CurUnit, regs);
++        u8 regs[sizeof(LineCache::regs)];
++        const size_t regBytes = UnitRegs(CurUnit, regs);
 +        const bool with3D = num == 0 && (CurUnit->DispCnt & 0x8) && _3DLine;
++        const bool objEmptyNow = LineObjEmpty[num];
 +        if (cache->valid && cache->epoch == CacheEpoch[num] && cache->hide == rc_hide_layers[num] &&
-+            !memcmp(cache->regs, regs, sizeof(regs)) && !memcmp(cache->obj, OBJLine[num], sizeof(cache->obj)) &&
-+            !memcmp(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow)) &&
++            !memcmp(cache->regs, regs, regBytes) &&
++            ((cache->emptyObj && objEmptyNow) ||
++             (!memcmp(cache->obj, OBJLine[num], sizeof(cache->obj)) && !memcmp(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow)))) &&
 +            (!with3D || !memcmp(cache->line3D, _3DLine, sizeof(cache->line3D))))
 +        {
 +            // What DrawScanline_BGOBJ changes besides the picture: the mosaic counter.
@@ -1502,9 +1504,13 @@ index 2f8afcb..8282e52 100644
 +        cache->valid = false;
 +        cache->epoch = CacheEpoch[num];
 +        cache->hide = rc_hide_layers[num];
-+        memcpy(cache->regs, regs, sizeof(regs));
-+        memcpy(cache->obj, OBJLine[num], sizeof(cache->obj));
-+        memcpy(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow));
++        cache->emptyObj = objEmptyNow;
++        memcpy(cache->regs, regs, regBytes);
++        if (!objEmptyNow)
++        {
++            memcpy(cache->obj, OBJLine[num], sizeof(cache->obj));
++            memcpy(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow));
++        }
 +        if (with3D) memcpy(cache->line3D, _3DLine, sizeof(cache->line3D));
 +    }
 +
@@ -1522,7 +1528,7 @@ index 2f8afcb..8282e52 100644
      CurUnit->UpdateMosaicCounters(line);
  
      switch (dispmode)
-@@ -303,6 +505,12 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
+@@ -303,6 +511,12 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
  
          *(u64*)&dst[i] = c | ((c & 0x00C0C0C000C0C0C0) >> 6) | 0xFF000000FF000000;
      }
@@ -1535,7 +1541,7 @@ index 2f8afcb..8282e52 100644
  }
  
  void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
-@@ -576,7 +784,7 @@ void SoftRenderer::DoCapture(u32 line, u32 width)
+@@ -576,7 +790,7 @@ void SoftRenderer::DoCapture(u32 line, u32 width)
  template<u32 bgmode>
  void SoftRenderer::DrawScanlineBGMode(u32 line)
  {
@@ -1544,7 +1550,7 @@ index 2f8afcb..8282e52 100644
      u16* bgCnt = CurUnit->BGCnt;
      for (int i = 3; i >= 0; i--)
      {
-@@ -631,7 +839,7 @@ void SoftRenderer::DrawScanlineBGMode(u32 line)
+@@ -631,7 +845,7 @@ void SoftRenderer::DrawScanlineBGMode(u32 line)
  
  void SoftRenderer::DrawScanlineBGMode6(u32 line)
  {
@@ -1553,7 +1559,7 @@ index 2f8afcb..8282e52 100644
      u16* bgCnt = CurUnit->BGCnt;
      for (int i = 3; i >= 0; i--)
      {
-@@ -659,7 +867,7 @@ void SoftRenderer::DrawScanlineBGMode6(u32 line)
+@@ -659,7 +873,7 @@ void SoftRenderer::DrawScanlineBGMode6(u32 line)
  
  void SoftRenderer::DrawScanlineBGMode7(u32 line)
  {
@@ -1562,7 +1568,7 @@ index 2f8afcb..8282e52 100644
      u16* bgCnt = CurUnit->BGCnt;
      // mode 7 only has text-mode BG0 and BG1
  
-@@ -691,11 +899,29 @@ void SoftRenderer::DrawScanlineBGMode7(u32 line)
+@@ -691,11 +905,29 @@ void SoftRenderer::DrawScanlineBGMode7(u32 line)
  
  void SoftRenderer::DrawScanline_BGOBJ(u32 line)
  {
@@ -1592,7 +1598,7 @@ index 2f8afcb..8282e52 100644
  
          return;
      }
-@@ -741,11 +967,17 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+@@ -741,11 +973,17 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
  
      if (!GPU.GPU3D.IsRendererAccelerated())
      {
@@ -1610,7 +1616,7 @@ index 2f8afcb..8282e52 100644
              BGOBJLine[i] = ColorComposite(i, val1, val2);
          }
      }
-@@ -859,16 +1091,6 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+@@ -859,16 +1097,6 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
  }
  
  
@@ -1627,7 +1633,7 @@ index 2f8afcb..8282e52 100644
  
  void SoftRenderer::DrawPixel_Accel(u32* dst, u16 color, u32 flag)
  {
-@@ -965,6 +1187,57 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
+@@ -965,6 +1193,57 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
      else
          tilemapaddr += ((yoff & 0xF8) << 3);
  
@@ -1685,7 +1691,7 @@ index 2f8afcb..8282e52 100644
      u16 curtile;
      u16* curpal;
      u32 pixelsaddr;
-@@ -1599,19 +1872,60 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
+@@ -1599,23 +1878,99 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
  
          CurUnit->OBJMosaicY = 0;
          CurUnit->OBJMosaicYCount = 0;
@@ -1697,6 +1703,18 @@ index 2f8afcb..8282e52 100644
  
 -    if (CurUnit->Num == 0)
 +    const u32 num = CurUnit->Num;
++    if (!(CurUnit->DispCnt & 0x1000))
++    {
++        NumSprites[num] = 0;
++        if (!LineObjEmpty[num])
++        {
++            memset(OBJLine[num], 0, 256*4);
++            memset(OBJWindow[num], 0, 256);
++            LineObjEmpty[num] = true;
++        }
++        return;
++    }
++
 +    bool changed;
 +    if (num == 0)
      {
@@ -1709,8 +1727,8 @@ index 2f8afcb..8282e52 100644
          auto objDirty = GPU.VRAMDirty_BOBJ.DeriveState(GPU.VRAMMap_BOBJ, GPU);
 -        GPU.MakeVRAMFlat_BOBJCoherent(objDirty);
 +        changed = GPU.MakeVRAMFlat_BOBJCoherent(objDirty);
-+    }
-+
+     }
+ 
 +    // ssrecomp: like the lines in DrawScanline, a line's sprites are only drawn again if
 +    // the OAM, the sprite VRAM or the registers changed (see LineCache).
 +    const u8* oamNow = &GPU.OAM[num ? 0x400 : 0];
@@ -1722,34 +1740,64 @@ index 2f8afcb..8282e52 100644
 +    SpriteCache* cache = line < 192 ? &SpriteLines[num][line] : nullptr;
 +    if (cache)
 +    {
-+        u8 regs[sizeof(SpriteCache::regs)] = {};
-+        UnitRegs(CurUnit, regs);
-+        if (cache->valid && cache->epoch == SpriteEpoch[num] && !memcmp(cache->regs, regs, sizeof(regs)))
++        u8 regs[sizeof(SpriteCache::regs)];
++        const size_t regBytes = UnitRegs(CurUnit, regs);
++        if (cache->valid && cache->epoch == SpriteEpoch[num] && !memcmp(cache->regs, regs, regBytes))
 +        {
++            if (cache->empty)
++            {
++                NumSprites[num] = 0;
++                if (!LineObjEmpty[num])
++                {
++                    memset(OBJLine[num], 0, 256*4);
++                    memset(OBJWindow[num], 0, 256);
++                    LineObjEmpty[num] = true;
++                }
++                return;
++            }
 +            memcpy(OBJLine[num], cache->obj, sizeof(cache->obj));
 +            memcpy(OBJWindow[num], cache->objWindow, sizeof(cache->objWindow));
 +            NumSprites[num] = cache->count;
++            LineObjEmpty[num] = false;
 +            return;
 +        }
 +        cache->epoch = SpriteEpoch[num];
-+        memcpy(cache->regs, regs, sizeof(regs));
-     }
++        memcpy(cache->regs, regs, regBytes);
++    }
 +    DrawSpritesLine(line);
 +    if (cache)
 +    {
-+        memcpy(cache->obj, OBJLine[num], sizeof(cache->obj));
-+        memcpy(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow));
 +        cache->count = NumSprites[num];
++        cache->empty = LineObjEmpty[num];
++        if (!cache->empty)
++        {
++            memcpy(cache->obj, OBJLine[num], sizeof(cache->obj));
++            memcpy(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow));
++        }
 +        cache->valid = true;
 +    }
 +}
- 
++
 +void SoftRenderer::DrawSpritesLine(u32 line)
 +{
      NumSprites[CurUnit->Num] = 0;
-     memset(OBJLine[CurUnit->Num], 0, 256*4);
-     memset(OBJWindow[CurUnit->Num], 0, 256);
-@@ -1634,15 +1948,29 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
+-    memset(OBJLine[CurUnit->Num], 0, 256*4);
+-    memset(OBJWindow[CurUnit->Num], 0, 256);
+-    if (!(CurUnit->DispCnt & 0x1000)) return;
++    if (!LineObjEmpty[CurUnit->Num])
++    {
++        memset(OBJLine[CurUnit->Num], 0, 256*4);
++        memset(OBJWindow[CurUnit->Num], 0, 256);
++    }
++    if (!(CurUnit->DispCnt & 0x1000))
++    {
++        LineObjEmpty[CurUnit->Num] = true;
++        return;
++    }
+ 
+     u16* oam = (u16*)&GPU.OAM[CurUnit->Num ? 0x400 : 0];
+ 
+@@ -1634,15 +1989,29 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
          64, 32, 64, 8
      };
  
@@ -1760,8 +1808,7 @@ index 2f8afcb..8282e52 100644
 +    int numByPrio[4] = {0, 0, 0, 0};
 +    // Those not on this line (by the tests below) are left out here already.
 +    for (int sprnum = 127; sprnum >= 0; sprnum--)
-     {
--        for (int sprnum = 127; sprnum >= 0; sprnum--)
++    {
 +        const u16* attrib = &oam[sprnum*4];
 +        if ((attrib[0] & 0x0300) == 0x0200) continue; // disabled
 +        u32 height = spriteheight[(attrib[0] >> 14) | ((attrib[1] & 0xC000) >> 12)];
@@ -1772,7 +1819,8 @@ index 2f8afcb..8282e52 100644
 +    }
 +
 +    for (int prio = 3; prio >= 0; prio--)
-+    {
+     {
+-        for (int sprnum = 127; sprnum >= 0; sprnum--)
 +        for (int k = 0; k < numByPrio[prio]; k++)
          {
 +            const int sprnum = byPrio[prio][k];
@@ -1784,8 +1832,16 @@ index 2f8afcb..8282e52 100644
              bool iswin = (((attrib[0] >> 10) & 0x3) == 2);
  
              u32 sprline;
+@@ -1707,6 +2076,7 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
+             }
+         }
+     }
++    LineObjEmpty[CurUnit->Num] = (NumSprites[CurUnit->Num] == 0);
+ }
+ 
+ template<bool window>
 diff --git a/src/GPU2D_Soft.h b/src/GPU2D_Soft.h
-index 4beaf8f..bf419de 100644
+index 4beaf8f..9060b9d 100644
 --- a/src/GPU2D_Soft.h
 +++ b/src/GPU2D_Soft.h
 @@ -35,7 +35,36 @@ public:
@@ -1825,7 +1881,17 @@ index 4beaf8f..bf419de 100644
  private:
      melonDS::GPU& GPU;
      alignas(8) u32 BGOBJLine[256*3];
-@@ -118,13 +147,24 @@ private:
+@@ -45,6 +74,9 @@ private:
+ 
+     alignas(8) u32 OBJLine[2][256];
+     alignas(8) u8 OBJWindow[2][256];
++    // ssrecomp: tracks whether OBJLine/OBJWindow are already known all-zero for each 2D engine
++    // so zero-sprite scanlines avoid repeated clears, memcmps, and SpriteCache/LineCache copies.
++    bool LineObjEmpty[2] = { false, false };
+ 
+     u32 NumSprites[2];
+ 
+@@ -118,13 +150,24 @@ private:
          return rb | g | 0xFF000000;
      }
      u32 ColorComposite(int i, u32 val1, u32 val2) const;
@@ -3397,7 +3463,7 @@ index 17e656e..22df46a 100644
      const u32 MainRAMMaxSize = 0x1000000;
  
 diff --git a/src/SPU.cpp b/src/SPU.cpp
-index 3c4aca7..7106495 100644
+index 3c4aca7..7bf98ab 100644
 --- a/src/SPU.cpp
 +++ b/src/SPU.cpp
 @@ -16,6 +16,7 @@
@@ -3408,7 +3474,32 @@ index 3c4aca7..7106495 100644
  #include <stdio.h>
  #include <string.h>
  #include <cmath>
-@@ -852,6 +853,7 @@ void SPUCaptureUnit::Run(u32 cycles, s32 sample)
+@@ -360,6 +361,7 @@ void SPUChannel::Reset()
+     SetCnt(0);
+     SrcAddr = 0;
+     TimerReload = 0;
++    UpdateTimerInv();
+     LoopPos = 0;
+     Length = 0;
+ 
+@@ -377,6 +379,7 @@ void SPUChannel::DoSavestate(Savestate* file)
+     file->Var32(&Cnt);
+     file->Var32(&SrcAddr);
+     file->Var16(&TimerReload);
++    if (!file->Saving) UpdateTimerInv();
+     file->Var32(&LoopPos);
+     file->Var32(&Length);
+ 
+@@ -676,7 +679,7 @@ s32 SPUChannel::Run(u32 cycles)
+     // interpolation (emulation improvement, not a hardware feature)
+     if ((type < 3) && (InterpType != AudioInterpolation::None))
+     {
+-        s32 samplepos = ((Timer - TimerReload) * 0x100) / (0x10000 - TimerReload);
++        s32 samplepos = (s32)(((u64)(Timer - TimerReload) * TimerInv) >> 32);
+         if (samplepos > 0xFF) samplepos = 0xFF;
+ 
+         switch (InterpType)
+@@ -852,6 +855,7 @@ void SPUCaptureUnit::Run(u32 cycles, s32 sample)
  
  void SPU::Mix(u32 spucycles)
  {
@@ -3416,3 +3507,41 @@ index 3c4aca7..7106495 100644
      s32 left = 0, right = 0;
      s32 leftoutput = 0, rightoutput = 0;
  
+diff --git a/src/SPU.h b/src/SPU.h
+index ef7f895..2eeab82 100644
+--- a/src/SPU.h
++++ b/src/SPU.h
+@@ -72,6 +72,9 @@ public:
+     u32 Cnt = 0;
+     u32 SrcAddr = 0;
+     u16 TimerReload = 0;
++    // ssrecomp: exact 32-bit fractional reciprocal for ((Timer - TimerReload) * 0x100) / (0x10000 - TimerReload),
++    // updated only when TimerReload changes so SPUChannel::Run avoids a hardware divide per sample tick.
++    u64 TimerInv = 0x1000000ULL;
+     u32 LoopPos = 0;
+     u32 Length = 0;
+ 
+@@ -121,8 +124,14 @@ public:
+         }
+     }
+ 
++    void UpdateTimerInv()
++    {
++        const u64 denom = 0x10000ULL - TimerReload;
++        TimerInv = ((0x100ULL << 32) + denom - 1) / denom;
++    }
++
+     void SetSrcAddr(u32 val) { SrcAddr = val & 0x07FFFFFC; }
+-    void SetTimerReload(u32 val) { TimerReload = val & 0xFFFF; }
++    void SetTimerReload(u32 val) { TimerReload = val & 0xFFFF; UpdateTimerInv(); }
+     void SetLoopPos(u32 val) { LoopPos = (val & 0xFFFF) << 2; }
+     void SetLength(u32 val) { Length = (val & 0x001FFFFF) << 2; }
+ 
+@@ -138,6 +147,7 @@ public:
+ 
+     s32 DoRun(u32 cycles)
+     {
++        if (!(Cnt & (1u << 31))) return 0;
+         switch ((Cnt >> 29) & 0x3)
+         {
+         case 0: return Run<0>(cycles); break;

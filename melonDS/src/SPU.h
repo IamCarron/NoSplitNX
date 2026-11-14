@@ -72,6 +72,9 @@ public:
     u32 Cnt = 0;
     u32 SrcAddr = 0;
     u16 TimerReload = 0;
+    // ssrecomp: exact 32-bit fractional reciprocal for ((Timer - TimerReload) * 0x100) / (0x10000 - TimerReload),
+    // updated only when TimerReload changes so SPUChannel::Run avoids a hardware divide per sample tick.
+    u64 TimerInv = 0x1000000ULL;
     u32 LoopPos = 0;
     u32 Length = 0;
 
@@ -121,8 +124,14 @@ public:
         }
     }
 
+    void UpdateTimerInv()
+    {
+        const u64 denom = 0x10000ULL - TimerReload;
+        TimerInv = ((0x100ULL << 32) + denom - 1) / denom;
+    }
+
     void SetSrcAddr(u32 val) { SrcAddr = val & 0x07FFFFFC; }
-    void SetTimerReload(u32 val) { TimerReload = val & 0xFFFF; }
+    void SetTimerReload(u32 val) { TimerReload = val & 0xFFFF; UpdateTimerInv(); }
     void SetLoopPos(u32 val) { LoopPos = (val & 0xFFFF) << 2; }
     void SetLength(u32 val) { Length = (val & 0x001FFFFF) << 2; }
 
@@ -138,6 +147,7 @@ public:
 
     s32 DoRun(u32 cycles)
     {
+        if (!(Cnt & (1u << 31))) return 0;
         switch ((Cnt >> 29) & 0x3)
         {
         case 0: return Run<0>(cycles); break;

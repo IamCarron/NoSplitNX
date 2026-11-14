@@ -361,6 +361,7 @@ void SPUChannel::Reset()
     SetCnt(0);
     SrcAddr = 0;
     TimerReload = 0;
+    UpdateTimerInv();
     LoopPos = 0;
     Length = 0;
 
@@ -378,6 +379,7 @@ void SPUChannel::DoSavestate(Savestate* file)
     file->Var32(&Cnt);
     file->Var32(&SrcAddr);
     file->Var16(&TimerReload);
+    if (!file->Saving) UpdateTimerInv();
     file->Var32(&LoopPos);
     file->Var32(&Length);
 
@@ -677,7 +679,7 @@ s32 SPUChannel::Run(u32 cycles)
     // interpolation (emulation improvement, not a hardware feature)
     if ((type < 3) && (InterpType != AudioInterpolation::None))
     {
-        s32 samplepos = ((Timer - TimerReload) * 0x100) / (0x10000 - TimerReload);
+        s32 samplepos = (s32)(((u64)(Timer - TimerReload) * TimerInv) >> 32);
         if (samplepos > 0xFF) samplepos = 0xFF;
 
         switch (InterpType)
