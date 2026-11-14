@@ -59,6 +59,7 @@
 #include "audiostretch.h"
 #include "fast_forward_button.h"
 #include "fast_forward_audio.h"
+#include "switch_ff_pacing.h"
 #include "gpucompose.h"
 #include "emuthread.h"
 
@@ -2133,8 +2134,6 @@ int main(int argc, char** argv)
     if (!opt.sets.empty() || opt.keepSettings) cfg.readOnly = true;
     exclusives.on = cfg.bothVersions && exclusives.Supported();
 #ifdef __SWITCH__
-    // (No CPU BOOST any more: the system kept taking its boost mode away and the game dropped
-    // frames. sys-clk sets the clocks; see README. A boost a saved setting asks for is ignored.)
     // One wide screen always: a layout or large screen saved by an older version is ignored.
     if (!opt.layoutGiven) cfg.layout = "merged";
     cfg.focusMode = 0;
@@ -6811,43 +6810,14 @@ int main(int argc, char** argv)
             cfg.Save(opt.config);
         }
         const bool fastRequested = fastButton.Requested(cfg.fastButtonToggle, fastDown, fastLock);
+#ifdef __SWITCH__
+        if (!opt.headless) SwitchPlatform::SetFastForwardBoost(cfg.cpuBoost && !paused && fastRequested);
+#endif
         if (!paused && fastRequested)
         {
 #ifdef __SWITCH__
-            // Switch OpenGL ES syncs SDL_RenderPresent to 60 Hz refreshes (~16.7 ms).
-            // Hardcoding speed=6 pushed batches past 3 refreshes (15-20 FPS, ~1.5x or slower).
-            // Pick the DS-frame batch (2..5) that maximizes net speedup within at most 3
-            // refreshes (>=20 FPS floor, preferring 30/60 FPS when close), with hysteresis.
-            speed = 3;
-            static int swSpeed = 3;
-            if (ffShownMs > 0 && ffHiddenMs > 0 && !opt.headless)
-            {
-                const double refreshMs = frameTime * 1000.0;
-                auto scoreSpeed = [&](int n, double slack) -> std::pair<double, int> {
-                    const double total = (ffShownMs + (n - 1) * ffHiddenMs) * slack + 2.8;
-                    const int refreshes = std::max(1, (int)std::ceil(total / refreshMs));
-                    return { refreshes <= 3 ? (double)n / refreshes : 0.0, refreshes };
-                };
-                int bestN = 3;
-                double bestRate = 0.0;
-                int bestRef = 4;
-                for (int n = 2; n <= 5; n++)
-                {
-                    const auto [rate, ref] = scoreSpeed(n, 1.04);
-                    if (rate > bestRate + 0.05 || (std::abs(rate - bestRate) <= 0.05 && ref < bestRef))
-                    {
-                        bestN = n;
-                        bestRate = rate;
-                        bestRef = ref;
-                    }
-                }
-                const auto [curRate, curRef] = scoreSpeed(swSpeed, 0.96);
-                if (curRate <= 0.0 || bestRate > curRate + 0.25 || bestRef < curRef)
-                    swSpeed = bestN;
-                speed = swSpeed;
-                ffRefreshes = std::clamp(scoreSpeed(speed, 1.0).second, 1, 3);
-            }
-            else ffRefreshes = 2;
+            static SwitchFastForwardPacer swPacer;
+            std::tie(speed, ffRefreshes) = swPacer.Pick(ffShownMs, ffHiddenMs, frameTime * 1000.0, ahead, !opt.headless);
 #else
             speed = ffFrameMs > 0 && !opt.headless ? std::clamp((int)(33.3 / ffFrameMs), 2, 4) : 4; // (tests: always 4)
             static int oneRefresh = 0;
@@ -7042,11 +7012,7 @@ int main(int argc, char** argv)
             // outdoor overworld fast-forward runs smoothly; deko3D targets are pre-allocated at
             // 1280x720 so changing WxH never reallocates GPU memory).
             if (speed > 1 && !opt.headless && cfg.ffLowRes)
-#ifdef __SWITCH__
-                WideLinesNow = std::min(WideLinesNow, 192);
-#else
                 WideLinesNow = std::min(WideLinesNow, 360);
-#endif
 #ifdef __SWITCH__
             // In handheld mode the console's screen is 1280x720: drawing more than 720 lines is
             // never seen on it and wastes fragment shading and memory bandwidth.

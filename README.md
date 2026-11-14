@@ -34,7 +34,7 @@ It is **not a native PC/console port**; it is the original game presented the wa
 
 ## On the Nintendo Switch
 
-![NoSplitNX Nintendo Switch Launcher: 3DS/DSi upper showcase screen, physical DS/GBA/3DS cartridge cards, and Switch Lite scaled typography](docs/screenshots/switch-launcher.png)
+![NoSplitNX Nintendo Switch Launcher: 3DS/DSi upper showcase screen, physical DS/GBA cartridge cards, and Switch Lite scaled typography](docs/screenshots/switch-launcher.png)
 
 | In-Game Pause Menu (Switch Lite 720p Scale) | Console Settings Page |
 |---|---|
@@ -43,7 +43,7 @@ It is **not a native PC/console port**; it is the original game presented the wa
 ### Console-Native Interface & Switch Lite Handheld Scaling
 
 - **Nintendo 3DS / DSi Upper Showcase Screen:** Displays the focused game with stereo speaker grilles, a 3D floating cartridge preview, platform and serial badges (`NTR-` / `AGB-`), a save status indicator (`Save Found` / `New Game`), and animated equalizer bars.
-- **Physical Molded Cartridge Cards:** 32×32 ROM banner icons are framed inside authentic DS, GBA, and 3DS cartridge shells complete with printed sticker borders, colour-coded console headers, gold PCB contact pins, and glowing 3DS corner selection brackets. Carousel cards dynamically expand when fewer games are installed so the 1280×720 screen never looks empty.
+- **Physical Molded Cartridge Cards:** 32×32 ROM banner icons are framed inside authentic DS and GBA cartridge shells complete with printed sticker borders, colour-coded console headers, gold PCB contact pins, and glowing corner selection brackets. Carousel cards dynamically expand when fewer games are installed so the 1280×720 screen never looks empty.
 - **Switch Lite 5.5" Handheld Legibility:** Enlarged native 720p typography across the launcher (`160×160` cartridge icons, `27px` card titles, `33px` showcase header), the `960px`-wide in-game pause menu (`33px` options, `51px` row height), and the `1080px`-wide settings panel (`27px` option titles, `19px` descriptions).
 - **Automatic System Language Detection:** Reads the console's language directly from Horizon OS (`libnx`) to present the launcher, settings, and pause menu in **English, Spanish, Italian, French, German, Japanese, or Korean** automatically.
 

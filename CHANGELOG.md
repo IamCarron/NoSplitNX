@@ -4,6 +4,15 @@
 ## Unreleased
 
 
+## v1.0.0-beta.7 — Switch Fast-Forward Fixes & 3DS Tab Removed
+
+- **Launcher**: removed the 3DS tab and the "Pokémon Omega Ruby – coming soon" tile; the list now has ALL, DS and GBA.
+- **Nintendo Switch Fast-Forward Stability, Sharpness & 2x+ Speed**:
+  - Fixed 3D widescreen flickering and graphical glitches during fast-forward caused by clearing `RawCurrent` before deferred `WideOnFlush` ran in `VCount215` (latches skipped flushes cleanly into `WidePendingRaw`).
+  - Removed the `192p` Switch fast-forward resolution cap so **Lower detail on fast-forward** stays crisp at `360p`.
+  - Restored automatic Switch CPU (`1785 MHz`) and memory (`1600 MHz`) boost strictly while fast-forwarding using transient single-session `clkrst` calls (avoiding persistent `pcv` handles and leaving GPU clocks untouched) and widened the adaptive Switch fast-forward batch selector to `2..6` frames for consistent `>= 2x` speedups.
+
+
 ## v1.0.0-beta.6 — Switch Fast-Forward Performance & Complete Menu Localisations
 
 - **Nintendo Switch Fast-Forward Overhaul**:

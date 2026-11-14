@@ -857,7 +857,8 @@ struct WideAccess
 
     // A frame has been flushed: builds the wide polygon lists for it, with the in-between
     // frame's if `interpolate`.
-    static void OnFlush(GPU3D& g, bool interpolate)
+    static void OnFlushPolygons(GPU3D& g, bool interpolate, const std::vector<GPU3D::RawPolygon>& rawCur,
+        const std::vector<GPU3D::RawPolygon>& rawPrev, bool allowHelper)
     {
         if (VtxReal.empty())
         {
@@ -876,29 +877,47 @@ struct WideAccess
             {
                 maxP = std::max(maxP, g.NumPolygons);
                 maxV = std::max(maxV, g.NumVertices);
-                fprintf(stderr, "[wide] DS lists: %u of 2048 polygons, %u of 6144 vertices (raw %zu)\n", g.NumPolygons, g.NumVertices, g.RawCurrent.size());
+                fprintf(stderr, "[wide] DS lists: %u of 2048 polygons, %u of 6144 vertices (raw %zu)\n", g.NumPolygons, g.NumVertices, rawCur.size());
             }
         }
         float view = Wide.ViewWidth < 256 ? 256 : Wide.ViewWidth;
         const s64 xden = 4096, xnum = (s64)(4096.0f * 256.0f / view + 0.5f);
         Dirty = true;
-        if (ListsOnHelper())
+        if (allowHelper && ListsOnHelper())
         {
             ListHelper::Start(g, interpolate, xnum, xden, view);
             return;
         }
-        ListHelper::Stop();
+        if (allowHelper)
+            ListHelper::Stop();
+        else
+        {
+            // Deferred flush inside VCount215: wait for any in-flight list/GPU user of
+            // VtxReal/PolyReal/ListReal before rebuilding directly on the emulation thread.
+            ListHelper::Join(2);
+            if (DrawingOnWideGpu) WideGpuSendJoin(1);
+        }
         u32 matched;
-        Replay(g, false, xnum, xden, VtxReal.data(), PolyReal.data(), ListReal.data(), NumReal, matched, g.RawCurrent,
-            g.RawPrevious, MaxPolygons, MaxVertices);
+        Replay(g, false, xnum, xden, VtxReal.data(), PolyReal.data(), ListReal.data(), NumReal, matched, rawCur,
+            rawPrev, MaxPolygons, MaxVertices);
         ExtendToEdges(ListReal.data(), NumReal, view, false);
         NumInterp = 0;
         if (interpolate)
         {
             Replay(g, true, xnum, xden, VtxInterp.data(), PolyInterp.data(), ListInterp.data(), NumInterp, matched,
-                g.RawCurrent, g.RawPrevious, MaxPolygons, MaxVertices);
+                rawCur, rawPrev, MaxPolygons, MaxVertices);
             ExtendToEdges(ListInterp.data(), NumInterp, view, true);
         }
+    }
+
+    static void OnFlush(GPU3D& g, bool interpolate)
+    {
+        OnFlushPolygons(g, interpolate, g.RawCurrent, g.RawPrevious, true);
+    }
+
+    static void OnFlushRaw(GPU3D& g, const std::vector<GPU3D::RawPolygon>& rawCur)
+    {
+        OnFlushPolygons(g, false, rawCur, rawCur, false);
     }
 
     // A layer of the distance: as far as the furthest thing in the picture, within a tenth (a
@@ -2138,6 +2157,7 @@ void WideWaitForTextures()
 void WideShutdown() { WideAccess::Shutdown(); }
 void WideReleaseGpu() { WideAccess::ReleaseGpu(); }
 void WideOnFlush(GPU3D& g, bool interpolate) { WideAccess::OnFlush(g, interpolate); }
+void WideOnFlushRaw(GPU3D& g, const std::vector<GPU3D::RawPolygon>& rawCur) { WideAccess::OnFlushRaw(g, rawCur); }
 bool WideListsOnHelper() { return WideAccess::ListsOnHelper(); }
 bool WideReplayPaired(GPU3D& g, Vertex* vram, Polygon* pram, Polygon** list, u32& numPolys, u32& matched, size_t& frameSize)
 {

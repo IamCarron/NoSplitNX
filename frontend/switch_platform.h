@@ -35,6 +35,10 @@ bool IsHandheld();
 // graphics and memory clocks and the chip's and the board's temperature right now, as text.
 std::string Status();
 
+// Raises the processor (1785 MHz) and memory (1600 MHz) while fast forwarding, keeping the
+// graphics chip at its own clock and restoring normal clocks when boost turns off or at exit.
+void SetFastForwardBoost(bool on);
+
 // The thread for the emulation when frames are shown alongside it (main.cpp, emuthread.h):
 // core 0, the main thread's priority and a stack as big as the main thread's. Then the main
 // thread moves to core 2 (MoveMainThread). JoinThread waits for the thread's end.

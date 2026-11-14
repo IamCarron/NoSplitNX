@@ -1852,7 +1852,7 @@ index 4beaf8f..bf419de 100644
  
      typedef void (*DrawPixel)(u32* dst, u16 color, u32 flag);
 diff --git a/src/GPU3D.cpp b/src/GPU3D.cpp
-index 1204741..e7dff9f 100644
+index 1204741..1165a22 100644
 --- a/src/GPU3D.cpp
 +++ b/src/GPU3D.cpp
 @@ -16,6 +16,8 @@
@@ -1864,7 +1864,7 @@ index 1204741..e7dff9f 100644
  #include <stdio.h>
  #include <string.h>
  #include <algorithm>
-@@ -26,8 +28,25 @@
+@@ -26,8 +28,26 @@
  #include "Platform.h"
  #include "GPU3D.h"
  
@@ -1878,6 +1878,7 @@ index 1204741..e7dff9f 100644
 +// How many polygons and vertices SubmitPolygon accepts. The hardware's limits, except while
 +// the frame is submitted again for the widescreen picture, which shows more of the scene.
 +void WideOnFlush(GPU3D& g, bool interpolate);
++void WideOnFlushRaw(GPU3D& g, const std::vector<GPU3D::RawPolygon>& rawCur);
 +bool WideListsOnHelper();
 +bool WideReplayPaired(GPU3D& g, Vertex* vram, Polygon* pram, Polygon** list, u32& numPolys, u32& matched, size_t& frameSize);
 +void WideOnRender(GPU& gpu, bool showingInterp);
@@ -1890,16 +1891,18 @@ index 1204741..e7dff9f 100644
  using Platform::Log;
  using Platform::LogLevel;
  
-@@ -198,6 +217,8 @@ void GPU3D::Reset() noexcept
+@@ -198,6 +218,10 @@ void GPU3D::Reset() noexcept
  
      memset(ExecParams, 0, 32*4);
      ExecParamCount = 0;
 +    ExecCommand = 0xFF;
 +    WideFlushPending = false;
++    WidePendingFlushAttr = 0;
++    WidePendingRaw.clear();
  
      CycleCount = 0;
      VertexPipeline = 0;
-@@ -366,6 +387,11 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
+@@ -366,6 +390,13 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
  
      file->VarArray(ExecParams, 32*4);
      file->Var32(&ExecParamCount);
@@ -1907,11 +1910,13 @@ index 1204741..e7dff9f 100644
 +    {
 +        ExecCommand = 0xFF;
 +        WideFlushPending = false;
++        WidePendingFlushAttr = 0;
++        WidePendingRaw.clear();
 +    }
      file->Var32((u32*)&CycleCount);
      file->Var64(&Timestamp);
  
-@@ -493,7 +519,21 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
+@@ -493,7 +524,21 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
          }
      }
  
@@ -1934,7 +1939,7 @@ index 1204741..e7dff9f 100644
  
      file->Var32((u32*)&VertexPipeline);
      file->Var32((u32*)&NormalPipeline);
-@@ -812,6 +852,7 @@ void ClipSegment(Vertex* outbuf, Vertex* vin, Vertex* vout)
+@@ -812,6 +857,7 @@ void ClipSegment(Vertex* outbuf, Vertex* vin, Vertex* vout)
  {
      s64 factor_num = vin->Position[3] - (plane*vin->Position[comp]);
      s32 factor_den = factor_num - (vout->Position[3] - (plane*vout->Position[comp]));
@@ -1942,7 +1947,7 @@ index 1204741..e7dff9f 100644
  
  #define INTERPOLATE(var)  { outbuf->var = (vin->var + ((vout->var - vin->var) * factor_num) / factor_den); }
  
-@@ -862,6 +903,7 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
+@@ -862,6 +908,7 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
              Vertex* vprev = &vertices[prev];
              if (vprev->Position[comp] <= vprev->Position[3])
              {
@@ -1950,7 +1955,7 @@ index 1204741..e7dff9f 100644
                  ClipSegment<comp, 1, attribs>(&temp[c], &vtx, vprev);
                  c++;
              }
-@@ -869,12 +911,16 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
+@@ -869,12 +916,16 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
              Vertex* vnext = &vertices[next];
              if (vnext->Position[comp] <= vnext->Position[3])
              {
@@ -1967,7 +1972,7 @@ index 1204741..e7dff9f 100644
      }
  
      nverts = c; c = clipstart;
-@@ -889,6 +935,7 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
+@@ -889,6 +940,7 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
              Vertex* vprev = &temp[prev];
              if (vprev->Position[comp] >= -vprev->Position[3])
              {
@@ -1975,7 +1980,7 @@ index 1204741..e7dff9f 100644
                  ClipSegment<comp, -1, attribs>(&vertices[c], &vtx, vprev);
                  c++;
              }
-@@ -896,12 +943,16 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
+@@ -896,12 +948,16 @@ int ClipAgainstPlane(const GPU3D& gpu, Vertex* vertices, int nverts, int clipsta
              Vertex* vnext = &temp[next];
              if (vnext->Position[comp] >= -vnext->Position[3])
              {
@@ -1992,7 +1997,7 @@ index 1204741..e7dff9f 100644
      }
  
      // checkme
-@@ -971,6 +1022,19 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -971,6 +1027,19 @@ void GPU3D::SubmitPolygon() noexcept
      // TODO: work out how it works on the real thing
      // the normalization part is a wild guess
  
@@ -2012,7 +2017,7 @@ index 1204741..e7dff9f 100644
      Vertex *v0, *v1, *v2, *v3;
      s64 normalX, normalY, normalZ;
      s64 dot;
-@@ -1048,8 +1112,8 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -1048,8 +1117,8 @@ void GPU3D::SubmitPolygon() noexcept
          }
  
          if (LastStripPolygon->NumVertices == lastpolyverts &&
@@ -2023,7 +2028,7 @@ index 1204741..e7dff9f 100644
          {
              reusedvertices[0] = LastStripPolygon->Vertices[id0];
              reusedvertices[1] = LastStripPolygon->Vertices[id1];
-@@ -1084,7 +1148,7 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -1084,7 +1153,7 @@ void GPU3D::SubmitPolygon() noexcept
      // clipping
  
      nverts = ClipPolygon<true>(*this, clippedvertices, nverts, clipstart);
@@ -2032,7 +2037,7 @@ index 1204741..e7dff9f 100644
      {
          LastStripPolygon = NULL;
          return;
-@@ -1092,7 +1156,7 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -1092,7 +1161,7 @@ void GPU3D::SubmitPolygon() noexcept
  
      // reject the polygon if it's not going to fit in polygon/vertex RAM
  
@@ -2041,7 +2046,7 @@ index 1204741..e7dff9f 100644
      {
          LastStripPolygon = NULL;
          DispCnt |= (1<<13);
-@@ -1589,6 +1653,25 @@ void GPU3D::BoxTest(const u32* params) noexcept
+@@ -1589,6 +1658,25 @@ void GPU3D::BoxTest(const u32* params) noexcept
          cube[i].Position[3] = ((s64)x*ClipMatrix[3] + (s64)y*ClipMatrix[7] + (s64)z*ClipMatrix[11] + (s64)0x1000*ClipMatrix[15]) >> 12;
      }
  
@@ -2067,7 +2072,7 @@ index 1204741..e7dff9f 100644
      // front face (-Z)
      face[0] = cube[0]; face[1] = cube[1]; face[2] = cube[2]; face[3] = cube[3];
      res = ClipPolygon<false>(*this, face, 4, 0);
-@@ -1764,6 +1847,13 @@ void GPU3D::ExecuteCommand() noexcept
+@@ -1764,6 +1852,13 @@ void GPU3D::ExecuteCommand() noexcept
      {
          // fast path for command which only have a single parameter
  
@@ -2081,7 +2086,7 @@ index 1204741..e7dff9f 100644
          /*printf("[GXS:%08X] 0x%02X,  0x%08X", GXStat, entry.Command, entry.Param);*/
  
          switch (entry.Command)
-@@ -2116,6 +2206,9 @@ void GPU3D::ExecuteCommand() noexcept
+@@ -2116,6 +2211,9 @@ void GPU3D::ExecuteCommand() noexcept
      }
      else
      {
@@ -2091,7 +2096,7 @@ index 1204741..e7dff9f 100644
          ExecParams[ExecParamCount] = entry.Param;
          ExecParamCount++;
  
-@@ -2375,6 +2468,7 @@ void GPU3D::FinishWork(s32 cycles) noexcept
+@@ -2375,6 +2473,7 @@ void GPU3D::FinishWork(s32 cycles) noexcept
  
  void GPU3D::Run() noexcept
  {
@@ -2099,7 +2104,7 @@ index 1204741..e7dff9f 100644
      if (!GeometryEnabled || FlushRequest ||
          (CmdPIPE.IsEmpty() && !(GXStat & (1<<27))))
      {
-@@ -2456,12 +2550,70 @@ bool YSort(Polygon* a, Polygon* b)
+@@ -2456,12 +2555,70 @@ bool YSort(Polygon* a, Polygon* b)
      return a->SortKey < b->SortKey;
  }
  
@@ -2170,7 +2175,7 @@ index 1204741..e7dff9f 100644
              if (FlushRequest)
              {
                  if (NumPolygons)
-@@ -2487,6 +2639,57 @@ void GPU3D::VBlank() noexcept
+@@ -2487,6 +2644,71 @@ void GPU3D::VBlank() noexcept
  
                  RenderNumPolygons = NumPolygons;
                  RenderFrameIdentical = false;
@@ -2200,6 +2205,7 @@ index 1204741..e7dff9f 100644
 +                        SsrProf::Scope prof(SsrProf::WideFlush);
 +                        WideOnFlush(*this, interpolate);
 +                        WideFlushPending = false;
++                        WidePendingRaw.clear();
 +                    }
 +                    if (interpolate && helper)
 +                        InterpDeferred = true; // built when it is drawn, from the helper's pairs
@@ -2211,24 +2217,37 @@ index 1204741..e7dff9f 100644
 +                    if (Wide.Owner == this && !helper)
 +                    {
 +                        if (deferWide)
++                        {
++                            // Preserve the flushed geometry before RawCurrent is cleared below,
++                            // so a 30 fps scene still renders when VCount215 next draws wide 3D.
++                            if (doInterp)
++                                WidePendingRaw = RawCurrent;
++                            else
++                                WidePendingRaw.swap(RawCurrent);
++                            WidePendingFlushAttr = FlushAttributes;
 +                            WideFlushPending = true;
++                        }
 +                        else
 +                        {
 +                            SsrProf::Scope prof(SsrProf::WideFlush);
 +                            WideOnFlush(*this, InterpPending);
 +                            WideFlushPending = false;
++                            WidePendingRaw.clear();
 +                        }
 +                    }
 +                    RawPrevious.swap(RawCurrent);
 +                    RawCurrent.clear();
 +                }
 +                else
++                {
 +                    WideFlushPending = false;
++                    WidePendingRaw.clear();
++                }
 +                LastFlushVBlank = VBlankCount;
              }
              else
              {
-@@ -2499,6 +2702,13 @@ void GPU3D::VBlank() noexcept
+@@ -2499,6 +2721,13 @@ void GPU3D::VBlank() noexcept
                      && memcmp(RenderEdgeTable, EdgeTable, 8*2) == 0
                      && memcmp(RenderFogDensityTable + 1, FogDensityTable, 32) == 0
                      && memcmp(RenderToonTable, ToonTable, 32*2) == 0;
@@ -2242,7 +2261,7 @@ index 1204741..e7dff9f 100644
              }
  
              RenderDispCnt = DispCnt;
-@@ -2535,7 +2745,54 @@ void GPU3D::VBlank() noexcept
+@@ -2535,7 +2764,63 @@ void GPU3D::VBlank() noexcept
  
  void GPU3D::VCount215(GPU& gpu) noexcept
  {
@@ -2258,14 +2277,23 @@ index 1204741..e7dff9f 100644
 +    // through GPU3D_WideGpu.h: its data was copied when it was sent.)
 +    WideWaitForTextures();
 +    auto finishWide = [&](bool showingInterp) {
-+        if (Wide.Owner != this) return;
++        if (Wide.Owner != this)
++        {
++            WideFlushPending = false;
++            WidePendingRaw.clear();
++            return;
++        }
 +        if (!rc_wide_render_skip)
 +        {
 +            if (WideFlushPending)
 +            {
 +                SsrProf::Scope profFlush(SsrProf::WideFlush);
-+                WideOnFlush(*this, false);
++                const u32 savedFlushAttr = FlushAttributes;
++                FlushAttributes = WidePendingFlushAttr;
++                WideOnFlushRaw(*this, WidePendingRaw);
++                FlushAttributes = savedFlushAttr;
 +                WideFlushPending = false;
++                WidePendingRaw.clear();
 +            }
 +            SsrProf::Scope profWide(SsrProf::WideRender);
 +            WideOnRender(gpu, showingInterp);
@@ -2298,7 +2326,7 @@ index 1204741..e7dff9f 100644
  
  void GPU3D::SetRenderXPos(u16 xpos) noexcept
 diff --git a/src/GPU3D.h b/src/GPU3D.h
-index 08c2208..edf2d76 100644
+index 08c2208..d9ecd5c 100644
 --- a/src/GPU3D.h
 +++ b/src/GPU3D.h
 @@ -20,6 +20,7 @@
@@ -2371,7 +2399,7 @@ index 08c2208..edf2d76 100644
      bool AbortFrame = false;
  
      u64 Timestamp = 0;
-@@ -322,6 +346,35 @@ public:
+@@ -322,6 +346,37 @@ public:
      u32 CurRAMBank = 0;
  
      std::array<Polygon*,2048> RenderPolygonRAM {};
@@ -2398,6 +2426,8 @@ index 08c2208..edf2d76 100644
 +    bool InterpDeferred = false;  // ssrecomp: the in-between frame is built at VCount215 (from the
 +                                  // pairs the wide view's helper thread works out, GPU3D_Wide.cpp)
 +    bool WideFlushPending = false; // ssrecomp: defer WideOnFlush on skipped fast-forward frames until a rendered frame needs it
++    u32 WidePendingFlushAttr = 0;
++    std::vector<RawPolygon> WidePendingRaw; // ssrecomp: polygons latched from a skipped flush until WideOnFlush runs
 +    std::vector<Vertex> InterpVertexRAM;
 +    std::vector<Polygon> InterpPolygonRAM;
 +    std::array<Polygon*,2048> InterpRenderPolygonRAM {};

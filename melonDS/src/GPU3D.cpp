@@ -38,6 +38,7 @@ void WideWait();
 // How many polygons and vertices SubmitPolygon accepts. The hardware's limits, except while
 // the frame is submitted again for the widescreen picture, which shows more of the scene.
 void WideOnFlush(GPU3D& g, bool interpolate);
+void WideOnFlushRaw(GPU3D& g, const std::vector<GPU3D::RawPolygon>& rawCur);
 bool WideListsOnHelper();
 bool WideReplayPaired(GPU3D& g, Vertex* vram, Polygon* pram, Polygon** list, u32& numPolys, u32& matched, size_t& frameSize);
 void WideOnRender(GPU& gpu, bool showingInterp);
@@ -219,6 +220,8 @@ void GPU3D::Reset() noexcept
     ExecParamCount = 0;
     ExecCommand = 0xFF;
     WideFlushPending = false;
+    WidePendingFlushAttr = 0;
+    WidePendingRaw.clear();
 
     CycleCount = 0;
     VertexPipeline = 0;
@@ -391,6 +394,8 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
     {
         ExecCommand = 0xFF;
         WideFlushPending = false;
+        WidePendingFlushAttr = 0;
+        WidePendingRaw.clear();
     }
     file->Var32((u32*)&CycleCount);
     file->Var64(&Timestamp);
@@ -2665,6 +2670,7 @@ void GPU3D::VBlank() noexcept
                         SsrProf::Scope prof(SsrProf::WideFlush);
                         WideOnFlush(*this, interpolate);
                         WideFlushPending = false;
+                        WidePendingRaw.clear();
                     }
                     if (interpolate && helper)
                         InterpDeferred = true; // built when it is drawn, from the helper's pairs
@@ -2676,19 +2682,32 @@ void GPU3D::VBlank() noexcept
                     if (Wide.Owner == this && !helper)
                     {
                         if (deferWide)
+                        {
+                            // Preserve the flushed geometry before RawCurrent is cleared below,
+                            // so a 30 fps scene still renders when VCount215 next draws wide 3D.
+                            if (doInterp)
+                                WidePendingRaw = RawCurrent;
+                            else
+                                WidePendingRaw.swap(RawCurrent);
+                            WidePendingFlushAttr = FlushAttributes;
                             WideFlushPending = true;
+                        }
                         else
                         {
                             SsrProf::Scope prof(SsrProf::WideFlush);
                             WideOnFlush(*this, InterpPending);
                             WideFlushPending = false;
+                            WidePendingRaw.clear();
                         }
                     }
                     RawPrevious.swap(RawCurrent);
                     RawCurrent.clear();
                 }
                 else
+                {
                     WideFlushPending = false;
+                    WidePendingRaw.clear();
+                }
                 LastFlushVBlank = VBlankCount;
             }
             else
@@ -2757,14 +2776,23 @@ void GPU3D::VCount215(GPU& gpu) noexcept
     // through GPU3D_WideGpu.h: its data was copied when it was sent.)
     WideWaitForTextures();
     auto finishWide = [&](bool showingInterp) {
-        if (Wide.Owner != this) return;
+        if (Wide.Owner != this)
+        {
+            WideFlushPending = false;
+            WidePendingRaw.clear();
+            return;
+        }
         if (!rc_wide_render_skip)
         {
             if (WideFlushPending)
             {
                 SsrProf::Scope profFlush(SsrProf::WideFlush);
-                WideOnFlush(*this, false);
+                const u32 savedFlushAttr = FlushAttributes;
+                FlushAttributes = WidePendingFlushAttr;
+                WideOnFlushRaw(*this, WidePendingRaw);
+                FlushAttributes = savedFlushAttr;
                 WideFlushPending = false;
+                WidePendingRaw.clear();
             }
             SsrProf::Scope profWide(SsrProf::WideRender);
             WideOnRender(gpu, showingInterp);

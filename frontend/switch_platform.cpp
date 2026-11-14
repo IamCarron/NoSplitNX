@@ -1293,6 +1293,134 @@ void JitStarted()
     fprintf(stderr, "[switch] the JIT is running\n");
 }
 
+namespace
+{
+bool g_ffBoosted = false;
+bool g_ffBoostUnavailable = false;
+bool g_ffBoostHandheld = true;
+bool g_ffCpuRaised = false;
+bool g_ffMemRaised = false;
+u32 g_ffCpuNormal = 0;
+u32 g_ffMemNormal = 0;
+uint32_t g_ffBoostChecks = 0;
+constexpr u32 BoostCpuHz = 1785000000u;
+constexpr u32 BoostMemHz = 1600000000u;
+constexpr u32 ClockMarginHz = 15000000u;
+
+bool ClkrstRaiseModule(PcvModuleId mod, u32 targetHz, u32& normalHz, bool& wasRaised,
+    u32* prevOut = nullptr, u32* nowOut = nullptr)
+{
+    ClkrstSession s;
+    if (R_FAILED(clkrstOpenSession(&s, mod, 3))) return false;
+    u32 cur = 0;
+    bool ok = R_SUCCEEDED(clkrstGetClockRate(&s, &cur));
+    if (prevOut) *prevOut = cur;
+    if (nowOut) *nowOut = cur;
+    if (ok && cur + ClockMarginHz < targetHz)
+    {
+        if (!wasRaised) normalHz = cur;
+        ok = R_SUCCEEDED(clkrstSetClockRate(&s, targetHz));
+        if (ok)
+        {
+            wasRaised = true;
+            u32 now = 0;
+            if (R_SUCCEEDED(clkrstGetClockRate(&s, &now)) && nowOut)
+                *nowOut = now;
+        }
+    }
+    clkrstCloseSession(&s);
+    return ok;
+}
+
+void ClkrstRestoreModule(PcvModuleId mod, u32 normalHz, bool& wasRaised)
+{
+    if (!wasRaised) return;
+    ClkrstSession s;
+    if (R_SUCCEEDED(clkrstOpenSession(&s, mod, 3)))
+    {
+        clkrstSetClockRate(&s, normalHz);
+        clkrstCloseSession(&s);
+    }
+    wasRaised = false;
+}
+}
+
+void SetFastForwardBoost(bool on)
+{
+    if (!on)
+    {
+        if (!g_ffBoosted) return;
+        g_ffBoosted = false;
+        g_ffBoostChecks = 0;
+        if (g_ffCpuRaised || g_ffMemRaised)
+        {
+            if (hosversionAtLeast(8, 0, 0) && R_SUCCEEDED(clkrstInitialize()))
+            {
+                ClkrstRestoreModule(PcvModuleId_CpuBus, g_ffCpuNormal, g_ffCpuRaised);
+                if (IsHandheld() == g_ffBoostHandheld)
+                    ClkrstRestoreModule(PcvModuleId_EMC, g_ffMemNormal, g_ffMemRaised);
+                else
+                    g_ffMemRaised = false;
+                clkrstExit();
+            }
+            else
+                g_ffCpuRaised = g_ffMemRaised = false;
+        }
+        return;
+    }
+
+    if (g_ffBoostUnavailable) return;
+    if (g_ffBoosted)
+    {
+        // Re-check periodically without keeping pcv/clkrst sessions open (avoids fatal 2011-0102).
+        if (++g_ffBoostChecks % 60 != 0) return;
+        if (!g_ffCpuRaised && !g_ffMemRaised) return;
+        if (R_FAILED(clkrstInitialize())) return;
+        if (g_ffCpuRaised) ClkrstRaiseModule(PcvModuleId_CpuBus, BoostCpuHz, g_ffCpuNormal, g_ffCpuRaised);
+        if (g_ffMemRaised) ClkrstRaiseModule(PcvModuleId_EMC, BoostMemHz, g_ffMemNormal, g_ffMemRaised);
+        clkrstExit();
+        return;
+    }
+
+    if (!hosversionAtLeast(8, 0, 0) || R_FAILED(clkrstInitialize()))
+    {
+        g_ffBoostUnavailable = true;
+        return;
+    }
+
+    u32 prevCpu = 0, nowCpu = 0, prevMem = 0, nowMem = 0;
+    const bool cpuOk = ClkrstRaiseModule(PcvModuleId_CpuBus, BoostCpuHz, g_ffCpuNormal, g_ffCpuRaised, &prevCpu, &nowCpu);
+    const bool memOk = ClkrstRaiseModule(PcvModuleId_EMC, BoostMemHz, g_ffMemNormal, g_ffMemRaised, &prevMem, &nowMem);
+    clkrstExit();
+
+    if (!cpuOk || nowCpu + ClockMarginHz < BoostCpuHz)
+    {
+        fprintf(stderr, "[switch] fast-forward clock boost unavailable (cpu %u -> %u MHz, mem %u -> %u MHz)\n",
+            prevCpu / 1000000, nowCpu / 1000000, prevMem / 1000000, nowMem / 1000000);
+        // Restore memory if it was raised before CPU failed.
+        if (g_ffMemRaised && R_SUCCEEDED(clkrstInitialize()))
+        {
+            ClkrstRestoreModule(PcvModuleId_EMC, g_ffMemNormal, g_ffMemRaised);
+            clkrstExit();
+        }
+        g_ffCpuRaised = g_ffMemRaised = false;
+        g_ffBoostUnavailable = true;
+        return;
+    }
+
+    g_ffBoostHandheld = IsHandheld();
+    g_ffBoosted = true;
+    g_ffBoostChecks = 0;
+    static bool logged = false;
+    if (!logged && (g_ffCpuRaised || g_ffMemRaised))
+    {
+        logged = true;
+        fprintf(stderr, "[switch] fast-forward clock boost on: cpu %u -> %u MHz, mem %u -> %u MHz%s\n",
+            prevCpu / 1000000, nowCpu / 1000000, prevMem / 1000000, nowMem / 1000000,
+            memOk ? "" : " (mem unchanged)");
+    }
+}
+
 std::string Status()
 {
     // Test runs only, one session at a time, each closed straight after. The clocks come from
@@ -1352,6 +1480,7 @@ extern "C" void SsrJitRelease();
 
 void Finish()
 {
+    SetFastForwardBoost(false);
     JitStarted(); // (an ordinary exit: the JIT did start)
     SsrJitRelease(); // (the JIT's code memory given back: without that the Homebrew Menu cannot start the game list again)
     // QUIT in the pause menu, for a game chosen from the game list: the Homebrew Menu's loader

@@ -51,8 +51,8 @@ inline void ModernText(Canvas& c, int x, int y, const std::string& text, int tar
 }
 
 // The consoles the list has games of, in the order its sections and tabs come in.
-enum Platform { DS, GBA, N3DS, PLATFORMS };
-inline const char* PlatformName(int p) { return p == DS ? "DS" : p == GBA ? "GBA" : "3DS"; }
+enum Platform { DS, GBA, PLATFORMS };
+inline const char* PlatformName(int p) { return p == DS ? "DS" : "GBA"; }
 // The tabs along the top: ALL (every section, each under its console's heading), then one per
 // console.
 constexpr int TABS = 1 + PLATFORMS;
@@ -82,18 +82,8 @@ struct Game
 // The size the larger pictures are kept at (the tiles of the list at 720 lines).
 constexpr int Art = 224;
 
-// Games on their way, in their console's section with COMING SOON over the picture: Pokemon
-// Omega Ruby on the 3DS (its picture as any game's: icons/ECRA.jpg, or SSR_PC_ART's ECRA.jpg).
-inline void AddComingSoon(std::vector<Game>& games)
-{
-    Game g;
-    g.platform = N3DS;
-    g.code = "ECRA";
-    g.rom = "coming-soon:ECRA"; // (never a file: so never the last game played, nor started)
-    g.name = "POKEMON OMEGA RUBY";
-    g.comingSoon = true;
-    games.push_back(std::move(g));
-}
+// Games on their way (none now): kept so a tile can say COMING SOON again.
+inline void AddComingSoon(std::vector<Game>&) {}
 
 // The games this program plays, in the order the list shows them.
 struct KnownGame
@@ -771,7 +761,7 @@ inline void DrawPhysicalCartridge(Canvas& c, int cx, int cy, int cw, int ch, int
                                   const std::string& code, const std::string& name, int s, int iconScale)
 {
     const bool isGba = (platform == GBA);
-    const bool is3ds = (platform == N3DS);
+    const bool is3ds = false; // (no 3DS games: the 3DS tab was removed)
     const int rad = std::max(3, 3 * s);
 
     // Drop shadow behind cartridge body
@@ -884,7 +874,7 @@ inline std::string ShortCardTitle(const std::string& rawName)
 inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& g, int s, uint32_t accent, int gameIdx = 0, int totalGames = 0)
 {
     const bool isGba = (g.platform == GBA);
-    const bool is3ds = (g.platform == N3DS);
+    const bool is3ds = false; // (no 3DS games: the 3DS tab was removed)
     const uint32_t platAccent = isGba ? 0xFFA855F7 : is3ds ? 0xFFF43F5E : (accent ? accent : 0xFF00C3FF);
     const float t = AnimTime();
 
@@ -1015,7 +1005,7 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int tileW, int tileH, int
                               const std::string& code, const std::string& name, int s, bool hasSave = false, bool sel = false)
 {
     const bool isGba = (platform == GBA);
-    const bool is3ds = (platform == N3DS);
+    const bool is3ds = false; // (no 3DS games: the 3DS tab was removed)
 
     // Rich 3DS / Wii U channel tile gradient surface (brighter, glossy console look)
     const uint32_t gradTop = isGba ? (sel ? 0xFF342254 : 0xFF25183E) : is3ds ? (sel ? 0xFF421E30 : 0xFF2E1522) : (sel ? 0xFF233656 : 0xFF19263D);
@@ -1379,7 +1369,7 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
 
     for (int t = 0; t < TABS; t++)
     {
-        const std::string name = (t == 0 ? ToNiceTitle(UiLang::Tr("ALL")) : t == 1 ? "Nintendo DS" : t == 2 ? "GBA" : "3DS");
+        const std::string name = (t == 0 ? ToNiceTitle(UiLang::Tr("ALL")) : t == 1 ? "Nintendo DS" : "GBA");
         const int tabH = std::max(18, 6 * s);
         const int nameW = ModernTextWidth(name, tabH);
         const int cx = TabX(c, grid, t);
