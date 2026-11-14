@@ -3,9 +3,12 @@
 
 ## Unreleased
 
+
+## v1.0.0-beta.11 — Switch ROM Music, Gen 5 Battle Bar & Menu Polish
+
 - **Game list music on Switch**: fixed silent launcher previews and flat visualiser bars by using native Switch audio output before emulation starts, raising DS sound-archive limits (>512 wave entries, larger tables and nested calls), adding raw ROM scanning when file tables miss, and automatically skipping silent control tracks.
 - **Gen 5 battle command bar & menu transitions**: moved the bottom battle prompt into a left-aligned framed box across a full-width dark tray (matching HeartGold so translated prompts sit clear of the battle buttons), cleared lingering Bag stripes and empty card borders during fade-to-black transitions, and ensured the save screen cleanly hides the cut-off top-screen arrow strip on Spanish Black.
-- **Overlay and pause menus**: wrapped long translated footer hints cleanly inside the menu frame (fixing overflow in **Controls**), added footer navigation hints to **Cheats**, and kept outer vertical margins on tall cheat lists so overlays no longer touch the top and bottom screen edges.
+- **Overlay and pause menus**: wrapped long translated footer hints cleanly inside the menu frame (fixing overflow in **Controls**), added footer navigation hints to **Search** and **Database Info**, and kept outer vertical margins on tall cheat lists so overlays no longer touch the top and bottom screen edges.
 
 
 ## v1.0.0-beta.10 — ROM Audio Quality, Softer UI Palette, Streamlined Pause Menu & Clean Updates
