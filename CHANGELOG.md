@@ -3,6 +3,9 @@
 
 ## Unreleased
 
+
+## v1.0.0-beta.9 — ROM Soundtrack Preview, Launcher Redesign & Switch Performance
+
 - **Game list soundtrack preview & live visualiser**: hovering over a DS (`.nds`) or GBA (`.gba`) Pokémon ROM in the launcher now synthesises and previews background music directly from the selected ROM at runtime (respecting the **Volume** setting, with no built-in copyrighted audio) and drives the 9-band sound bars in the showcase banner live from the music.
 - **Nintendo Switch performance optimisations**: reduced per-frame overhead on Switch at stock console clocks by eliminating per-tick hardware divides in sound mixing, skipping redundant sprite/object caches on sprite-free 2D scanlines, deduplicating unchanged Deko3D state binds in widescreen 3D draws, replacing `/ 255` pixel divides and single-byte flag hashing in the GPU compositor, and sleeping cleanly on frame handover instead of 500 us timed polling.
 - **Game list, settings and updater**: fixed vertical gradients fading to black/transparent, added per-game accent colours across the background mesh, showcase banner, active tab, selection halo and cartridges, removed the redundant `Widescreen` pill from the launcher top bar, fixed cartridge badge/save-dot overlap and UTF-8 title truncation, added top-header **Settings** and **Back** pill shortcuts, replaced `< Value >` arrows in Settings with action buttons, toggle switches and a choice selector popup for multi-option settings, added Switch touchscreen tap, swipe-to-scroll carousel and settings scrolling without accidental taps, and added a crisp frosted-glass modal overlay (with single-layer dimming) so updates and Home Menu icon installation stay clearly in front.
