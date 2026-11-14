@@ -4,6 +4,19 @@
 ## Unreleased
 
 
+## v1.0.0-beta.5 — Upstream Improvements, Fast-Forward Refinement & Console UI Polish
+
+- **Upstream Port & Emulation Refinements**:
+  - **Fast-forward audio & input refinements**: ported upstream fast-forward audio queue pacing (preserving normal pitch and bounded lag across speed changes) along with clean press-edge handling and inactive guards.
+  - **Widescreen edges, Gen 5 layout & Touch-only mini-games**: ported upstream wide edge-tiling fixes (preserving banners without repeating arrows/borders), single-screen Gen 5 layout refinements, auto-enabled touch cursor for touch-only mini-games (Ruins of Alph puzzle, Trainer Card signature), and right-stick touch cursor support.
+  - **CI & Switch build coverage**: updated unit tests for fast-forward audio/button edge behaviour and wide edge tiling (`test_fast_forward_audio`, `test_fast_forward_button`, `test_wide_edges`).
+
+- **Console UI & Readability Polish (Switch Lite 720p)**:
+  - **Pixel-measured settings layout & sentence case**: replaced fixed-character estimate wrapping in `SettingsPage::Draw` with pixel-width wrapping (`WrapModern`), compact per-line heights (`descLineH` and clean `gapH` spacing between cards), natural sentence-case descriptions (`ToNiceSentence` preserving acronyms like `DS`, `GBA`, `3DS`, `GPU`, `FPS`, `3D`), rounded value pills, and a header item counter pill (`1 / N`).
+  - **In-game pause menu & dock polish**: added rounded value pills to pause menu options (`< Off >`), rendered footer hints with `DrawButtonBadge` pills (`A Select`, `B Back`), and aligned launcher/settings dock badge heights cleanly (`ButtonBadgeWidth`).
+  - **Updated documentation**: refreshed `README.md` with English Switch Lite 720p UI screenshots (`docs/screenshots/switch-*.png`), fast-forward `ZR` toggle documentation, and touch-cursor notes.
+
+
 ## v1.0.0-beta.4 — Switch Lite Handheld Scale, True 3x–6x Fast-Forward & Audio Polish
 
 - **True 3x–6x Fast-Forward Overhaul on Nintendo Switch**:

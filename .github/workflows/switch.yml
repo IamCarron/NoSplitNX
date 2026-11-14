@@ -88,36 +88,39 @@ jobs:
       - name: Generate Release Notes
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          cat << EOF > build-sd/RELEASE_NOTES.md
-          # NoSplitNX ${{ github.ref_name }}
-
-          Nintendo Switch release of **NoSplitNX** focusing on Switch Lite native handheld typography scaling, unthrottled 4x fast-forward speedup, and localization polish.
-
-          ### Switch Lite Handheld UI Scaling & Native 720p Typography
-          - **In-game pause menu scale-up**: Enlarged menu options to 33px font, row spacing to 51px, card width to 960px (~75% of screen width), header title to 39px, note font to 21px, and hint font to 24px for clear readability on 5.5" handheld screens.
-          - **Settings page full-scale rendering**: Scaled option titles to 27px, descriptions to 20px, line height to 48px, and panel width to 1080px (~84% width).
-          - **Launcher elements scale-up**: Category tabs scaled to 45px height with 18px font, top showcase title to 33px, cartridge icon to 160x160px (iconScale = 5), cartridge title to 27px, and dock buttons to 42px with 17-18px font.
-
-          ### True 3x–6x Fast-Forward Overhaul & Audio Polish
-          - **Raised fast-forward batch speed to 6x**: Updated Switch fast-forward speed to `speed = 6`, allowing the hardware to emulate batches within 30 Hz VSync budgets for a genuine 3.0x to 4.0x+ speedup in outdoor overworld and battles instead of the previous 1.1x lock.
-          - **Complete 3D geometry skip on hidden frames**: In `melonDS/src/GPU3D.cpp`, bypassed `std::stable_sort` on up to 2048 polygons, skipped `WideOnFlush` list helper thread sync, and bypassed `BuildInterpolatedFrame` on all hidden frames (`rc_frame_hidden && !capturing`), dropping hidden frame emulation cost down to ~2.5 ms.
-          - **Eliminated direction debounce in battles and overworld**: Removed the 250ms direction throttle during walking, battles, and exploration, restricting brief 120ms debounce strictly to vertical cursor lists (Bag, X-menu, Party) so fast-forward never drops to 1x while navigating.
-          - **Audio fast-forward crackle and stutter elimination**: Eliminated WSOLA time-stretching overhead and distortion on fast-forward audio batches, streaming downsampled audio cleanly without audio queue starvation, and removed abrupt `SDL_ClearQueuedAudio` calls to prevent popping on ZR press/release.
-
-          ### Controller Toast Elimination & Spanish Localization
-          - **Suppressed redundant controller toast**: Disabled `"MANDO CONECTADO"` / `"CONTROLLER CONNECTED"` toast on Nintendo Switch boot and handheld operation where integrated controls are permanently attached.
-          - **Localized pause menu footer**: Wired `UiLang::Tr("SELECT")`, `UiLang::Tr("BACK")`, `UiLang::Tr("CHANGE")`, `UiLang::Tr("OPEN")`, and `UiLang::Tr("ON / OFF")` directly into pause menu hints so they cleanly display `"A: Elegir   B: Volver"` in Spanish across all controller types.
-          - **Spanish translation additions**: Added proper translations for `"SELECT"` -> `"ELEGIR"`, `"WIDESCREEN"` -> `"PANORÁMICA"`, `"WIDESCREEN 3D"` -> `"3D PANORÁMICO"`, and `"CITRA CORE"` -> `"NÚCLEO CITRA"`.
+          python3 - "${{ github.ref_name }}" << 'PYEOF' > build-sd/RELEASE_NOTES.md
+          import pathlib, sys
+          tag = sys.argv[1]
+          lines = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+          section = []
+          capture = False
+          for line in lines:
+              if line.startswith("## "):
+                  if capture:
+                      break
+                  if line.startswith(f"## {tag}"):
+                      capture = True
+                      continue
+              elif capture:
+                  section.append(line)
+          print(f"# NoSplitNX {tag}\n")
+          body = "\n".join(section).strip()
+          if body:
+              print(body)
+          else:
+              print(f"Nintendo Switch release of **NoSplitNX** ({tag}).")
+          PYEOF
+          cat << 'EOF' >> build-sd/RELEASE_NOTES.md
 
           ### Installation & Updating
-          - **From console:** Open \`SETTINGS (Y)\` -> \`CHECK FOR UPDATES\` and press \`A\` to install.
-          - **Manual install:** Extract \`nosplitnx-switch.zip\` to the root of your microSD card (\`sdmc:/switch/nosplitnx/nosplitnx.nro\`) and place your ROMs in \`sdmc:/switch/nosplitnx/roms/\`.
+          - **From console:** Open `SETTINGS (Y)` -> `CHECK FOR UPDATES` and press `A` to install.
+          - **Manual install:** Extract `nosplitnx-switch.zip` to the root of your microSD card (`sdmc:/switch/nosplitnx/nosplitnx.nro`) and place your ROMs in `sdmc:/switch/nosplitnx/roms/`.
+
+          ### Checksums (`SHA256SUMS.txt`)
+          ```text
           EOF
-          echo "" >> build-sd/RELEASE_NOTES.md
-          echo "### Checksums (\`SHA256SUMS.txt\`)" >> build-sd/RELEASE_NOTES.md
-          echo "\`\`\`text" >> build-sd/RELEASE_NOTES.md
           cat build-sd/SHA256SUMS.txt >> build-sd/RELEASE_NOTES.md
-          echo "\`\`\`" >> build-sd/RELEASE_NOTES.md
+          echo '```' >> build-sd/RELEASE_NOTES.md
 
       - name: Create GitHub Release for Beta Tag
         if: startsWith(github.ref, 'refs/tags/')
