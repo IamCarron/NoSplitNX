@@ -105,7 +105,7 @@ inline const std::unordered_map<std::string,std::string>& Spanish() { return UiT
 inline const std::unordered_map<std::string,std::string>& Italian() { return UiTranslations::Table(2); }
 inline std::vector<std::pair<std::string,std::string>> Prefixes(int language) {
     std::vector<std::pair<std::string,std::string>> out;const auto& table=UiTranslations::Table(language);
-    for(const char* key:{"RETROACHIEVEMENTS: LOGGED IN AS ","RETROACHIEVEMENTS: LOGIN FAILED: ","RETROACHIEVEMENTS: COULD NOT LOAD: ","USRCHEAT.DAT HAS NO ENTRY FOR THIS GAME CODE: ","ACHIEVEMENT: ","SETTINGS: ","FOLDER: ","LOADED: ","FAILED: ","UNLOCKED ","SO FAR ","VERSION ","FIND: ","SAVE IN ","NEW IN "}) {
+    for(const char* key:{"RETROACHIEVEMENTS: LOGGED IN AS ","RETROACHIEVEMENTS: LOGIN FAILED: ","RETROACHIEVEMENTS: COULD NOT LOAD: ","USRCHEAT.DAT HAS NO ENTRY FOR THIS GAME CODE: ","ACHIEVEMENT: ","SETTINGS: ","FOLDER: ","LOADED: ","FAILED: ","UNLOCKED ","SO FAR ","VERSION ","FIND: ","SAVE IN ","NEW IN ","KEY "}) {
         auto value=table.find(key);if(value!=table.end())out.push_back({key,value->second});
     }
     return out;
@@ -121,7 +121,7 @@ inline std::string Tr(const std::string& s) {
     const auto actionColon=s.find(": ");
     if(actionColon!=std::string::npos && actionColon<48) {
         const auto action=s.substr(actionColon+2);
-        for(const char* known:{"PLAY","BACK","QUIT","OPEN","CHOOSE","SELECT","CHANGE","TABS","SETTINGS","ON / OFF"})
+        for(const char* known:{"PLAY","BACK","QUIT","OPEN","CHOOSE","SELECT","CHANGE","TABS","SETTINGS","ON / OFF","DETAILS","LATER","INSTALL","OPEN DOWNLOAD","CLOSE","CANCEL","LOOK AGAIN","WINDOW","ROMS","ROMS FOLDER","BACK TO THE GAME","LOG IN","NEXT","REMOVE","RESET"})
             if(action==known)if(const auto* value=direct(action=="SELECT"?"CHOOSE":action))return Tr(s.substr(0,actionColon))+": "+*value;
     }
     const bool columns=s.find("  ")!=std::string::npos && s.find(":")!=std::string::npos;
@@ -135,7 +135,7 @@ inline std::string Tr(const std::string& s) {
         }
         return out;
     }
-    for(const char* prefix:{"RETROACHIEVEMENTS: LOGGED IN AS ","RETROACHIEVEMENTS: LOGIN FAILED: ","RETROACHIEVEMENTS: COULD NOT LOAD: ","USRCHEAT.DAT HAS NO ENTRY FOR THIS GAME CODE: ","ACHIEVEMENT: ","SETTINGS: ","FOLDER: ","LOADED: ","FAILED: ","UNLOCKED ","SO FAR ","VERSION ","FIND: ","SAVE IN ","NEW IN "}) {
+    for(const char* prefix:{"RETROACHIEVEMENTS: LOGGED IN AS ","RETROACHIEVEMENTS: LOGIN FAILED: ","RETROACHIEVEMENTS: COULD NOT LOAD: ","USRCHEAT.DAT HAS NO ENTRY FOR THIS GAME CODE: ","ACHIEVEMENT: ","SETTINGS: ","FOLDER: ","LOADED: ","FAILED: ","UNLOCKED ","SO FAR ","VERSION ","FIND: ","SAVE IN ","NEW IN ","KEY "}) {
         const std::string key=prefix;if(s.size()>key.size()&&!s.compare(0,key.size(),key))if(const auto* value=direct(key))return *value+((key=="UNLOCKED "||key=="SO FAR ")?Tr(s.substr(key.size())):s.substr(key.size()));
     }
     const auto colon=s.find(": ");

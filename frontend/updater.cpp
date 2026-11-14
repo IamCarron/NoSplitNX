@@ -419,6 +419,8 @@ struct Shared
     std::string digest;
     bool busy = false;
     std::string restart;
+    StatusCallback cb = nullptr;
+    void* cbUser = nullptr;
 };
 Shared& S()
 {
@@ -427,13 +429,22 @@ Shared& S()
 }
 void Set(State state, const std::string& text)
 {
-    std::lock_guard<std::mutex> l(S().lock);
-    S().status.state = state;
-    S().status.text = text;
-    S().status.serial++;
-    // (A check or install ends with a state that is not one of these: the next may start.)
-    if (state != State::Checking && state != State::Downloading) S().busy = false;
+    Status snap;
+    StatusCallback cb = nullptr;
+    void* cbUser = nullptr;
+    {
+        std::lock_guard<std::mutex> l(S().lock);
+        S().status.state = state;
+        S().status.text = text;
+        S().status.serial++;
+        // (A check or install ends with a state that is not one of these: the next may start.)
+        if (state != State::Checking && state != State::Downloading) S().busy = false;
+        snap = S().status;
+        cb = S().cb;
+        cbUser = S().cbUser;
+    }
     fprintf(stderr, "[update] %s\n", text.c_str());
+    if (cb) cb(snap, cbUser);
 }
 
 // (curl reports no status for a file:// address: the Switch's tests.)
@@ -979,6 +990,13 @@ Status Get()
 {
     std::lock_guard<std::mutex> l(S().lock);
     return S().status;
+}
+
+void SetStatusCallback(StatusCallback cb, void* user)
+{
+    std::lock_guard<std::mutex> l(S().lock);
+    S().cb = cb;
+    S().cbUser = user;
 }
 
 void Stop()

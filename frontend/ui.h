@@ -134,7 +134,7 @@ struct Canvas
         }
     }
 
-    void FillGradV(int x, int y, int rw, int rh, int radius, uint32_t topArgb, uint32_t botArgb)
+    void FillGradV(int x, int y, int rw, int rh, uint32_t topArgb, uint32_t botArgb, int radius = 0)
     {
         if (rw <= 0 || rh <= 0) return;
         int y0 = std::max(0, y), y1 = std::min(h, y + rh);
@@ -267,6 +267,19 @@ struct Canvas
         }
     }
 
+    static inline int ModernCharAdvance(char ch, uint32_t code, float sc)
+    {
+        if (ch != 0)
+            return std::max(1, (int)std::round(FontMetrics[(unsigned char)ch].advance * sc));
+        if (code != 0)
+        {
+            if (const UiFont::Glyph* ug = UiFont::Find(code))
+                return std::max(1, (int)std::round((float)ug->advance * 2.0f * sc));
+            return std::max(1, (int)std::round(FontMetrics[(unsigned char)'?'].advance * sc));
+        }
+        return std::max(1, (int)std::round(FontMetrics[(unsigned char)' '].advance * sc));
+    }
+
     static inline int ModernTextWidth(const std::string& text, int targetH)
     {
         if (text.empty() || targetH <= 0) return 0;
@@ -274,9 +287,10 @@ struct Canvas
         int tw = 0;
         for (size_t i = 0; i < text.size(); i++)
         {
-            auto [ch, mark] = DecodeChar(text, i);
-            const GlyphMetric& m = FontMetrics[(unsigned char)ch];
-            tw += std::max(1, (int)std::round(m.advance * sc));
+            uint32_t code = 0;
+            auto [ch, mark] = DecodeChar(text, i, &code);
+            (void)mark;
+            tw += ModernCharAdvance(ch, code, sc);
         }
         return tw;
     }
@@ -286,6 +300,18 @@ struct Canvas
         if (text.empty() || targetH <= 0) return;
         const float sc = (float)targetH / 32.0f;
         const int renderH = (int)std::round(32.0f * sc);
+
+        auto blendPx = [&](int px, int py, uint32_t cr, uint32_t cg, uint32_t cb, unsigned a) {
+            if (a == 0 || px < 0 || px >= w || py < 0 || py >= h) return;
+            uint32_t& dst = this->px[(size_t)py * this->w + px];
+            const unsigned dr = (dst >> 16) & 0xFF;
+            const unsigned dg = (dst >> 8) & 0xFF;
+            const unsigned db = dst & 0xFF;
+            const unsigned r = (cr * a + dr * (255 - a)) / 255;
+            const unsigned g = (cg * a + dg * (255 - a)) / 255;
+            const unsigned b = (cb * a + db * (255 - a)) / 255;
+            dst = 0xFF000000u | (r << 16) | (g << 8) | b;
+        };
 
         auto drawGlyph = [&](int gx, int gy, unsigned char ch, uint32_t col, float alphaMul, int mark) {
             if (ch >= 128) ch = '?';
@@ -314,16 +340,7 @@ struct Canvas
                         const float dist = std::sqrt(fdx * fdx + fdy * fdy);
                         if (dist > r + 0.5f) continue;
                         const float cov = (dist <= r - 0.5f) ? 1.0f : (r + 0.5f - dist);
-                        const unsigned a = (unsigned)(cov * 255.0f * alphaMul);
-                        if (a == 0) continue;
-                        uint32_t& dst = this->px[(size_t)py * this->w + px];
-                        const unsigned dr = (dst >> 16) & 0xFF;
-                        const unsigned dg = (dst >> 8) & 0xFF;
-                        const unsigned db = dst & 0xFF;
-                        const unsigned rOut = (cr * a + dr * (255 - a)) / 255;
-                        const unsigned gOut = (cg * a + dg * (255 - a)) / 255;
-                        const unsigned bOut = (cb * a + db * (255 - a)) / 255;
-                        dst = 0xFF000000u | (rOut << 16) | (gOut << 8) | bOut;
+                        blendPx(px, py, cr, cg, cb, (unsigned)(cov * 255.0f * alphaMul));
                     }
                 }
                 return;
@@ -361,92 +378,125 @@ struct Canvas
                     if (sumA == 0) continue;
                     const float avgA = (float)sumA / (float)count;
                     const float norm = std::clamp(std::pow(avgA / 255.0f, 0.75f) * 1.25f, 0.0f, 1.0f);
-                    const unsigned a = (unsigned)(norm * 255.0f * alphaMul);
-                    if (a == 0) continue;
-
-                    uint32_t& dst = this->px[(size_t)py * this->w + px];
-                    const unsigned dr = (dst >> 16) & 0xFF;
-                    const unsigned dg = (dst >> 8) & 0xFF;
-                    const unsigned db = dst & 0xFF;
-
-                    const unsigned r = (cr * a + dr * (255 - a)) / 255;
-                    const unsigned g = (cg * a + dg * (255 - a)) / 255;
-                    const unsigned b = (cb * a + db * (255 - a)) / 255;
-                    dst = 0xFF000000u | (r << 16) | (g << 8) | b;
+                    blendPx(px, py, cr, cg, cb, (unsigned)(norm * 255.0f * alphaMul));
                 }
             }
 
             const bool isLower = (ch >= 'a' && ch <= 'z');
             const int glyphTopDy = isLower ? (int)std::round(9.0f * sc) : (int)std::round(4.0f * sc);
+            const unsigned a = (unsigned)(255.0f * alphaMul);
+            const int ah = std::max(2, (int)std::round(3.5f * sc));
+            const int ax = gx + (renderW / 2);
+            const int baseAy = gy + glyphTopDy - std::max(1, (int)(1.5f * sc));
 
             if (mark == 1) // acute accent
             {
-                const int ah = std::max(2, (int)std::round(3.5f * sc));
-                const int ax = gx + (renderW / 2);
-                const int baseAy = gy + glyphTopDy - std::max(1, (int)(1.5f * sc));
-                const unsigned a = (unsigned)(255.0f * alphaMul);
                 for (int dy = 0; dy < ah; dy++)
-                {
-                    const int py = baseAy - dy;
-                    if (py < 0 || py >= h) continue;
-                    const int apx = ax + dy - (ah / 2);
-                    if (apx >= 0 && apx < w)
-                    {
-                        uint32_t& dst = this->px[(size_t)py * this->w + apx];
-                        const unsigned dr = (dst >> 16) & 0xFF, dg = (dst >> 8) & 0xFF, db = dst & 0xFF;
-                        const unsigned r = (cr * a + dr * (255 - a)) / 255;
-                        const unsigned g = (cg * a + dg * (255 - a)) / 255;
-                        const unsigned b = (cb * a + db * (255 - a)) / 255;
-                        dst = 0xFF000000u | (r << 16) | (g << 8) | b;
-                    }
-                }
+                    blendPx(ax + dy - (ah / 2), baseAy - dy, cr, cg, cb, a);
             }
             else if (mark == 2) // tilde
             {
                 const int tw = std::max(4, (int)std::round(6.0f * sc));
-                const int ax = gx + (renderW - tw) / 2;
-                const int baseAy = gy + glyphTopDy - std::max(2, (int)(2.0f * sc));
-                const unsigned a = (unsigned)(255.0f * alphaMul);
+                const int tx = gx + (renderW - tw) / 2;
+                const int ty = gy + glyphTopDy - std::max(2, (int)(2.0f * sc));
                 for (int dx = 0; dx < tw; dx++)
+                    blendPx(tx + dx, ty + ((dx < tw / 2) ? -1 : 0), cr, cg, cb, a);
+            }
+            else if (mark == 3) // grave accent
+            {
+                for (int dy = 0; dy < ah; dy++)
+                    blendPx(ax - dy + (ah / 2), baseAy - dy, cr, cg, cb, a);
+            }
+            else if (mark == 4) // circumflex
+            {
+                const int half = std::max(2, (int)std::round(2.5f * sc));
+                const int cx = gx + (renderW / 2);
+                const int cy = baseAy - std::max(1, (int)std::round(1.5f * sc));
+                for (int dx = -half; dx <= half; dx++)
+                    blendPx(cx + dx, cy + (std::abs(dx) + 1) / 2, cr, cg, cb, a);
+            }
+            else if (mark == 5) // diaeresis / umlaut
+            {
+                const int gap = std::max(2, (int)std::round(2.2f * sc));
+                const int dotSz = sc >= 0.72f ? 2 : 1;
+                const int cy = gy + glyphTopDy - std::max(2, (int)std::round(2.5f * sc));
+                for (int side : { -gap, gap })
+                    for (int dy = 0; dy < dotSz; dy++)
+                        for (int dx = 0; dx < dotSz; dx++)
+                            blendPx(ax + side - dotSz / 2 + dx, cy - dy, cr, cg, cb, a);
+            }
+            else if (mark == 6) // cedilla
+            {
+                const int stemY = gy + (int)std::round((isLower ? 24.5f : 25.0f) * sc);
+                const int stemH = std::max(2, (int)std::round(3.0f * sc));
+                for (int dy = 0; dy < stemH; dy++)
+                    blendPx(ax, stemY + dy, cr, cg, cb, a);
+                blendPx(ax - 1, stemY + stemH - 1, cr, cg, cb, a);
+                if (stemH >= 3) blendPx(ax - 2, stemY + stemH - 2, cr, cg, cb, a);
+            }
+        };
+
+        auto drawUnicodeGlyph = [&](int gx, int gy, uint32_t code, uint32_t col, float alphaMul) {
+            const UiFont::Glyph* ug = UiFont::Find(code);
+            if (!ug)
+            {
+                drawGlyph(gx, gy, '?', col, alphaMul, 0);
+                return;
+            }
+            const int adv = std::max(1, (int)ug->advance);
+            const int drawW = std::max(1, (int)std::round((float)adv * 2.0f * sc));
+            const int drawH = std::max(1, (int)std::round(28.0f * sc));
+            const int baseGy = gy + (int)std::round(2.0f * sc);
+            const uint32_t cr = (col >> 16) & 0xFF;
+            const uint32_t cg = (col >> 8) & 0xFF;
+            const uint32_t cb = col & 0xFF;
+
+            for (int dy = 0; dy < drawH; ++dy)
+            {
+                const int py = baseGy + dy;
+                if (py < 0 || py >= h) continue;
+                const int sy0 = std::clamp((int)std::floor((float)dy * 14.0f / (float)drawH), 0, 13);
+                const int sy1 = std::clamp((int)std::ceil((float)(dy + 1) * 14.0f / (float)drawH), sy0 + 1, 14);
+                for (int dx = 0; dx < drawW; ++dx)
                 {
-                    const int wave = (dx < tw / 2) ? -1 : 0;
-                    const int py = baseAy + wave;
-                    if (py < 0 || py >= h) continue;
-                    const int apx = ax + dx;
-                    if (apx >= 0 && apx < w)
+                    const int px = gx + dx;
+                    if (px < 0 || px >= w) continue;
+                    const int sx0 = std::clamp((int)std::floor((float)dx * (float)adv / (float)drawW), 0, std::max(0, adv - 1));
+                    const int sx1 = std::clamp((int)std::ceil((float)(dx + 1) * (float)adv / (float)drawW), sx0 + 1, adv);
+                    int on = 0, count = 0;
+                    for (int sy = sy0; sy < sy1; ++sy)
                     {
-                        uint32_t& dst = this->px[(size_t)py * this->w + apx];
-                        const unsigned dr = (dst >> 16) & 0xFF, dg = (dst >> 8) & 0xFF, db = dst & 0xFF;
-                        const unsigned r = (cr * a + dr * (255 - a)) / 255;
-                        const unsigned g = (cg * a + dg * (255 - a)) / 255;
-                        const unsigned b = (cb * a + db * (255 - a)) / 255;
-                        dst = 0xFF000000u | (r << 16) | (g << 8) | b;
+                        const uint16_t rowBits = ug->rows[sy];
+                        for (int sx = sx0; sx < sx1; ++sx)
+                        {
+                            on += (rowBits >> (11 - sx)) & 1;
+                            count++;
+                        }
                     }
+                    if (on == 0 || count == 0) continue;
+                    const float cov = (float)on / (float)count;
+                    const float norm = std::clamp(std::pow(cov, 0.72f) * 1.15f, 0.0f, 1.0f);
+                    blendPx(px, py, cr, cg, cb, (unsigned)(norm * 255.0f * alphaMul));
                 }
             }
         };
 
-        if (shadow)
-        {
-            int sx = x + 1;
-            int sy = y + (targetH >= 20 ? 2 : 1);
+        auto drawRun = [&](int startX, int startY, uint32_t col, float alphaMul) {
+            int curX = startX;
             for (size_t i = 0; i < text.size(); i++)
             {
-                auto [ch, mark] = DecodeChar(text, i);
-                const GlyphMetric& m = FontMetrics[(unsigned char)ch];
-                drawGlyph(sx, sy, (unsigned char)ch, 0xFF000000u, 0.65f, mark);
-                sx += std::max(1, (int)std::round(m.advance * sc));
+                uint32_t code = 0;
+                auto [ch, mark] = DecodeChar(text, i, &code);
+                if (ch != 0)
+                    drawGlyph(curX, startY, (unsigned char)ch, col, alphaMul, mark);
+                else if (code != 0)
+                    drawUnicodeGlyph(curX, startY, code, col, alphaMul);
+                curX += ModernCharAdvance(ch, code, sc);
             }
-        }
+        };
 
-        int curX = x;
-        for (size_t i = 0; i < text.size(); i++)
-        {
-            auto [ch, mark] = DecodeChar(text, i);
-            const GlyphMetric& m = FontMetrics[(unsigned char)ch];
-            drawGlyph(curX, y, (unsigned char)ch, colour, 1.0f, mark);
-            curX += std::max(1, (int)std::round(m.advance * sc));
-        }
+        if (shadow) drawRun(x + 1, y + (targetH >= 20 ? 2 : 1), 0xFF000000u, 0.65f);
+        drawRun(x, y, colour, 1.0f);
     }
 
     int ButtonBadgeWidth(const std::string& label, int scale) const
@@ -459,6 +509,15 @@ struct Canvas
         return single ? bh : tw + 8 * s;
     }
 
+    static uint32_t ShadeArgb(uint32_t col, int delta)
+    {
+        const uint32_t a = col & 0xFF000000u;
+        const uint32_t r = (uint32_t)std::clamp((int)((col >> 16) & 0xFF) + delta, 0, 255);
+        const uint32_t g = (uint32_t)std::clamp((int)((col >> 8) & 0xFF) + delta, 0, 255);
+        const uint32_t b = (uint32_t)std::clamp((int)(col & 0xFF) + delta, 0, 255);
+        return a | (r << 16) | (g << 8) | b;
+    }
+
     void DrawButtonBadge(int x, int y, const std::string& label, int scale, uint32_t badgeColor = 0xFF2A344A, uint32_t textCol = 0xFFFFFFFF, uint32_t borderCol = 0xFF455577)
     {
         const int s = std::max(1, scale);
@@ -467,8 +526,8 @@ struct Canvas
         const int bh = 12 * s;
         const int bw = ButtonBadgeWidth(label, s);
         const int rad = bh / 2;
-        const uint32_t topBevel = (((badgeColor >> 16) & 0xFF) + 30 <= 255 ? badgeColor + 0x001E1E1E : 0xFFFFFFFF);
-        const uint32_t botBevel = (((badgeColor >> 16) & 0xFF) >= 25 ? badgeColor - 0x00191919 : badgeColor);
+        const uint32_t topBevel = ShadeArgb(badgeColor, 30);
+        const uint32_t botBevel = ShadeArgb(badgeColor, -25);
         FillGradV(x, y, bw, bh, topBevel, botBevel, rad);
         OutlineRound(x, y, bw, bh, rad, 1, borderCol);
         if (bh > 4) FillBlend(x + s + 1, y + 1, bw - 2 * (s + 1), 1, 0x33FFFFFF);
@@ -501,7 +560,7 @@ struct Canvas
         const int fillW = std::clamp((progress * rw) / maxProgress, 0, rw);
         if (fillW > 0)
         {
-            const uint32_t fillTop = (((accentColor >> 16) & 0xFF) + 35 <= 255 ? accentColor + 0x00232323 : 0xFFFFFFFF);
+            const uint32_t fillTop = ShadeArgb(accentColor, 35);
             FillGradV(x, y, fillW, rh, fillTop, accentColor, rad);
             if (focused) GlowRound(x, y, fillW, rh, rad, 2, (accentColor & 0x00FFFFFF) | 0x66000000);
         }
@@ -721,7 +780,7 @@ struct Menu
         const bool hasTitle = !title.empty();
         // (A value as drawn: translated before its arrows go round it, as the whole would not be
         // in the language's table.)
-        auto shownValue = [](const MenuItem& item) { return item.info ? item.value : "< " + UiLang::Tr(item.value) + " >"; };
+        auto shownValue = [](const MenuItem& item) { return item.info ? UiLang::Tr(item.value) : "< " + UiLang::Tr(item.value) + " >"; };
         int boxW = (boxUnits > 0 ? std::max(boxUnits, 340) : 320) * scale;
         for (const auto& item : items)
         {

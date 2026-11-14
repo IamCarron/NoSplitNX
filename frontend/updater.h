@@ -8,6 +8,7 @@
 
 #include <map>
 #include <string>
+#include "ui_lang.h"
 
 namespace Updater
 {
@@ -57,6 +58,8 @@ void Check(bool quiet);
 // CHECK FOR UPDATES chosen: checks, installs what was found, or gives the page to open ("": none).
 std::string Choose();
 Status Get();
+using StatusCallback = void (*)(const Status&, void*);
+void SetStatusCallback(StatusCallback cb, void* user = nullptr);
 // The launch popup (the list's font: capitals). canInstall: INSTALL, otherwise OPEN DOWNLOAD.
 inline const char* PopupTitle() { return "NEW VERSION"; }
 inline const char* PopupInstall() { return "INSTALL"; }
@@ -65,8 +68,8 @@ inline const char* PopupLater() { return "LATER"; }
 inline std::string PopupNote(bool canInstall)
 {
     const Status s=Get();
-    const std::string versions="CURRENT "+BuildLabel(s.currentBuild)+". AVAILABLE "+BuildLabel(s.availableBuild)+". ";
-    return versions + (canInstall
+    const std::string versions=UiLang::Tr("CURRENT ")+BuildLabel(s.currentBuild)+UiLang::Tr(". AVAILABLE ")+BuildLabel(s.availableBuild)+". ";
+    return versions + UiLang::Tr(canInstall
         ? "DOWNLOAD VERIFIED. YOUR ROMS, SAVES AND SETTINGS STAY. PREVIOUS PROGRAM KEPT."
         : "OPEN THE RELEASE PAGE FOR DETAILS AND THE DOWNLOAD.");
 }

@@ -56,5 +56,19 @@ int main(int argc,char** argv) {
     }
     // Malformed names cannot produce an infinite decode loop.
     std::string broken="\xf0\x28\x8c\x28\xff";size_t at=0;int count=0;while(at<broken.size()){UiLang::Next(broken,at);assert(++count<=int(broken.size()));}
+    // FillGradV must stay opaque from top to bottom and ModernText must render diacritics + CJK + status modal.
+    {
+        Canvas gc;gc.Resize(120,60);gc.Clear();gc.FillGradV(10,10,100,40,0xFF203040,0xFF102030,4);
+        assert((gc.px[48*120+60]>>24)==0xFF);
+        for(const char* sample:{"àèìòùâêîôûäëïöüçßŒœ¡¿","せってい","설정"}) {
+            Canvas tc;tc.Resize(320,48);tc.Clear();tc.Fill(0,0,320,48,0xFF000000);tc.ModernText(8,8,sample,20,0xFFFFFFFF);
+            bool anyLit=false;for(uint32_t px:tc.px)if((px&0xFFFFFF)!=0){anyLit=true;break;}
+            assert(anyLit);
+        }
+        UiLang::Set("es");Canvas mc;mc.Resize(1280,720);mc.Clear();mc.Fill(0,0,1280,720,0xFF102030);
+        Launcher::DrawStatusModal(mc,"UPDATE","DOWNLOADING...","PLEASE WAIT...","A: CLOSE",true,45);
+        assert((mc.px[360*1280+640]&0xFFFFFF)!=0x102030);
+        UiLang::Set("en");
+    }
     std::cout<<"Seven-language coverage, locales, glyphs, wrapping, hints and menus passed\n";
 }

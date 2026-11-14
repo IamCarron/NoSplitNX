@@ -3,6 +3,10 @@
 
 ## Unreleased
 
+- **Game list, settings and updater**: fixed vertical gradients fading to black/transparent, fixed cartridge badge/save-dot overlap and UTF-8 title truncation, added top-header **Settings** and **Back** pill shortcuts, added full Switch touchscreen tap controls, and added a frosted-glass modal overlay so updates and Home Menu icon installation stay clearly in front.
+- **Languages**: fixed accented characters (`àèìòùâêîôûäëïöüçßŒœ`) and Japanese/Korean rendering in `ModernText`, completed missing translations across the launcher, updater, pause menu, RetroAchievements and save restore screens, and fixed German/French/Spanish translation mismatches.
+- **Nintendo Switch fast forward (experimental)**: added an **Experimental** fast-forward option in **Settings -> Graphics** (off by default; never alters console clocks) that temporarily switches widescreen 3D to standard DS resolution while fast forwarding so speed stays steady outdoors without surging.
+
 
 ## v1.0.0-beta.8 — Switch fast forward turned off
 

@@ -28,49 +28,109 @@ inline float AnimTime()
     return std::chrono::duration<float>(now - start).count();
 }
 
-inline std::pair<char, int> DecodeChar(const std::string& text, size_t& i)
+// Decodes one UTF-8 character for Canvas::ModernText. Latin characters supported by
+// LauncherFont (including Western European diacritics) return {baseAscii, mark} with marks:
+//   0 = none, 1 = acute, 2 = tilde, 3 = grave, 4 = circumflex, 5 = diaeresis, 6 = cedilla.
+// Other multi-byte UTF-8 glyphs (Japanese, Korean, ß, Œ, ¡, ¿, etc.) return {0, 0} and store
+// their Unicode codepoint in *outCode so Canvas::ModernText can render them via UiFont.
+inline std::pair<char, int> DecodeChar(const std::string& text, size_t& i, uint32_t* outCode = nullptr)
 {
+    if (outCode) *outCode = 0;
+    const size_t start = i;
     unsigned char c = (unsigned char)text[i];
     if (c == 0xC3 && i + 1 < text.size())
     {
         unsigned char c2 = (unsigned char)text[++i];
         switch (c2)
         {
-            case 0x81: return { 'A', 1 };
-            case 0xA1: return { 'a', 1 };
-            case 0x89: return { 'E', 1 };
-            case 0xA9: return { 'e', 1 };
-            case 0x8D: return { 'I', 1 };
-            case 0xAD: return { 'i', 1 };
-            case 0x93: return { 'O', 1 };
-            case 0xB3: return { 'o', 1 };
-            case 0x9A: return { 'U', 1 };
-            case 0xBA: return { 'u', 1 };
-            case 0x91: return { 'N', 2 };
-            case 0xB1: return { 'n', 2 };
-            case 0x9C: return { 'U', 0 };
-            case 0xBC: return { 'u', 0 };
+            case 0x80: return { 'A', 3 }; // À
+            case 0xA0: return { 'a', 3 }; // à
+            case 0x81: return { 'A', 1 }; // Á
+            case 0xA1: return { 'a', 1 }; // á
+            case 0x82: return { 'A', 4 }; // Â
+            case 0xA2: return { 'a', 4 }; // â
+            case 0x84: return { 'A', 5 }; // Ä
+            case 0xA4: return { 'a', 5 }; // ä
+            case 0x87: return { 'C', 6 }; // Ç
+            case 0xA7: return { 'c', 6 }; // ç
+            case 0x88: return { 'E', 3 }; // È
+            case 0xA8: return { 'e', 3 }; // è
+            case 0x89: return { 'E', 1 }; // É
+            case 0xA9: return { 'e', 1 }; // é
+            case 0x8A: return { 'E', 4 }; // Ê
+            case 0xAA: return { 'e', 4 }; // ê
+            case 0x8B: return { 'E', 5 }; // Ë
+            case 0xAB: return { 'e', 5 }; // ë
+            case 0x8C: return { 'I', 3 }; // Ì
+            case 0xAC: return { 'i', 3 }; // ì
+            case 0x8D: return { 'I', 1 }; // Í
+            case 0xAD: return { 'i', 1 }; // í
+            case 0x8E: return { 'I', 4 }; // Î
+            case 0xAE: return { 'i', 4 }; // î
+            case 0x8F: return { 'I', 5 }; // Ï
+            case 0xAF: return { 'i', 5 }; // ï
+            case 0x91: return { 'N', 2 }; // Ñ
+            case 0xB1: return { 'n', 2 }; // ñ
+            case 0x92: return { 'O', 3 }; // Ò
+            case 0xB2: return { 'o', 3 }; // ò
+            case 0x93: return { 'O', 1 }; // Ó
+            case 0xB3: return { 'o', 1 }; // ó
+            case 0x94: return { 'O', 4 }; // Ô
+            case 0xB4: return { 'o', 4 }; // ô
+            case 0x96: return { 'O', 5 }; // Ö
+            case 0xB6: return { 'o', 5 }; // ö
+            case 0x99: return { 'U', 3 }; // Ù
+            case 0xB9: return { 'u', 3 }; // ù
+            case 0x9A: return { 'U', 1 }; // Ú
+            case 0xBA: return { 'u', 1 }; // ú
+            case 0x9B: return { 'U', 4 }; // Û
+            case 0xBB: return { 'u', 4 }; // û
+            case 0x9C: return { 'U', 5 }; // Ü
+            case 0xBC: return { 'u', 5 }; // ü
+            default: i = start; break;
         }
     }
     else if (c == 0xC2 && i + 1 < text.size())
     {
-        unsigned char c2 = (unsigned char)text[++i];
-        if (c2 == 0xB7) return { (char)7, 0 }; // middle dot · -> bullet
-        if (c2 == 0xA1) return { '!', 0 };     // ¡
-        if (c2 == 0xBF) return { '?', 0 };     // ¿
+        unsigned char c2 = (unsigned char)text[i + 1];
+        if (c2 == 0xA0) { i++; return { ' ', 0 }; }     // NBSP
+        if (c2 == 0xB7) { i++; return { (char)7, 0 }; } // middle dot · -> bullet
     }
     else if (c == 0xE2 && i + 2 < text.size() && (unsigned char)text[i + 1] == 0x80)
     {
         unsigned char c3 = (unsigned char)text[i + 2];
-        i += 2;
-        if (c3 == 0xA2) return { (char)7, 0 }; // bullet • -> bullet
-        if (c3 == 0x93 || c3 == 0x94) return { '-', 0 }; // en/em dash
-        if (c3 == 0xA6) return { '.', 0 };     // ellipsis …
+        if (c3 == 0xA2) { i += 2; return { (char)7, 0 }; }            // bullet • -> bullet
+        if (c3 == 0x93 || c3 == 0x94) { i += 2; return { '-', 0 }; }  // en/em dash
+        if (c3 == 0x98 || c3 == 0x99) { i += 2; return { '\'', 0 }; } // single quotes
+        if (c3 == 0x9C || c3 == 0x9D || c3 == 0x9E) { i += 2; return { '"', 0 }; } // double quotes
+        if (c3 == 0xA6) { i += 2; return { '.', 0 }; }                // ellipsis …
     }
     if (c == 0x05) return { 'E', 1 }; // PokÉmon
     if (c >= 128)
     {
-        while (i + 1 < text.size() && ((unsigned char)text[i + 1] & 0xC0) == 0x80) i++;
+        uint32_t cp = '?';
+        if ((c & 0xE0) == 0xC0 && i + 1 < text.size())
+        {
+            cp = ((uint32_t)(c & 0x1F) << 6) | ((uint32_t)(unsigned char)text[i + 1] & 0x3F);
+            i += 1;
+        }
+        else if ((c & 0xF0) == 0xE0 && i + 2 < text.size())
+        {
+            cp = ((uint32_t)(c & 0x0F) << 12) | (((uint32_t)(unsigned char)text[i + 1] & 0x3F) << 6) |
+                 ((uint32_t)(unsigned char)text[i + 2] & 0x3F);
+            i += 2;
+        }
+        else if ((c & 0xF8) == 0xF0 && i + 3 < text.size())
+        {
+            cp = ((uint32_t)(c & 0x07) << 18) | (((uint32_t)(unsigned char)text[i + 1] & 0x3F) << 12) |
+                 (((uint32_t)(unsigned char)text[i + 2] & 0x3F) << 6) | ((uint32_t)(unsigned char)text[i + 3] & 0x3F);
+            i += 3;
+        }
+        if (outCode)
+        {
+            *outCode = cp;
+            return { 0, 0 };
+        }
         return { ' ', 0 };
     }
     return { (char)c, 0 };
@@ -86,8 +146,8 @@ inline bool IsAllUpper(const std::string& s)
         if (c == 0xC3 && i + 1 < s.size())
         {
             unsigned char c2 = (unsigned char)s[i + 1];
-            if (c2 >= 0xA0 && c2 <= 0xBF) return false;
-            if (c2 >= 0x80 && c2 <= 0x9F) hasLetter = true;
+            if ((c2 >= 0xA0 && c2 <= 0xBE && c2 != 0xB7) || c2 == 0x9F) return false;
+            if (c2 >= 0x80 && c2 <= 0x9E && c2 != 0x97) hasLetter = true;
             i++;
             continue;
         }
@@ -99,9 +159,23 @@ inline bool IsAllUpper(const std::string& s)
 inline std::string ToNiceTitle(const std::string& s)
 {
     if (!IsAllUpper(s)) return s;
+    static const char* const acronyms[] = {
+        "GBA", "3DS", "NDS", "GPU", "CPU", "FPS", "ROM", "NRO", "HD", "NX", "UI",
+        "HDMI", "USB", "HDR", "DS", "PC", "SD", "TV", "2K", "4K", "3D", "ZR", "ZL",
+        "192P", "288P", "384P", "480P", "576P", "720P", "960P", "1080P", "1440P", "2160P"
+    };
+    static const char* const regionCodes[] = {
+        "US", "EU", "ES", "FR", "DE", "IT", "JP", "UK", "EN", "JA", "KO", "USA", "EUR"
+    };
+    auto isWordEnd = [&](size_t end) {
+        if (end >= s.size()) return true;
+        unsigned char u = (unsigned char)s[end];
+        return !std::isalnum(u) && u != 0xC3;
+    };
     std::string res;
     res.reserve(s.size());
     bool newWord = true;
+    int parenDepth = 0;
     for (size_t i = 0; i < s.size(); )
     {
         unsigned char c = (unsigned char)s[i];
@@ -110,21 +184,18 @@ inline std::string ToNiceTitle(const std::string& s)
             unsigned char c2 = (unsigned char)s[i + 1];
             if (newWord)
             {
-                if (c2 >= 0xA0 && c2 <= 0xBF) c2 -= 0x20;
-                res.push_back((char)c);
-                res.push_back((char)c2);
+                if (c2 >= 0xA0 && c2 <= 0xBE && c2 != 0xB7) c2 -= 0x20;
             }
-            else
-            {
-                if (c2 >= 0x80 && c2 <= 0x9F) c2 += 0x20;
-                res.push_back((char)c);
-                res.push_back((char)c2);
-            }
+            else if (c2 >= 0x80 && c2 <= 0x9E && c2 != 0x97) c2 += 0x20;
+            res.push_back((char)c);
+            res.push_back((char)c2);
             newWord = false;
             i += 2;
             continue;
         }
-        if (c == ' ' || c == '/' || c == '-' || c == '(' || c == '<' || c == '>' || c == ':' || c == '.')
+        if (c == '(') parenDepth++;
+        else if (c == ')' && parenDepth > 0) parenDepth--;
+        if (c == ' ' || c == '/' || c == '-' || c == '(' || c == '<' || c == '>' || c == ':' || c == '.' || c == ',')
         {
             newWord = true;
             res.push_back((char)c);
@@ -133,30 +204,35 @@ inline std::string ToNiceTitle(const std::string& s)
         }
         if (newWord)
         {
-            if (i + 1 < s.size() && s.substr(i, 2) == "DS" && (i + 2 == s.size() || !isalpha((unsigned char)s[i + 2])))
+            bool matched = false;
+            for (const char* acr : acronyms)
             {
-                res += "DS"; i += 2; newWord = false; continue;
+                size_t len = strlen(acr);
+                if (i + len <= s.size() && s.compare(i, len, acr) == 0 && isWordEnd(i + len))
+                {
+                    res.append(acr, len);
+                    i += len;
+                    newWord = false;
+                    matched = true;
+                    break;
+                }
             }
-            if (i + 2 < s.size() && s.substr(i, 3) == "GBA" && (i + 3 == s.size() || !isalpha((unsigned char)s[i + 3])))
+            if (!matched && parenDepth > 0)
             {
-                res += "GBA"; i += 3; newWord = false; continue;
+                for (const char* rc : regionCodes)
+                {
+                    size_t len = strlen(rc);
+                    if (i + len <= s.size() && s.compare(i, len, rc) == 0 && isWordEnd(i + len))
+                    {
+                        res.append(rc, len);
+                        i += len;
+                        newWord = false;
+                        matched = true;
+                        break;
+                    }
+                }
             }
-            if (i + 2 < s.size() && s.substr(i, 3) == "3DS" && (i + 3 == s.size() || !isalpha((unsigned char)s[i + 3])))
-            {
-                res += "3DS"; i += 3; newWord = false; continue;
-            }
-            if (i + 2 < s.size() && s.substr(i, 3) == "GPU" && (i + 3 == s.size() || !isalpha((unsigned char)s[i + 3])))
-            {
-                res += "GPU"; i += 3; newWord = false; continue;
-            }
-            if (i + 2 < s.size() && s.substr(i, 3) == "FPS" && (i + 3 == s.size() || !isalpha((unsigned char)s[i + 3])))
-            {
-                res += "FPS"; i += 3; newWord = false; continue;
-            }
-            if (i + 2 < s.size() && s.substr(i, 3) == "ROM" && (i + 3 == s.size() || !isalpha((unsigned char)s[i + 3])))
-            {
-                res += "ROM"; i += 3; newWord = false; continue;
-            }
+            if (matched) continue;
             if (c >= 'a' && c <= 'z') c = (unsigned char)(c - 'a' + 'A');
             res.push_back((char)c);
             newWord = false;
@@ -175,8 +251,14 @@ inline std::string ToNiceSentence(const std::string& s)
 {
     if (!IsAllUpper(s)) return s;
     static const char* const acronyms[] = {
-        "GBA", "3DS", "GPU", "CPU", "FPS", "ROM", "F11", "HDMI", "USB", "HDR",
-        "DS", "PC", "SD", "TV", "2K", "4K", "3D", "F5", "F8", "ZR", "ZL"
+        "GBA", "3DS", "NDS", "GPU", "CPU", "FPS", "ROM", "NRO", "HD", "NX", "UI",
+        "F11", "HDMI", "USB", "HDR", "DS", "PC", "SD", "TV", "2K", "4K", "3D", "F5", "F8", "ZR", "ZL"
+    };
+    struct ProperNoun { const char* upper; const char* shown; };
+    static const ProperNoun nouns[] = {
+        { "SWITCH", "Switch" }, { "RETROACHIEVEMENTS", "RetroAchievements" },
+        { "OPENGL", "OpenGL" }, { "GITHUB", "GitHub" }, { "NOSPLITNX", "NoSplitNX" },
+        { "ANDROID", "Android" }, { "WINDOWS", "Windows" }, { "LINUX", "Linux" }
     };
     auto isWordEnd = [&](size_t end) {
         if (end >= s.size()) return true;
@@ -195,10 +277,10 @@ inline std::string ToNiceSentence(const std::string& s)
             unsigned char c2 = (unsigned char)s[i + 1];
             if (capNext)
             {
-                if (c2 >= 0xA0 && c2 <= 0xBF) c2 -= 0x20;
+                if (c2 >= 0xA0 && c2 <= 0xBE && c2 != 0xB7) c2 -= 0x20;
                 capNext = false;
             }
-            else if (c2 >= 0x80 && c2 <= 0x9F) c2 += 0x20;
+            else if (c2 >= 0x80 && c2 <= 0x9E && c2 != 0x97) c2 += 0x20;
             res.push_back((char)c);
             res.push_back((char)c2);
             wordStart = false;
@@ -234,6 +316,22 @@ inline std::string ToNiceSentence(const std::string& s)
                     wordStart = false;
                     matchedAcronym = true;
                     break;
+                }
+            }
+            if (!matchedAcronym)
+            {
+                for (const auto& pn : nouns)
+                {
+                    size_t len = strlen(pn.upper);
+                    if (i + len <= s.size() && s.compare(i, len, pn.upper) == 0 && isWordEnd(i + len))
+                    {
+                        res.append(pn.shown);
+                        i += len;
+                        capNext = false;
+                        wordStart = false;
+                        matchedAcronym = true;
+                        break;
+                    }
                 }
             }
             if (matchedAcronym) continue;

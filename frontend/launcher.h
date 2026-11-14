@@ -182,10 +182,12 @@ inline bool IsCustomHackTitle(const std::string& name)
 inline std::string TitleCase(const std::string& name)
 {
     std::string out = ToNiceTitle(name);
-    for (const char* word : { "Firered", "Leafgreen" })
+    struct Fix { const char* word; size_t pos; };
+    for (const Fix& f : std::initializer_list<Fix>{
+             { "Soulsilver", 4 }, { "Heartgold", 5 }, { "Firered", 4 }, { "Leafgreen", 4 } })
     {
-        const size_t at = out.find(word);
-        if (at != std::string::npos) out[at + 4] = (char)toupper((unsigned char)out[at + 4]);
+        const size_t at = out.find(f.word);
+        if (at != std::string::npos) out[at + f.pos] = (char)toupper((unsigned char)out[at + f.pos]);
     }
     return out;
 }
@@ -908,9 +910,9 @@ inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& 
     const int rightPanelW = 76 * s;
     const int maxTextW = w - (contentX - x) - rightPanelW - 8 * s;
 
-    const std::string subHeader = isGba ? ("GAME BOY ADVANCE  •  " + UiLang::Tr("WIDESCREEN"))
-                                : is3ds ? ("NINTENDO 3DS  •  " + UiLang::Tr("CITRA CORE"))
-                                : ("NINTENDO DS  •  " + UiLang::Tr("WIDESCREEN 3D"));
+    const std::string subHeader = isGba ? ("GAME BOY ADVANCE  |  " + UiLang::Tr("WIDESCREEN"))
+                                : is3ds ? ("NINTENDO 3DS  |  " + UiLang::Tr("CITRA CORE"))
+                                : ("NINTENDO DS  |  " + UiLang::Tr("WIDESCREEN 3D"));
     const int subFontH = std::max(14, 5 * s);
 
     std::string title = TitleCase(g.name);
@@ -952,7 +954,7 @@ inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& 
     drawPill(serial, 0x441E293B, 0x88334155, 0xFFCBD5E1);
 
     const std::string rawStatus = g.comingSoon ? UiLang::Tr("COMING SOON") : !g.known ? UiLang::Tr("NOT PLAYABLE") : g.hasSave ? UiLang::Tr("SAVE FOUND") : UiLang::Tr("NEW GAME");
-    const std::string status = std::string(1, (char)7) + " " + ToNiceTitle(rawStatus);
+    const std::string status = ToNiceTitle(rawStatus);
     const uint32_t statusFg = !g.known && !g.comingSoon ? 0xFFFF6B6B : g.comingSoon ? 0xFFD8B4FE : g.hasSave ? 0xFF34D399 : 0xFFFBBF24;
     const uint32_t statusBg = !g.known && !g.comingSoon ? 0x33FF453A : g.comingSoon ? 0x33A855F7 : g.hasSave ? 0x3300E676 : 0x33FFB020;
     const uint32_t statusBd = !g.known && !g.comingSoon ? 0x80FF453A : g.comingSoon ? 0x80A855F7 : g.hasSave ? 0x8000E676 : 0x80FFB020;
@@ -1000,19 +1002,39 @@ inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& 
     ModernText(c, playX + 6 * s, playY + (playH - playFontH) / 2, playLabel, playFontH, 0xFFFFFFFF, true);
 }
 
+// Subtle game-specific accent colour so each Pokemon title feels distinctive on its card.
+inline uint32_t GameAccentTint(const std::string& name, int platform)
+{
+    std::string lo;
+    lo.reserve(name.size());
+    for (unsigned char ch : name) lo += (char)tolower(ch);
+    if (lo.find("soulsilver") != std::string::npos || lo.find("plata") != std::string::npos || lo.find("argent") != std::string::npos) return 0xFF94A3B8;
+    if (lo.find("heartgold") != std::string::npos || lo.find("oro") != std::string::npos || lo.find("or ") != std::string::npos) return 0xFFF59E0B;
+    if (lo.find("platinum") != std::string::npos || lo.find("platino") != std::string::npos || lo.find("platine") != std::string::npos) return 0xFF38BDF8;
+    if (lo.find("black") != std::string::npos || lo.find("negr") != std::string::npos || lo.find("noir") != std::string::npos || lo.find("schwarz") != std::string::npos) return 0xFF6366F1;
+    if (lo.find("white") != std::string::npos || lo.find("blanc") != std::string::npos || lo.find("weiss") != std::string::npos) return 0xFFE2E8F0;
+    if (lo.find("emerald") != std::string::npos || lo.find("esmeralda") != std::string::npos || lo.find("emeraude") != std::string::npos || lo.find("smaragd") != std::string::npos) return 0xFF10B981;
+    if (lo.find("firered") != std::string::npos || lo.find("rojo") != std::string::npos || lo.find("rouge") != std::string::npos || lo.find("feuerrot") != std::string::npos || lo.find("ruby") != std::string::npos) return 0xFFEF4444;
+    if (lo.find("leafgreen") != std::string::npos || lo.find("hoja") != std::string::npos || lo.find("vert") != std::string::npos || lo.find("blatt") != std::string::npos) return 0xFF22C55E;
+    if (lo.find("diamond") != std::string::npos || lo.find("diamant") != std::string::npos) return 0xFF60A5FA;
+    if (lo.find("pearl") != std::string::npos || lo.find("perla") != std::string::npos || lo.find("perle") != std::string::npos) return 0xFFF472B6;
+    return platform == GBA ? 0xFFA855F7 : 0xFF00C3FF;
+}
+
 // Renders a glossy Wii U / Nintendo 3DS Channel Plaza Tile with physical cartridge & title footer
 inline void DrawCartridgeCase(Canvas& c, int x, int y, int tileW, int tileH, int platform, const uint32_t* icon32,
                               const std::string& code, const std::string& name, int s, bool hasSave = false, bool sel = false)
 {
     const bool isGba = (platform == GBA);
     const bool is3ds = false; // (no 3DS games: the 3DS tab was removed)
+    const uint32_t accent = GameAccentTint(name, platform);
 
     // Rich 3DS / Wii U channel tile gradient surface (brighter, glossy console look)
     const uint32_t gradTop = isGba ? (sel ? 0xFF342254 : 0xFF25183E) : is3ds ? (sel ? 0xFF421E30 : 0xFF2E1522) : (sel ? 0xFF233656 : 0xFF19263D);
     const uint32_t gradBot = isGba ? 0xFF140C24 : is3ds ? 0xFF190A12 : 0xFF0E1626;
     const int rad = std::max(4, 5 * s);
     c.FillGradV(x, y, tileW, tileH, gradTop, gradBot, rad);
-    c.OutlineRound(x, y, tileW, tileH, rad, 1, sel ? 0xFF4E6E9E : 0xFF2E415E);
+    c.OutlineRound(x, y, tileW, tileH, rad, 1, sel ? ((accent & 0x00FFFFFF) | 0xBB000000u) : 0xFF2E415E);
 
     // Wii U / 3DS curved upper gloss dome reflection
     c.FillRound(x + 2 * s, y + 2 * s, tileW - 4 * s, tileH / 4, std::max(2, rad - s), 0x10FFFFFF);
@@ -1040,30 +1062,42 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int tileW, int tileH, int
         c.FillRound(dx, dy, dotR * 2, dotR * 2, dotR, 0xFF00E676);
     }
 
-    // Physical Cartridge Silhouette in the center of the channel tile, scaling dynamically with tile size
+    // Physical Cartridge Silhouette sized strictly to the clear band between the top badge row
+    // and the frosted title footer so the badge and save dot never overlap the shell.
     const int footerH = 26 * s;
-    const int bodyH = tileH - footerH;
-    const int iconScale = (tileH >= 280 && tileW >= 280) ? 5 : (tileH >= 200) ? 4 : 3;
+    const int topClearY = by + badgeH + 3 * s;
+    const int availCartW = std::max(40 * s, tileW - 14 * s);
+    const int availCartH = std::max(40 * s, (y + tileH - footerH - 3 * s) - topClearY);
+    int iconScale = 5;
+    while (iconScale > 2 && (32 * iconScale + 12 * s > availCartW || 32 * iconScale + 18 * s > availCartH))
+        --iconScale;
     const int iconSz = 32 * iconScale;
     const int cartW = iconSz + 12 * s;
     const int cartH = iconSz + 18 * s;
     const int cx = x + (tileW - cartW) / 2;
-    const int cy = y + 12 * s + (bodyH - 12 * s - cartH) / 2;
+    const int cy = topClearY + std::max(0, (availCartH - cartH) / 2);
 
-    const uint32_t glowCol = isGba ? 0x2AA855F7 : is3ds ? 0x2AF43F5E : 0x2A00C3FF;
+    const uint32_t glowCol = (accent & 0x00FFFFFFu) | (sel ? 0x36000000u : 0x20000000u);
     c.GlowRound(cx - 2 * s, cy - 2 * s, cartW + 4 * s, cartH + 4 * s, 4 * s, 3 * s, glowCol);
     DrawPhysicalCartridge(c, cx, cy, cartW, cartH, platform, icon32, code, name, s, iconScale);
 
     // Frosted Wii U / 3DS Channel Footer Banner with game title and serial code
     const int fy = y + tileH - footerH;
     c.FillBlend(x + s, fy, tileW - 2 * s, footerH - s, 0x88080D18);
-    c.Fill(x + 3 * s, fy, tileW - 6 * s, 1, sel ? badgeBorder : 0x55334155);
+    c.Fill(x + 3 * s, fy, tileW - 6 * s, 1, sel ? accent : 0x55334155);
 
     std::string cardTitle = ShortCardTitle(name);
     int nameFontH = std::max(18, (tileW >= 300 ? 9 : 8) * s);
-    while (cardTitle.size() > 6 && ModernTextWidth(cardTitle, nameFontH) > tileW - 8 * s)
+    while (nameFontH > std::max(13, 5 * s) && ModernTextWidth(cardTitle, nameFontH) > tileW - 10 * s)
+        --nameFontH;
+    if (ModernTextWidth(cardTitle, nameFontH) > tileW - 10 * s)
     {
-        cardTitle.pop_back();
+        while (cardTitle.size() > 4 && ModernTextWidth(cardTitle + "...", nameFontH) > tileW - 10 * s)
+        {
+            while (!cardTitle.empty() && ((unsigned char)cardTitle.back() & 0xC0) == 0x80) cardTitle.pop_back();
+            if (!cardTitle.empty()) cardTitle.pop_back();
+        }
+        cardTitle += "...";
     }
     const int nw = ModernTextWidth(cardTitle, nameFontH);
     ModernText(c, x + (tileW - nw) / 2, fy + 3 * s, cardTitle, nameFontH, sel ? 0xFFFFFFFF : 0xFFE2E8F0, true);
@@ -1246,6 +1280,76 @@ inline int TabAt(const Canvas& c, int x, int y)
     return -1;
 }
 
+inline bool SettingsPillRect(const Canvas& c, int& px, int& py, int& pw, int& ph)
+{
+    const Grid g = Layout(c);
+    const int s = g.s;
+    if (c.w < 640) return false;
+    const int bandH = (c.h > c.w ? 43 : 16) * s;
+    const std::string label = "Y: " + ToNiceTitle(UiLang::Tr("SETTINGS"));
+    const int fontH = std::max(12, 5 * s - 1);
+    pw = ModernTextWidth(label, fontH) + 10 * s;
+    ph = 11 * s;
+    const int reservedRight = 72 * s;
+    px = c.w - reservedRight - pw - 10 * s;
+    py = (bandH - ph) / 2;
+    return px >= c.w / 2 - 40 * s;
+}
+
+inline bool TapInSettingsPill(const Canvas& c, int x, int y)
+{
+    int px = 0, py = 0, pw = 0, ph = 0;
+    if (!SettingsPillRect(c, px, py, pw, ph)) return false;
+    const int s = Layout(c).s;
+    return x >= px - 4 * s && x < px + pw + 4 * s && y >= py - 3 * s && y < py + ph + 3 * s;
+}
+
+inline bool TapInBannerPlay(const Canvas& c, int x, int y)
+{
+    const Grid g = Layout(c);
+    if (g.bannerH <= 0) return false;
+    const int s = g.s;
+    const int bx = 24 * s, bw = c.w - 48 * s;
+    const int rightPanelW = 76 * s;
+    const int rpx = bx + bw - rightPanelW - 4 * s;
+    const int rpy = g.bannerY + 4 * s;
+    const int rph = g.bannerH - 8 * s;
+    return x >= rpx && x < rpx + rightPanelW && y >= rpy && y < rpy + rph;
+}
+
+inline int CarouselArrowAt(const Canvas& c, const View& v, int scroll, int x, int y)
+{
+    const int s = v.g.s;
+    const int arrW = 13 * s, arrH = 22 * s;
+    const int arrY = v.g.carouselY + (v.g.tileH - arrH) / 2;
+    if (y < arrY - 6 * s || y >= arrY + arrH + 6 * s) return 0;
+    if (scroll > 0 && x >= 2 * s && x < 22 * s + arrW) return -1;
+    if (scroll + c.w < v.width + 24 * s && x >= c.w - arrW - 22 * s && x < c.w - 2 * s) return 1;
+    return 0;
+}
+
+inline bool SettingsBackPillRect(const Canvas& c, int& px, int& py, int& pw, int& ph)
+{
+    if (c.w < 640) return false;
+    const int s = std::max(1, std::min(c.w, c.h) / 240);
+    const int bandH = (c.h > c.w ? 43 : 22) * s;
+    const std::string label = "B: " + ToNiceTitle(UiLang::Tr("BACK"));
+    const int fontH = std::max(13, 5 * s);
+    pw = ModernTextWidth(label, fontH) + 10 * s;
+    ph = 12 * s;
+    px = 24 * s;
+    py = (bandH - ph) / 2;
+    return true;
+}
+
+inline bool TapInSettingsBack(const Canvas& c, int x, int y)
+{
+    int px = 0, py = 0, pw = 0, ph = 0;
+    if (!SettingsBackPillRect(c, px, py, pw, ph)) return false;
+    const int s = std::max(1, std::min(c.w, c.h) / 240);
+    return x >= px - 4 * s && x < px + pw + 6 * s && y >= py - 4 * s && y < py + ph + 4 * s;
+}
+
 // Step in carousel: Left (1) and Right (2) traverse the games in the carousel;
 // Up (3) jumps seamlessly up to the category tabs bar; Down (4) stays on card.
 inline int Step(const View& v, int selected, int dir)
@@ -1303,6 +1407,18 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     c.FillRound(tagX, tagY, tagW, tagH, 2 * s, 0x3300C3FF);
     c.OutlineRound(tagX, tagY, tagW, tagH, 2 * s, 1, 0x8000C3FF);
     c.ModernText(tagX + (tagW - c.ModernTextWidth(subTag, tagFontH)) / 2, tagY + (tagH - tagFontH) / 2, subTag, tagFontH, 0xFF7DD3FC);
+
+    // Quick-access Settings pill in top-right beside the Clock widget (touch & visual shortcut)
+    {
+        int sx = 0, sy = 0, sw = 0, sh = 0;
+        if (SettingsPillRect(c, sx, sy, sw, sh) && sx > tagX + tagW + 8 * s)
+        {
+            const std::string settLabel = "Y: " + ToNiceTitle(UiLang::Tr("SETTINGS"));
+            const int settFontH = std::max(12, 5 * s - 1);
+            c.FillGlass(sx, sy, sw, sh, 3 * s, 0xEE223048, 0xEE172033, th.frame, 1);
+            c.ModernText(sx + 5 * s, sy + (sh - settFontH) / 2, settLabel, settFontH, th.title, true);
+        }
+    }
 
     // Right: Date, Time & DS 3-bar battery widget
     int yr = 0, mo = 0, dy = 0, hr = 0, mn = 0, sc = 0;
@@ -1650,6 +1766,10 @@ inline std::vector<Setting> SettingsList()
     l.push_back({ "smooth", "SMOOTH SCALING", onOff, "0", "ON: THE PICTURE IS SOFTENED AS IT IS SCALED UP TO YOUR SCREEN. OFF: SHARP PIXELS." });
     l.push_back({ "fast_button", "FAST FORWARD BUTTON", { { "hold", "HOLD" }, { "toggle", "TOGGLE" } }, "hold",
                   "HOLD: RELEASE TO STOP. TOGGLE: PRESS ONCE TO START AND AGAIN TO STOP. APPLIES TO KEYBOARD, CONTROLLER AND ON-SCREEN FAST FORWARD." });
+#ifdef __SWITCH__
+    l.push_back({ "switch_ff", "FAST FORWARD (EXPERIMENTAL)", onOff, "0",
+                  "EXPERIMENTAL ON SWITCH: TURNS ON FAST FORWARD (HOLD OR TOGGLE ZR BY DEFAULT). WHILE FAST FORWARD IS ACTIVE, WIDESCREEN 3D TEMPORARILY SWITCHES TO STANDARD DS RESOLUTION SO SPEED STAYS SMOOTH WITHOUT RAISING CONSOLE CLOCKS." });
+#endif
     l.push_back({ "wide", "WIDESCREEN WORLD", onOff, "1", "ON: THE 3D WORLD IS DRAWN OUT TO THE SIDES OF THE 16:9 SCREEN. OFF: ONLY AS WIDE AS A DS SCREEN." });
 #ifdef __SWITCH__
     l.push_back({ "wide_lines", "WORLD DETAIL", { { "192", "192" }, { "288", "288" }, { "384", "384" }, { "540", "540" }, { "720", "720" } }, "",
@@ -2017,7 +2137,8 @@ struct SettingsPage
         const int ts = s; // full scale on handheld/console (3 at 720 lines, 4 at 1080)
 #endif
         const int bandH = (c.h > c.w ? 43 : 22) * s;
-        c.FillGradV(0, 0, c.w, c.h, th.bg, 0xFF07090E, 0);
+        const uint32_t bgTop = (th.bg == 0xFF0D1017) ? 0xFF141E33 : th.bg;
+        c.FillGradV(0, 0, c.w, c.h, bgTop, 0xFF090E1B, 0);
         DrawDsMesh(c, s);
         if (th.background)
             if (const uint32_t* bgPx = th.background->Fitted(c.w, c.h)) std::copy(bgPx, bgPx + (size_t)c.w * c.h, c.px.begin());
@@ -2030,6 +2151,16 @@ struct SettingsPage
         const int titleH = std::max(22, 8 * s);
         const int tw = c.ModernTextWidth(title, titleH);
         c.ModernText((c.w - tw) / 2, (bandH - titleH) / 2, title, titleH, th.title);
+        {
+            int bx = 0, by = 0, bw = 0, bh = 0;
+            if (SettingsBackPillRect(c, bx, by, bw, bh) && bx + bw + 8 * s < (c.w - tw) / 2)
+            {
+                const std::string backLbl = "B: " + ToNiceTitle(UiLang::Tr("BACK"));
+                const int backFontH = std::max(13, 5 * s);
+                c.FillGlass(bx, by, bw, bh, 3 * s, 0xEE223048, 0xEE172033, th.frame, 1);
+                c.ModernText(bx + 5 * s, by + (bh - backFontH) / 2, backLbl, backFontH, th.title, true);
+            }
+        }
         if (!items.empty() && c.w >= 480)
         {
             const std::string countStr = std::to_string(selected + 1) + " / " + std::to_string(items.size());
@@ -2266,5 +2397,120 @@ struct SettingsPage
         }
     }
 };
+
+// Centered frosted-glass modal dialog drawn over a full-screen scrim so synchronous status
+// updates (e.g. checking/downloading/installing updates or icons) always appear cleanly in front.
+inline void DrawStatusModal(Canvas& c, const std::string& title, const std::string& message,
+                            const std::string& detail = std::string(), const std::string& hint = std::string(),
+                            bool busy = false, int progressPct = -1, const Theme& th = Theme())
+{
+    const int s = std::max(1, std::min(c.w, c.h) / 240);
+    c.FillBlend(0, 0, c.w, c.h, 0xC8050812);
+
+    const int mw = std::min(c.w - 28 * s, 210 * s);
+    const int innerW = std::max(120, mw - 24 * s);
+    const int titleH = std::max(18, 7 * s);
+    const int msgH = std::max(16, 6 * s);
+    const int detH = std::max(14, 5 * s);
+    const int hintH = std::max(13, 5 * s);
+
+    const std::string trTitle = title.empty() ? std::string() : ToNiceTitle(UiLang::Tr(title));
+    const std::string trMsg = message.empty() ? std::string() : ToNiceSentence(UiLang::Tr(message));
+    const std::string trDet = detail.empty() ? std::string() : ToNiceSentence(UiLang::Tr(detail));
+    const std::string trHint = hint.empty() ? std::string() : ToNiceTitle(UiLang::Tr(hint));
+
+    const int charMax = std::max(24, innerW / std::max(6, msgH / 2));
+    const std::vector<std::string> msgLines = trMsg.empty() ? std::vector<std::string>{} : Wrap(trMsg, charMax);
+    const std::vector<std::string> detLines = trDet.empty() ? std::vector<std::string>{} : Wrap(trDet, charMax + 6);
+    int usedMsgH = msgH;
+    for (const std::string& line : msgLines)
+        while (usedMsgH > 12 && ModernTextWidth(line, usedMsgH) > innerW) --usedMsgH;
+    int usedDetH = detH;
+    for (const std::string& line : detLines)
+        while (usedDetH > 10 && ModernTextWidth(line, usedDetH) > innerW) --usedDetH;
+
+    int mh = 18 * s;
+    if (!trTitle.empty()) mh += titleH + 8 * s;
+    if (!msgLines.empty()) mh += (int)msgLines.size() * (usedMsgH + 4 * s) + 4 * s;
+    if (busy || progressPct >= 0) mh += 10 * s;
+    if (!detLines.empty()) mh += (int)detLines.size() * (usedDetH + 3 * s) + 4 * s;
+    if (!trHint.empty()) mh += hintH + 10 * s;
+    mh = std::min(c.h - 24 * s, std::max(mh, 54 * s));
+
+    const int mx = (c.w - mw) / 2;
+    const int my = (c.h - mh) / 2;
+    const int rad = std::max(6, 5 * s);
+
+    c.ShadowRound(mx, my, mw, mh, rad, 3 * s, 140);
+    c.GlowRound(mx, my, mw, mh, rad, 2 * s, (th.frame & 0x00FFFFFFu) | 0x44000000u);
+    c.FillGlass(mx, my, mw, mh, rad, 0xFC1E2A3F, 0xFC101726, th.frame, std::max(1, s / 2 + 1));
+    c.FillRound(mx + 6 * s, my + s + 1, mw - 12 * s, std::max(2, s), std::max(1, s / 2), th.frame);
+
+    int y = my + 10 * s;
+    if (!trTitle.empty())
+    {
+        const int tw = ModernTextWidth(trTitle, titleH);
+        ModernText(c, mx + (mw - tw) / 2, y, trTitle, titleH, th.title, true);
+        y += titleH + 6 * s;
+        c.Fill(mx + 14 * s, y - 3 * s, mw - 28 * s, 1, 0x44FFFFFF);
+    }
+
+    for (const std::string& line : msgLines)
+    {
+        const int lw = ModernTextWidth(line, usedMsgH);
+        ModernText(c, mx + std::max(12 * s, (mw - lw) / 2), y, line, usedMsgH, 0xFFFFFFFF, true);
+        y += usedMsgH + 4 * s;
+    }
+
+    if (progressPct >= 0)
+    {
+        const int pct = std::min(100, std::max(0, progressPct));
+        const int barW = mw - 32 * s;
+        const int barH = std::max(6, 3 * s);
+        const int barX = mx + (mw - barW) / 2;
+        const int barY = y + 2 * s;
+        c.FillRound(barX, barY, barW, barH, barH / 2, 0xFF0E1524);
+        c.OutlineRound(barX, barY, barW, barH, barH / 2, 1, 0xFF334766);
+        const int fillW = barW * pct / 100;
+        if (fillW > barH / 2)
+            c.FillRound(barX, barY, fillW, barH, barH / 2, th.frame);
+        y += barH + 7 * s;
+    }
+    else if (busy)
+    {
+        const float t = AnimTime();
+        const int dotR = std::max(3, s + 1);
+        const int dotGap = 7 * s;
+        const int dotsW = 3 * dotR * 2 + 2 * (dotGap - dotR * 2);
+        const int dx0 = mx + (mw - dotsW) / 2;
+        const int dy = y + 2 * s;
+        for (int i = 0; i < 3; i++)
+        {
+            const float ph = 0.45f + 0.55f * fabsf(sinf(t * 4.2f - i * 0.7f));
+            const uint8_t a = (uint8_t)(90 + ph * 165);
+            const uint32_t col = (th.frame & 0x00FFFFFFu) | ((uint32_t)a << 24);
+            c.FillRound(dx0 + i * dotGap, dy, dotR * 2, dotR * 2, dotR, col);
+        }
+        y += dotR * 2 + 7 * s;
+    }
+
+    for (const std::string& line : detLines)
+    {
+        const int lw = ModernTextWidth(line, usedDetH);
+        ModernText(c, mx + std::max(12 * s, (mw - lw) / 2), y, line, usedDetH, th.sub, false);
+        y += usedDetH + 3 * s;
+    }
+
+    if (!trHint.empty())
+    {
+        const int pillH = hintH + 6 * s;
+        const int pillW = ModernTextWidth(trHint, hintH) + 14 * s;
+        const int px = mx + (mw - pillW) / 2;
+        const int py = my + mh - pillH - 7 * s;
+        c.FillRound(px, py, pillW, pillH, pillH / 2, 0xFF1A253B);
+        c.OutlineRound(px, py, pillW, pillH, pillH / 2, 1, 0xFF3E5278);
+        ModernText(c, px + 7 * s, py + (pillH - hintH) / 2, trHint, hintH, th.title, false);
+    }
+}
 
 }

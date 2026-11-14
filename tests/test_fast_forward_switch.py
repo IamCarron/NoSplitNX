@@ -21,6 +21,7 @@ class SwitchFastForwardTests(unittest.TestCase):
         gpu3d_h = (ROOT / 'melonDS/src/GPU3D.h').read_text(encoding='utf-8')
         wide = (ROOT / 'melonDS/src/GPU3D_Wide.cpp').read_text(encoding='utf-8')
         main_cpp = (ROOT / 'frontend/main.cpp').read_text(encoding='utf-8')
+        launcher_h = (ROOT / 'frontend/launcher.h').read_text(encoding='utf-8')
         sw_plat = (ROOT / 'frontend/switch_platform.cpp').read_text(encoding='utf-8')
 
         # Deferred VBlank wide flush must latch polygons into WidePendingRaw before RawCurrent clears.
@@ -29,13 +30,18 @@ class SwitchFastForwardTests(unittest.TestCase):
         self.assertIn('WideOnFlushRaw(*this, WidePendingRaw)', gpu3d)
         self.assertIn('void WideOnFlushRaw(', wide)
 
-        # Switch fast-forward keeps 360-line low-res cap (no 192p pixelation) and uses FF clock boost.
+        # Experimental Switch fast-forward defaults OFF, never changes clocks, and drops widescreen
+        # 3D to standard DS composition (Lite Turbo) during fast-forward for steady outdoor pacing.
         self.assertNotIn('WideLinesNow = std::min(WideLinesNow, 192)', main_cpp)
         self.assertIn('SwitchFastForwardPacer', main_cpp)
-        # Fast forward is off on the Switch: nothing may change the console's clocks.
         self.assertNotIn('SwitchPlatform::SetFastForwardBoost(', main_cpp)
-        self.assertIn('const bool fastRequested = false;', main_cpp)
+        self.assertIn('bool switchFastForward = false;', main_cpp)
+        self.assertIn('"switch_ff"', launcher_h)
+        self.assertIn('FAST FORWARD (EXPERIMENTAL)', launcher_h)
+        self.assertIn('const bool fastRequested = cfg.switchFastForward && fastButton.Requested(', main_cpp)
+        self.assertIn('const bool liteTurbo = speed > 1;', main_cpp)
+        self.assertIn('const bool wantWide = !liteTurbo &&', main_cpp)
 
-        # Switch clock boost must close every clkrst session immediately and never touch GPU or APM boost.
+        # Switch must never touch appletSetCpuBoostMode or leave clkrst sessions open.
         self.assertNotIn('appletSetCpuBoostMode', sw_plat)
         self.assertEqual(sw_plat.count('clkrstOpenSession('), sw_plat.count('clkrstCloseSession('))

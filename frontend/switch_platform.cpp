@@ -273,6 +273,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
         keysMenu.items.push_back({ "BACK", "" });
     };
     std::string note;
+    std::string modalTitle, modalMsg, modalDetail;
     int shown = 0;
 #ifdef SSR_ALL_GAMES
     bool installIcons = false; // (HOME MENU ICONS chosen: done after INSTALLING is on the screen)
@@ -280,6 +281,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
     bool updateWork = false; // (CHECK FOR UPDATES: done after CHECKING... is on the screen)
     bool launchCheck = false; // (Once, after the list's first picture is on the screen)
     bool updateAsked = false;
+    bool modalProgress = false;
     unsigned updateSeen = 0;
     Menu updateMenu;
 #endif
@@ -291,6 +293,51 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
     Launcher::Background background;
     UiLang::DetectSystem();
     Launcher::LoadLook(cfgPath, listDir, theme, background);
+    auto presentFrame = [&]() {
+        u32 stride;
+        if (u32* out = (u32*)framebufferBegin(&fb, &stride))
+        {
+            for (int y = 0; y < 720; y++)
+            {
+                const uint32_t* src = &canvas.px[(size_t)y * 1280];
+                u32* dst = out + (size_t)y * (stride / 4);
+                // (ARGB to the framebuffer's RGBA bytes.)
+                for (int x = 0; x < 1280; x++)
+                {
+                    const uint32_t p = src[x];
+                    dst[x] = 0xFF000000u | (p & 0xFF) << 16 | (p & 0xFF00) | (p >> 16 & 0xFF);
+                }
+            }
+            framebufferEnd(&fb);
+        }
+    };
+    auto drawBackdrop = [&]() {
+        if (guide)
+        {
+            page.Draw(canvas, page.group < 0 ? "UP / DOWN: CHOOSE    A: OPEN    B: BACK"
+                                             : "UP / DOWN: CHOOSE    LEFT / RIGHT / A: CHANGE    B: BACK", theme);
+        }
+        else Launcher::Draw(canvas, games, tab, onSettings || onTabs ? -1 : selected, scroll, note, std::string(), theme, true, onTabs);
+    };
+    auto showStatusModal = [&](const std::string& title, const std::string& msg, const std::string& detail,
+                               const std::string& hint, bool busy, int progressPct = -1) {
+        drawBackdrop();
+        Launcher::DrawStatusModal(canvas, title, msg, detail, hint, busy, progressPct, theme);
+        presentFrame();
+    };
+#ifdef SSR_UPDATER
+    auto onUpdaterStatus = [&](const Updater::Status& st) {
+        if (!modalProgress) return;
+        const bool busy = (st.state == Updater::State::Checking || st.state == Updater::State::Downloading);
+        std::string detail;
+        if (st.state == Updater::State::Downloading) detail = "PLEASE WAIT...";
+        else if (!st.page.empty() && st.state == Updater::State::Failed) detail = st.page;
+        showStatusModal("UPDATE", st.text, detail, std::string(), busy);
+    };
+    Updater::SetStatusCallback([](const Updater::Status& st, void* user) {
+        (*static_cast<decltype(&onUpdaterStatus)>(user))(st);
+    }, &onUpdaterStatus);
+#endif
     auto change = [&](int d) {
         const char* key = page.Change(d);
         if (key && !strncmp(key, "list_", 5))
@@ -335,20 +382,28 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
     while (appletMainLoop())
     {
 #ifdef SSR_ALL_GAMES
-        // (Set during the last pass, which then showed INSTALLING... on the screen.)
+        // (Draw an opaque modal immediately so synchronous Switch work never stalls silently behind Settings.)
         if (installIcons)
         {
+            showStatusModal("HOME MENU ICONS", "INSTALLING...", "PLEASE WAIT...", std::string(), true);
             const std::string res = InstallHomeIcons(games);
             for (auto* list : { &page.items, &page.all })
                 for (Launcher::Setting& st : *list)
                     if (st.key && !strcmp(st.key, "!forwarders") && !st.values.empty()) st.values[0].second = res;
             installIcons = false;
+            modalTitle = "HOME MENU ICONS";
+            modalMsg = res;
+            modalDetail.clear();
         }
 #ifdef SSR_UPDATER
         if (updateWork)
         {
-            if (Updater::Get().state == Updater::State::Available) RomfsClose();
+            const bool wasAvailable = (Updater::Get().state == Updater::State::Available);
+            showStatusModal("UPDATE", wasAvailable ? "DOWNLOADING..." : "CHECKING...", "PLEASE WAIT...", std::string(), true);
+            modalProgress = true;
+            if (wasAvailable) RomfsClose();
             const std::string url = Updater::Choose();
+            modalProgress = false;
             if (!url.empty()) note = "NEW VERSION: GITHUB.COM/IAMCARRON/NOSPLITNX/RELEASES";
             const Updater::Status u = Updater::Get();
             for (auto* list : { &page.items, &page.all })
@@ -357,7 +412,22 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             if (!guide && u.state == Updater::State::Failed) note = u.text;
             updateSeen = u.serial;
             updateWork = false;
-            if (u.state == Updater::State::Installed && Updater::RestartPending()) break;
+            if (u.state == Updater::State::Installed && Updater::RestartPending())
+            {
+                showStatusModal("UPDATE", "INSTALLING...", "PLEASE WAIT...", std::string(), true);
+                break;
+            }
+            if (!wasAvailable && u.state == Updater::State::Available)
+            {
+                updateAsked = false;
+                updateSeen = 0;
+            }
+            else if (u.state == Updater::State::UpToDate || u.state == Updater::State::Failed)
+            {
+                modalTitle = "UPDATE";
+                modalMsg = u.text;
+                modalDetail = !url.empty() ? url : u.page;
+            }
         }
 #endif
 #endif
@@ -410,15 +480,22 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
         }
         const int s = std::max(1, canvas.h / 240);
         const int bandH = 22 * s;
-        const int dockY = canvas.h - 18 * s;
-        const bool tapSettings = (tapY >= 0 && tapY < bandH && tapX > canvas.w * 3 / 4) ||
-                                 (tapY >= dockY && tapX >= canvas.w / 4 && tapX < canvas.w / 2);
-        const bool tapBack = (tapY >= 0 && tapY < bandH && tapX < canvas.w / 4) ||
-                             (tapY >= dockY && tapX >= canvas.w / 2);
+        const bool tapSettings = Launcher::TapInSettingsPill(canvas, tapX, tapY);
+        const bool tapBack = Launcher::TapInSettingsBack(canvas, tapX, tapY) || (tapY >= 0 && tapY < bandH && tapX < canvas.w / 4);
         // The arrows (or a stick) move through the grid, and keep moving while held.
         const bool up = now & HidNpadButton_AnyUp, dn = now & HidNpadButton_AnyDown;
         const bool lf = now & HidNpadButton_AnyLeft, rt = now & HidNpadButton_AnyRight;
         held = (up || dn || lf || rt) ? held + 1 : 0;
+        if (!modalMsg.empty())
+        {
+            if (tapX >= 0 || (down & (HidNpadButton_A | HidNpadButton_B | HidNpadButton_Plus)))
+            {
+                modalTitle.clear();
+                modalMsg.clear();
+                modalDetail.clear();
+            }
+        }
+        else
 #ifdef SSR_UPDATER
         if (updateMenu.open)
         {
@@ -475,7 +552,13 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                 nav.up = step && up;
                 nav.down = step && dn;
                 nav.accept = (down & HidNpadButton_A) != 0;
-                if (down & HidNpadButton_B) keysOpen = false;
+                if ((down & HidNpadButton_B) || tapBack) keysOpen = false;
+                if (tapX >= 0)
+                {
+                    const int row = keysMenu.ItemAt(tapX, tapY);
+                    if (row >= 0) { keysMenu.selected = row; nav.accept = true; }
+                    else if (row == -2) keysOpen = false;
+                }
                 int dir = 0;
                 const int hit = keysMenu.Update(nav, dir);
                 if (hit >= 0 && hit < Controls::COUNT)
@@ -502,6 +585,11 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             if (down & HidNpadButton_A) change(1);
             // (B: from a group back to the groups first; Y closes the page.)
             if (((down & HidNpadButton_B) || tapBack) && !page.Back()) guide = false;
+            else if (tapX >= 0 && !tapBack)
+            {
+                const int row = page.ItemAt(tapY);
+                if (row >= 0) { page.selected = row; change(1); }
+            }
             if (down & HidNpadButton_Y) guide = false;
             if (down & HidNpadButton_Plus) break;
         }
@@ -528,6 +616,47 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                 note.clear();
             };
             if (down & (tl | tr)) setTab((down & tr) ? 1 : -1);
+            if (tapX >= 0)
+            {
+                const int hitTab = Launcher::TabAt(canvas, tapX, tapY);
+                const int arr = hitTab < 0 ? Launcher::CarouselArrowAt(canvas, view(), scroll, tapX, tapY) : 0;
+                const int tile = (hitTab < 0 && arr == 0) ? Launcher::TileAt(view(), scroll, tapX, tapY) : -1;
+                if (hitTab >= 0)
+                {
+                    tab = hitTab;
+                    scroll = 0;
+                    const Launcher::View v = view();
+                    if (v.SpotOf(selected) < 0) selected = Launcher::FirstIn(v);
+                    onTabs = (Launcher::FirstIn(v) < 0);
+                    onSettings = false;
+                    note.clear();
+                }
+                else if (arr != 0)
+                {
+                    onTabs = false;
+                    onSettings = false;
+                    const int to = Launcher::Step(view(), selected, arr < 0 ? 1 : 2);
+                    if (to >= 0) { selected = to; note.clear(); }
+                }
+                else if (Launcher::TapInBannerPlay(canvas, tapX, tapY) && selected >= 0 && !onTabs && !onSettings)
+                {
+                    if (Playable(games[selected])) { result = selected; break; }
+                    note = games[selected].comingSoon ? games[selected].name + ": " + UiLang::Tr("COMING SOON")
+                         : games[selected].known ? "THIS DOWNLOAD DOES NOT HAVE THIS GAME" : "THIS GAME IS NOT ONE THAT THIS PLAYS";
+                }
+                else if (tile >= 0)
+                {
+                    onTabs = false;
+                    onSettings = false;
+                    if (tile == selected)
+                    {
+                        if (Playable(games[selected])) { result = selected; break; }
+                        note = games[selected].comingSoon ? games[selected].name + ": " + UiLang::Tr("COMING SOON")
+                             : games[selected].known ? "THIS DOWNLOAD DOES NOT HAVE THIS GAME" : "THIS GAME IS NOT ONE THAT THIS PLAYS";
+                    }
+                    else { selected = tile; note.clear(); }
+                }
+            }
             const bool step = held == 1 || (held > 20 && held % 6 == 0);
             const int dir = !step ? 0 : lf ? 1 : rt ? 2 : up ? 3 : dn ? 4 : 0;
             const bool aDown = (down & (ctl.PadCustom() ? action(Controls::A) : (u64)HidNpadButton_A)) != 0;
@@ -581,45 +710,33 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                     result = selected;
                     break;
                 }
-                note = games[selected].comingSoon ? games[selected].name + ToNiceTitle(UiLang::Tr(": COMING SOON"))
+                note = games[selected].comingSoon ? games[selected].name + ": " + UiLang::Tr("COMING SOON")
                      : games[selected].known ? "THIS DOWNLOAD DOES NOT HAVE THIS GAME" : "THIS GAME IS NOT ONE THAT THIS PLAYS";
             }
             if (down & (HidNpadButton_Plus | (ctl.PadCustom() ? action(Controls::B) : (u64)HidNpadButton_B))) break;
         }
         // (The game list only when the settings page is not open: drawn over it, the page was
         // hidden while it took the buttons, and the list seemed frozen.)
-        if (guide)
+        drawBackdrop();
+        if (guide && keysOpen)
         {
-            page.Draw(canvas, page.group < 0 ? "UP / DOWN: CHOOSE    A: OPEN    B: BACK"
-                                             : "UP / DOWN: CHOOSE    LEFT / RIGHT / A: CHANGE    B: BACK", theme);
-            if (keysOpen)
-            {
-                std::string kh = keysCapture >= 0 ? "OR WAIT 5 SECONDS: AS IT WAS" : "A: CHANGE   B: BACK";
-                if (keysCapture < 0)
-                    if (const char* h = Controls::ActionHint(keysMenu.selected)) kh = h;
-                keysMenu.Draw(canvas, "KEYS AND BUTTONS", kh);
-            }
+            std::string kh = keysCapture >= 0 ? "OR WAIT 5 SECONDS: AS IT WAS" : "A: CHANGE   B: BACK";
+            if (keysCapture < 0)
+                if (const char* h = Controls::ActionHint(keysMenu.selected)) kh = h;
+            canvas.FillBlend(0, 0, canvas.w, canvas.h, 0xB8050812);
+            keysMenu.Draw(canvas, "KEYS AND BUTTONS", kh);
         }
-        else Launcher::Draw(canvas, games, tab, onSettings || onTabs ? -1 : selected, scroll, note, std::string(), theme, true, onTabs);
 #ifdef SSR_UPDATER
         if (updateMenu.open)
+        {
+            canvas.FillBlend(0, 0, canvas.w, canvas.h, 0xB8050812);
             updateMenu.Draw(canvas, Updater::PopupTitle(), "A: CHOOSE    B: LATER",
                             Updater::PopupNote(Updater::Get().canInstall));
-#endif
-        u32 stride;
-        u32* out = (u32*)framebufferBegin(&fb, &stride);
-        for (int y = 0; y < 720; y++)
-        {
-            const uint32_t* src = &canvas.px[(size_t)y * 1280];
-            u32* dst = out + (size_t)y * (stride / 4);
-            // (ARGB to the framebuffer's RGBA bytes.)
-            for (int x = 0; x < 1280; x++)
-            {
-                const uint32_t p = src[x];
-                dst[x] = 0xFF000000u | (p & 0xFF) << 16 | (p & 0xFF00) | (p >> 16 & 0xFF);
-            }
         }
-        framebufferEnd(&fb);
+#endif
+        if (!modalMsg.empty())
+            Launcher::DrawStatusModal(canvas, modalTitle, modalMsg, modalDetail, "A: CLOSE", false, -1, theme);
+        presentFrame();
 #ifdef SSR_UPDATER
         // After the list is on the screen: one check at launch, on this thread (a second
         // thread here stops the program). A new version is only said, never installed unasked.
@@ -642,6 +759,9 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             framebufferEnd(&fb);
         }
     }
+#ifdef SSR_UPDATER
+    Updater::SetStatusCallback(nullptr, nullptr);
+#endif
     framebufferClose(&fb);
     return result;
 }

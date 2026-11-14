@@ -1601,6 +1601,7 @@ struct Settings
     bool ffMute = false;
     bool fastButtonToggle = false;
     bool fastLock = false; // pause-menu FAST FORWARD, retained for the next launch
+    bool switchFastForward = false; // Switch only: experimental fast forward (OFF by default; no clock changes)
     std::string listColour, listBackground, listLang; // (GAME LIST: COLOUR, BACKGROUND; LANGUAGE)
     bool cpuBoost = true; // Switch only: the processor's boost mode (see SwitchPlatform)
     bool jit = true;      // Switch, games that are not recompiled: melonDS's JIT (read at start-up)
@@ -1683,6 +1684,7 @@ struct Settings
             else if (k == "ff_low_res") ffLowRes = v == "1";
             else if (k == "fast_button") fastButtonToggle = v == "toggle";
             else if (k == "fast_lock") fastLock = v == "1";
+            else if (k == "switch_ff") switchFastForward = v == "1";
             else if (k == "start_button") startMenu = v != "ds";
             else if (k == "cpu_boost") cpuBoost = v == "1";
             else if (k == "jit") jit = v == "1";
@@ -1731,6 +1733,7 @@ struct Settings
         f << "ff_low_res=" << (ffLowRes ? 1 : 0) << "\n";
         f << "fast_button=" << (fastButtonToggle ? "toggle" : "hold") << "\n";
         f << "fast_lock=" << (fastLock ? 1 : 0) << "\n";
+        f << "switch_ff=" << (switchFastForward ? 1 : 0) << "\n";
         f << "volume=" << volume << "\n";
         f << "ultrawide_notice=" << (ultraNoticeSeen ? 1 : 0) << "\n";
         f << "aspect=" << (aspect == 1 ? "16:9" : aspect == 2 ? "16:10" : aspect == 3 ? "3:2" : aspect == 4 ? "4:3" : "auto") << "\n";
@@ -4806,7 +4809,7 @@ int main(int argc, char** argv)
     {
         M_RESUME, M_LAYOUT, M_LARGE, M_FPS60, M_FULLSCREEN, M_SMOOTH, M_WIDE, M_WIDEMAP, M_BATTLEBUTTONS,
         M_WIDELINES, M_AUTODETAIL, M_WIDEGPU, M_GPU3D, M_SHOWFPS, M_BUTTONS, M_PADTOUCH, M_EMULATION,
-        M_CONTROLS, M_STARTBTN, M_FAST, M_FASTBTN, M_FFLOWRES, M_SAVESTATE, M_LOADSTATE, M_RESET, M_QUIT,
+        M_CONTROLS, M_STARTBTN, M_FAST, M_FASTBTN, M_FFLOWRES, M_SWITCH_FF, M_SAVESTATE, M_LOADSTATE, M_RESET, M_QUIT,
         M_SETTINGS, M_DISPLAY, M_LANGUAGE, M_SOUND, M_GRAPHICS, M_CONTROLMENU, M_BACK, M_CHEATS, M_NOTHING,
         M_VOLUME, M_FFMUTE, M_ASPECT, M_RA, M_RA_ON, M_RA_ACCOUNT, M_RA_GAME, M_RA_LOGIN, M_RA_TYPED, M_RA_CANCEL, M_BOTHVER,
         M_RA_LIST, M_ACH_POINTS, M_ACH_STATUS, M_ACH_RARITY,
@@ -4829,6 +4832,9 @@ int main(int argc, char** argv)
     int sliderTap = -1; // a tap on a slider's bar (Menu::SliderAt): the value, for its row's action
     std::string raTyped, raUser;
     std::vector<int> menuIds;
+#ifdef __SWITCH__
+    if (!cfg.switchFastForward) cfg.fastLock = false;
+#endif
     bool fastLock = cfg.fastLock;
     FastForwardButton fastButton;
     bool fastInputFocused = true;
@@ -4915,12 +4921,14 @@ int main(int argc, char** argv)
             add(M_RESUME, "RESUME", "");
             add(M_SAVESTATE, "SAVE STATE", "");
             add(M_LOADSTATE, "LOAD STATE", "");
-#ifndef __SWITCH__
+#ifdef __SWITCH__
+            add(M_FAST, "FAST FORWARD", cfg.switchFastForward ? onOff(fastLock) : "OFF", !cfg.switchFastForward);
+#else
             add(M_FAST, "FAST FORWARD", onOff(fastLock));
 #endif
             add(M_SETTINGS, "SETTINGS", "");
             add(M_CONTROLMENU, "CONTROLS", "");
-            add(M_CHEATS, "CHEATS", cheats.On() ? std::to_string(cheats.On()) + " ON" : "");
+            add(M_CHEATS, "CHEATS", cheats.On() ? std::to_string(cheats.On()) + " ON" : "", true);
             add(M_RESET, "RESET GAME", "");
             add(M_QUIT, "QUIT", "");
         }
@@ -4933,6 +4941,9 @@ int main(int argc, char** argv)
             add(M_SMOOTH, "SMOOTH SCALING", onOff(cfg.smooth));
             add(M_SHOWFPS, "FPS COUNTER", onOff(cfg.showFps));
             add(M_FFMUTE, "FAST FORWARD SOUND", cfg.ffMute ? "OFF" : "ON");
+#ifdef __SWITCH__
+            add(M_SWITCH_FF, "FAST FORWARD (EXPERIMENTAL)", onOff(cfg.switchFastForward));
+#endif
             add(M_LANGUAGE, "LANGUAGE", UiLang::ChoiceName());
 #ifndef __SWITCH__
             add(M_LAYOUT, "SCREEN LAYOUT", LayoutName(layout.mode));
@@ -5110,9 +5121,7 @@ int main(int argc, char** argv)
         else if (menuPage == PAGE_CONTROLS)
         {
             add(M_CONTROLS, "KEYS AND BUTTONS", "");
-#ifndef __SWITCH__
             add(M_FASTBTN, "FAST FORWARD BUTTON", cfg.fastButtonToggle ? "TOGGLE" : "HOLD");
-#endif
             add(M_BACK, "BACK", "");
         }
     };
@@ -6710,10 +6719,28 @@ int main(int argc, char** argv)
                 cfg.startMenu = !cfg.startMenu;
                 break;
             case M_FAST:
+#ifdef __SWITCH__
+                if (!cfg.switchFastForward)
+                {
+                    say("ENABLE IN SETTINGS -> GRAPHICS FIRST");
+                    break;
+                }
+#endif
                 fastLock = !fastLock;
                 cfg.fastLock = fastLock;
                 cfg.Save(opt.config);
                 break;
+#ifdef __SWITCH__
+            case M_SWITCH_FF:
+                cfg.switchFastForward = !cfg.switchFastForward;
+                if (!cfg.switchFastForward)
+                {
+                    fastLock = false;
+                    cfg.fastLock = false;
+                }
+                cfg.Save(opt.config);
+                break;
+#endif
             case M_FASTBTN:
                 cfg.fastButtonToggle = !cfg.fastButtonToggle;
                 cfg.Save(opt.config);
@@ -6809,22 +6836,29 @@ int main(int argc, char** argv)
         // Fast forward (up to 6x) while the right trigger (ZR on the Switch) or Left Shift is held, or
         // locked on from the menu.
         const bool fastDown = kbFast || ps.rt > 0.5f;
-        if (fastButton.Update(cfg.fastButtonToggle, fastDown, fastInputFocused && !menu.open && !swallowMenuButtons, fastLock))
+        const bool fastInputActive =
+#ifdef __SWITCH__
+            cfg.switchFastForward &&
+#endif
+            fastInputFocused && !menu.open && !swallowMenuButtons;
+        if (fastButton.Update(cfg.fastButtonToggle, fastDown, fastInputActive, fastLock))
         {
             cfg.fastLock = fastLock;
             cfg.Save(opt.config);
         }
 #ifdef __SWITCH__
-        // Fast forward is off on the Switch for now (it did not hold 2x there, and the processor
-        // clocks it raised are gone with it: nothing here changes the console's clocks).
-        const bool fastRequested = false;
+        if (!cfg.switchFastForward) fastLock = false;
+        // Experimental Switch fast forward: stays strictly OFF unless switch_ff=1, never alters
+        // console clocks, and pairs Lite Turbo (DS 256x192 composition while FF is active) with
+        // steady Switch pacing so speed holds evenly outdoors.
+        const bool fastRequested = cfg.switchFastForward && fastButton.Requested(cfg.fastButtonToggle, fastDown, fastLock);
+        static SwitchFastForwardPacer swPacer;
 #else
         const bool fastRequested = fastButton.Requested(cfg.fastButtonToggle, fastDown, fastLock);
 #endif
         if (!paused && fastRequested)
         {
 #ifdef __SWITCH__
-            static SwitchFastForwardPacer swPacer;
             std::tie(speed, ffRefreshes) = swPacer.Pick(ffShownMs, ffHiddenMs, frameTime * 1000.0, ahead, !opt.headless);
 #else
             speed = ffFrameMs > 0 && !opt.headless ? std::clamp((int)(33.3 / ffFrameMs), 2, 4) : 4; // (tests: always 4)
@@ -6849,6 +6883,14 @@ int main(int argc, char** argv)
             }
 #endif
         }
+#ifdef __SWITCH__
+        else
+        {
+            swPacer.Reset();
+            ffShownMs = 0;
+            ffHiddenMs = 0;
+        }
+#endif
         // A direction just pressed in a menu list runs at normal speed for a brief moment (120ms)
         // so that a quick tap moves the cursor one item (shops, Bag, party).
         // In the overworld, battles, and field exploration, fast forward continues at full speed.
@@ -7045,7 +7087,12 @@ int main(int argc, char** argv)
             if (funcWatchOn && (scene.wide || (fromMenu && lastWideScene && frame - lastWideScene < 300))) lastWideScene = frame;
             const bool bw2KeepWide = funcWatchOn && (scene.wide || (lastWideScene && frame - lastWideScene < 300) ||
                 funcWatch.Ran(bw2.battle, 2) || funcWatch.Ran(pt.battle, 2));
-            const bool wantWide = merged && cfg.wide && !opt.noWide && !opt.lockstep && view.width > 256.5f && (funcWatchOn ? bw2KeepWide :
+#ifdef __SWITCH__
+            const bool liteTurbo = speed > 1;
+#else
+            const bool liteTurbo = false;
+#endif
+            const bool wantWide = !liteTurbo && merged && cfg.wide && !opt.noWide && !opt.lockstep && view.width > 256.5f && (funcWatchOn ? bw2KeepWide :
                 (fieldActive() || menuReturn > 0 || scene.edgeFill || (singleView() && singleFieldFrame && rc_current_frame() - singleFieldFrame < 20)));
             melonDS::Wide.Owner = wantWide ? &nds->GPU.GPU3D : nullptr;
             melonDS::Wide.ViewWidth = view.width;
@@ -7061,8 +7108,13 @@ int main(int argc, char** argv)
         auto takeWideImage = [&]() {
             wideImage = WideImage();
             battleRenderLater = false;
+#ifdef __SWITCH__
+            const bool liteTurbo = speed > 1;
+#else
+            const bool liteTurbo = false;
+#endif
             // A battle on a wide view: the screen widened (battlewide.h) instead of the bars.
-            if (scene.edgeFill && cfg.wide && !opt.noWide)
+            if (!liteTurbo && scene.edgeFill && cfg.wide && !opt.noWide)
             {
                 WideImage world;
                 if (wideFrames > 3 && melonDS::Wide.Front)
@@ -8347,8 +8399,9 @@ int main(int argc, char** argv)
                     canvas.Text(ox + pad, oy + 2 * sc, n, sc, 0xFFFFE074);
                 }
             }
-            const std::string hint = btn(Controls::Y) + " SEARCH   " + btn(Controls::X) + " SWITCH   " +
-                                     btn(Controls::A) + " CHECK";
+            const std::string hint = btn(Controls::Y) + " " + UiLang::Tr("SEARCH") + "   "
+                                   + btn(Controls::X) + " " + UiLang::Tr("SWITCH") + "   "
+                                   + btn(Controls::A) + " " + UiLang::Tr("DETAILS");
             const int tw = Canvas::TextWidth(hint, sc) + 8 * sc;
             const int ty = outH - 15 * sc;
             canvas.FillRound((outW - tw) / 2, ty, tw, 13 * sc, 3 * sc, 0xD80D111A);
@@ -8401,6 +8454,10 @@ int main(int argc, char** argv)
             // (What FAST FORWARD LOW RES is for, while it is the one chosen.)
             if (selId == M_FFLOWRES) hint = "ON: MORE FPS IN FAST FORWARD";
 #endif
+#ifdef __SWITCH__
+            if (selId == M_SWITCH_FF) hint = "OFF BY DEFAULT (EXPERIMENTAL)";
+            if (selId == M_FAST && !cfg.switchFastForward) hint = "ENABLE IN SETTINGS -> GRAPHICS FIRST";
+#endif
             if (selId == M_SETTINGS) hint = "AUDIO, VIDEO AND SYSTEM OPTIONS";
             if (selId == M_VOLUME) hint = "SOUND AND MUSIC: LEFT / RIGHT";
             if (selId == M_ASPECT) hint = "NARROWER THAN THE SCREEN: BARS AT THE SIDES";
@@ -8450,16 +8507,17 @@ int main(int argc, char** argv)
                 const std::string full = Cheats::Shown(achList[achDetail].title, 200);
                 title = full.size() > 30 ? full.substr(0, 28) + ".." : full;
                 note = (full.size() > 30 ? full + ": " : std::string()) + achList[achDetail].description;
-                hint = btn(Controls::B) + ": BACK";
+                hint = btn(Controls::B) + ": " + UiLang::Tr("BACK");
             }
             if (menuPage == PAGE_RA_LIST)
             {
-                hint = btn(Controls::A) + ": DETAILS   " + btn(Controls::B) + ": BACK";
+                hint = btn(Controls::A) + ": " + UiLang::Tr("DETAILS") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
                 if (selId >= M_ACH0 && selId - M_ACH0 < (int)achList.size())
                 {
                     const Achievements::Row& r = achList[selId - M_ACH0];
-                    note = r.description + " (" + std::to_string(r.points) + " POINTS" + (r.unlocked ? ", UNLOCKED)" : ")");
-                    if (!r.unlocked && !r.progress.empty()) note += " SO FAR: " + r.progress;
+                    note = r.description + " (" + std::to_string(r.points) + " " + UiLang::Tr("POINTS")
+                         + (r.unlocked ? ", " + UiLang::Tr("UNLOCKED") + ")" : ")");
+                    if (!r.unlocked && !r.progress.empty()) note += UiLang::Tr(" SO FAR: ") + r.progress;
                 }
             }
             if(menuPage == PAGE_CHEATS)
@@ -8469,13 +8527,13 @@ int main(int argc, char** argv)
             }
             if(menuPage == PAGE_CSEARCH)
             {
-                note="FIND: "+(cheatQuery.empty() ? std::string("ALL CODES") : cheatQuery);
+                note=UiLang::Tr("FIND: ")+(cheatQuery.empty() ? UiLang::Tr("ALL CODES") : cheatQuery);
                 hint="TYPE OR SELECT LETTERS TO ADD";
             }
             if(menuPage == PAGE_CDETAIL || menuPage == PAGE_CINFO)note.clear();
             if(menuPage == PAGE_BACKUPS)note="NEWEST FIRST. CHOOSE A BACKUP TO REVIEW BEFORE RESTORING.";
             if(menuPage == PAGE_RESTORE_CONFIRM && restoreChoice>=0 && restoreChoice<(int)saveBackups.size())
-                note=saveBackups[restoreChoice].label+". RESTORES THIS GAME'S SAVE AND RESTARTS IT. CURRENT SAVE KEPT AS BEFORE-RESTORE.SAV.";
+                note=saveBackups[restoreChoice].label+". "+UiLang::Tr("RESTORES THIS GAME'S SAVE AND RESTARTS IT. CURRENT SAVE KEPT AS BEFORE-RESTORE.SAV.");
             if(menuPage == PAGE_LOAD_CONFIRM)
                 note="YOUR CARTRIDGE SAVE IS KEPT. SAVING IN-GAME AFTER LOADING AN OLD STATE CAN STILL REPLACE NEWER PROGRESS.";
             const bool wideMenu=menuPage==PAGE_CHEATS || menuPage==PAGE_CDETAIL || menuPage==PAGE_CINFO || menuPage==PAGE_CSEARCH || menuPage==PAGE_BACKUPS || menuPage==PAGE_RESTORE_CONFIRM || menuPage==PAGE_LOAD_CONFIRM;
