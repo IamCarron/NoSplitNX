@@ -184,12 +184,12 @@ struct MusicAudioSession
             return;
         }
 
-        const int targetQueuedFrames = 3200; // ~66 ms buffer at 48 kHz
+        const int targetQueuedFrames = 14400; // ~300 ms headroom so launcher rendering frames never starve audio
         int queuedFrames = (int)(SDL_GetQueuedAudioSize(dev) / 4);
         int safety = 0;
-        while (queuedFrames < targetQueuedFrames && safety++ < 4)
+        while (queuedFrames < targetQueuedFrames && safety++ < 16)
         {
-            const int chunkFrames = 800; // ~16.7 ms
+            const int chunkFrames = 960; // 20 ms at 48 kHz
             if ((int)mixBuf.size() < chunkFrames * 2) mixBuf.resize((size_t)chunkFrames * 2);
             player.Mix(mixBuf.data(), chunkFrames);
             SDL_QueueAudio(dev, mixBuf.data(), (Uint32)(chunkFrames * 4));
@@ -1266,26 +1266,28 @@ bool Start(int& argc, char**& argv)
     {
         // (Noted as the game played last, so that the list starts on it after QUIT.)
         chosen = directGame;
-        if (FILE* f = fopen((dir + "/last-game.txt").c_str(), "w"))
-        {
-            fprintf(f, "%s\n", games[chosen].rom.c_str());
-            fclose(f);
-        }
+        Launcher::SetConfigValue(SettingsPath(dir), "last_game", games[chosen].rom);
+        remove((dir + "/last-game.txt").c_str());
         fprintf(stderr, "[switch] --game %s: %s\n", direct.c_str(), games[chosen].rom.c_str());
         g_canChange = true;
     }
     else if (!games.empty())
     {
-        // The list starts on the game played last.
-        const std::string lastPath = dir + "/last-game.txt";
-        std::string last;
-        if (FILE* f = fopen(lastPath.c_str(), "r"))
+        // The list starts on the game played last (stored in settings.cfg; migrates legacy last-game.txt).
+        const std::string legacyLast = dir + "/last-game.txt";
+        std::string last = Launcher::ConfigValue(SettingsPath(dir), "last_game");
+        if (last.empty())
         {
-            char line[768] = {};
-            if (fgets(line, sizeof(line), f)) last = line;
-            fclose(f);
-            while (!last.empty() && (last.back() == '\n' || last.back() == '\r')) last.pop_back();
+            if (FILE* f = fopen(legacyLast.c_str(), "r"))
+            {
+                char line[768] = {};
+                if (fgets(line, sizeof(line), f)) last = line;
+                fclose(f);
+                while (!last.empty() && (last.back() == '\n' || last.back() == '\r')) last.pop_back();
+                if (!last.empty()) Launcher::SetConfigValue(SettingsPath(dir), "last_game", last);
+            }
         }
+        remove(legacyLast.c_str());
         for (size_t i = 0; i < games.size(); i++)
             if (games[i].rom == last) chosen = (int)i;
         const auto showList = std::find(testArgs.begin(), testArgs.end(), "--show-list");
@@ -1343,11 +1345,8 @@ bool Start(int& argc, char**& argv)
                 if (chosen < 0 && Updater::RestartPending()) Updater::Restart();
 #endif
                 if (chosen < 0) return false;
-                if (FILE* f = fopen(lastPath.c_str(), "w"))
-                {
-                    fprintf(f, "%s\n", games[chosen].rom.c_str());
-                    fclose(f);
-                }
+                Launcher::SetConfigValue(SettingsPath(dir), "last_game", games[chosen].rom);
+                remove((dir + "/last-game.txt").c_str());
                 if (!g_self.empty() && envHasNextLoad())
                 {
                     if (FILE* f = fopen(chosenMarker.c_str(), "wb")) fclose(f);

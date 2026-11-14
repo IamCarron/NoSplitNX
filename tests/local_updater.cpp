@@ -162,6 +162,7 @@ int main()
         const fs::path prog = root / "install/pokemon-ds-wide";
         Write(prog / "pokemon-ds-wide", "version 1");
         Write(prog / "data/funcs/IREO.txt", "table 1");
+        Write(prog / "settings.cfg", "volume=5\n");
         Write(prog / "saves/white2.sav", "my save");
         Write(prog / "roms/white2.nds", "my rom");
         const fs::path pack = root / "pack/pokemon-ds-wide";
@@ -186,14 +187,17 @@ int main()
         s = After([] { assert(Updater::Choose().empty()); }); // (the second installs)
         assert(s.state == Updater::State::Installed && Updater::RestartPending());
         assert(Read(prog / "pokemon-ds-wide") == "version 2" && Read(prog / "data/funcs/IREO.txt") == "table 2");
-        assert(Read(prog / "update/previous/pokemon-ds-wide") == "version 1");
-        assert(Read(prog / "update/previous/data/funcs/IREO.txt") == "table 1");
         assert(Read(prog / "saves/white2.sav") == "my save" && Read(prog / "roms/white2.nds") == "my rom");
-        assert(Read(prog / "update/installed.txt").rfind(Updater::Sha256Hex(tar) + " ", 0) == 0);
-        assert(!fs::exists(prog / "update/new") && !fs::exists(prog / ("update/" + asset)));
+        assert(!fs::exists(prog / "update"));
+        const std::string cfg = Read(prog / "settings.cfg");
+        assert(cfg.find("volume=5\n") != std::string::npos);
+        assert(cfg.find("update_sha=" + Updater::Sha256Hex(tar) + "\n") != std::string::npos);
 
-        // The same release again: up to date.
+        // Stale update/previous and update/installed.txt from older versions are cleaned on Init.
+        Write(prog / "update/previous/pokemon-ds-wide", "old");
+        Write(prog / "update/installed.txt", Updater::Sha256Hex(tar) + " 123\n");
         Updater::Init(prog.u8string(), prog.u8string());
+        assert(!fs::exists(prog / "update"));
         s = After([] { Updater::Check(false); });
         assert(s.state == Updater::State::UpToDate);
 

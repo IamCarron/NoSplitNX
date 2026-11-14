@@ -391,23 +391,106 @@ bool WriteFile(const std::string& path, const std::string& data)
     return fclose(f) == 0 && ok;
 }
 
-// What was installed: "<sha256> <upload time>" in update/installed.txt.
+std::string SettingsPath() { return g_dataDir.empty() ? "" : (g_dataDir + "/settings.cfg"); }
+
+std::string ReadCfgValue(const std::string& body, const char* key)
+{
+    const size_t klen = strlen(key);
+    size_t pos = 0;
+    while (pos < body.size())
+    {
+        size_t end = body.find('\n', pos);
+        if (end == std::string::npos) end = body.size();
+        size_t len = end - pos;
+        if (len > 0 && body[pos + len - 1] == '\r') --len;
+        if (len > klen && body.compare(pos, klen, key) == 0 && body[pos + klen] == '=')
+            return body.substr(pos + klen + 1, len - klen - 1);
+        pos = end + 1;
+    }
+    return "";
+}
+
+void WriteCfgValues(const std::string& path, const std::vector<std::pair<std::string, std::string>>& kvs)
+{
+    if (path.empty()) return;
+    std::error_code ec;
+    fs::create_directories(fs::u8path(path).parent_path(), ec);
+    const std::string existing = ReadFile(path);
+    std::string out;
+    out.reserve(existing.size() + 128);
+    size_t pos = 0;
+    while (pos < existing.size())
+    {
+        size_t end = existing.find('\n', pos);
+        const bool hasNl = end != std::string::npos;
+        if (!hasNl) end = existing.size();
+        std::string line = existing.substr(pos, end - pos);
+        while (!line.empty() && line.back() == '\r') line.pop_back();
+        bool replaced = false;
+        for (const auto& kv : kvs)
+        {
+            if (line.size() > kv.first.size() && line.compare(0, kv.first.size(), kv.first) == 0 && line[kv.first.size()] == '=')
+            {
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced && !line.empty()) { out += line; out += '\n'; }
+        pos = end + (hasNl ? 1 : 0);
+    }
+    for (const auto& kv : kvs)
+    {
+        out += kv.first;
+        out += '=';
+        out += kv.second;
+        out += '\n';
+    }
+    WriteFile(path, out);
+}
+
+void CleanUpdateArtifacts()
+{
+    if (g_dataDir.empty()) return;
+    const std::string up = UpdateDir();
+    std::error_code ec;
+    fs::remove_all(fs::u8path(up + "/new"), ec);
+    fs::remove_all(fs::u8path(up + "/previous"), ec);
+    fs::remove(fs::u8path(up + "/installed.txt"), ec);
+    if (fs::is_directory(fs::u8path(up), ec) && fs::is_empty(fs::u8path(up), ec))
+        fs::remove(fs::u8path(up), ec);
+}
+
+// What was installed: `update_sha` and `update_time` stored inside `settings.cfg`
+// (migrating any legacy `update/installed.txt` cleanly without keeping extra files/folders).
 bool Installed(std::string& sha, long long& time)
 {
-    const std::string line = ReadFile(UpdateDir() + "/installed.txt");
+    const std::string cfg = ReadFile(SettingsPath());
+    const std::string cfgSha = ReadCfgValue(cfg, "update_sha");
+    if (cfgSha.size() == 64)
+    {
+        sha = cfgSha;
+        const std::string t = ReadCfgValue(cfg, "update_time");
+        time = t.empty() ? 0 : strtoll(t.c_str(), nullptr, 10);
+        return true;
+    }
+    const std::string legacyPath = UpdateDir() + "/installed.txt";
+    const std::string line = ReadFile(legacyPath);
     char hash[65] = {};
     long long t = 0;
     if (sscanf(line.c_str(), "%64s %lld", hash, &t) < 1 || strlen(hash) != 64) return false;
     sha = hash;
     time = t;
+    WriteCfgValues(SettingsPath(), { { "update_sha", sha }, { "update_time", std::to_string(time) } });
+    std::error_code ec;
+    fs::remove(fs::u8path(legacyPath), ec);
     return true;
 }
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__)) || defined(__SWITCH__)
 void SetInstalled(const std::string& sha, long long time)
 {
-    std::error_code ec;
-    fs::create_directories(fs::u8path(UpdateDir()), ec);
-    WriteFile(UpdateDir() + "/installed.txt", sha + " " + std::to_string(time) + "\n");
+    WriteCfgValues(SettingsPath(), { { "update_sha", sha }, { "update_time", std::to_string(time) } });
 }
+#endif
 
 // The state, shared with the threads. (Never freed: a check may still be running as the
 // program ends.)
@@ -529,7 +612,7 @@ void RunCheck(bool quiet)
     else Set(State::Available, canInstall ? "NEW VERSION: INSTALL" : "NEW VERSION: OPEN PAGE");
 }
 
-#if !defined(_WIN32) && !defined(__SWITCH__)
+#if defined(__linux__) && !defined(__ANDROID__)
 bool Run(const std::vector<std::string>& args)
 {
     const pid_t pid = fork();
@@ -695,7 +778,7 @@ void RunInstall()
             !UnzipFolder(data, "switch/pokemon-ds-wide/", nroName, unpacked, error))
         {
             fprintf(stderr, "[update] %s\n", error.c_str());
-            fs::remove_all(fs::u8path(unpacked), ec);
+            CleanUpdateArtifacts();
             romfsInit();
             Set(State::Failed, "CANNOT UNPACK: NOTHING CHANGED");
             return;
@@ -703,12 +786,12 @@ void RunInstall()
         if (!SwapIn(g_programDir, unpacked, up + "/previous", error))
         {
             fprintf(stderr, "[update] %s\n", error.c_str());
-            fs::remove_all(fs::u8path(unpacked), ec);
+            CleanUpdateArtifacts();
             romfsInit();
             Set(State::Failed, "CANNOT REPLACE: NOTHING CHANGED");
             return;
         }
-        fs::remove_all(fs::u8path(unpacked), ec);
+        CleanUpdateArtifacts();
         restart = g_program;
     }
 #else
@@ -749,7 +832,7 @@ void RunInstall()
         if (!WriteFile(archive, data) || !Unpack(archive, unpacked))
         {
             remove(archive.c_str());
-            fs::remove_all(fs::u8path(unpacked), ec);
+            CleanUpdateArtifacts();
             Set(State::Failed, "CANNOT UNPACK: NOTHING CHANGED");
             return;
         }
@@ -757,22 +840,23 @@ void RunInstall()
         const std::string top = unpacked + "/pokemon-ds-wide";
         if (!fs::exists(fs::u8path(top + "/" + ProgramFile()), ec))
         {
-            fs::remove_all(fs::u8path(unpacked), ec);
+            CleanUpdateArtifacts();
             Set(State::Failed, "NOT THE PROGRAM: NOTHING CHANGED");
             return;
         }
         if (!SwapIn(g_programDir, top, up + "/previous", error))
         {
             fprintf(stderr, "[update] %s\n", error.c_str());
-            fs::remove_all(fs::u8path(unpacked), ec);
+            CleanUpdateArtifacts();
             Set(State::Failed, "CANNOT REPLACE: NOTHING CHANGED");
             return;
         }
-        fs::remove_all(fs::u8path(unpacked), ec);
+        CleanUpdateArtifacts();
         restart = g_programDir + "/" + ProgramFile();
     }
 #endif
     SetInstalled(digest, r.updated);
+    CleanUpdateArtifacts();
     {
         std::lock_guard<std::mutex> l(S().lock);
         S().restart = restart;
@@ -963,6 +1047,10 @@ void Init(const std::string& programDir, const std::string& dataDir, const std::
     g_programDir = programDir;
     g_dataDir = dataDir;
     g_program = program;
+    std::string sha;
+    long long time = 0;
+    Installed(sha, time);
+    CleanUpdateArtifacts();
     std::lock_guard<std::mutex> l(S().lock);
     S().status.text = "CHECK";
 }

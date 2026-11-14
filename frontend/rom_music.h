@@ -10,6 +10,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -98,6 +99,7 @@ enum class WaveKind
 struct Instrument
 {
     WaveKind kind = WaveKind::None;
+    bool fixedFreq = false;
     int sampleIndex = -1; // index into shared Sample pool
     uint8_t duty = 3; // 0..7 for NDS PSG, scaled for CGB
     uint8_t baseNote = 60;
@@ -371,6 +373,7 @@ inline bool ValidateSongHeader(const uint8_t* rom, size_t romSize, uint32_t hdrO
             {
                 if (runCmd == 0) break;
                 if (pc < limit && rom[pc] < 0x80) pc++;
+                if (runCmd >= 0xD0 && pc < limit && rom[pc] < 0x80) pc++; // MP2K gate-time offset
                 if (runCmd >= 0xCF) outNoteScore++;
                 continue;
             }
@@ -393,13 +396,20 @@ inline bool ValidateSongHeader(const uint8_t* rom, size_t romSize, uint32_t hdrO
             }
             if (op == 0xB4) continue;
             if (op == 0xB5) { pc += 5; continue; }
-            if (op == 0xB9 || op == 0xCD) { pc += 2; continue; }
+            if (op == 0xB9)
+            {
+                const uint8_t sub = (pc < limit) ? rom[pc] : 0;
+                pc += (sub >= 6 && sub <= 17) ? 7 : 3;
+                continue;
+            }
+            if (op == 0xCD) { pc += 2; continue; }
             if (op >= 0xBA && op <= 0xCC) { pc += 1; continue; }
             if (op >= 0xCE)
             {
                 runCmd = op;
                 if (pc < limit && rom[pc] < 0x80) pc++;
                 if (pc < limit && rom[pc] < 0x80) pc++;
+                if (op >= 0xD0 && pc < limit && rom[pc] < 0x80) pc++; // MP2K gate-time offset (gtp)
                 if (op >= 0xCF) outNoteScore++;
                 continue;
             }
@@ -441,6 +451,10 @@ public:
         seqBaseRomOff_ = 0;
         gbaRomLimit_ = 0;
         tracks_.clear();
+        dcPrevInL_ = 0.0;
+        dcPrevOutL_ = 0.0;
+        dcPrevInR_ = 0.0;
+        dcPrevOutR_ = 0.0;
         for (Voice& v : voices_) v.active = false;
         bands_.fill(0.0f);
     }
@@ -503,7 +517,7 @@ public:
             coeff[b] = 2.0f * cosf(w);
         }
 
-        const double volScale = (volumePct_ / 100.0) * (masterVol_ / 127.0) * 0.34;
+        const double volScale = (volumePct_ / 100.0) * (masterVol_ / 127.0) * 0.42;
         const int gFrames = std::min(frames, 512);
 
         for (int i = 0; i < frames; i++)
@@ -522,8 +536,16 @@ public:
                 mixR += samp * v.panR;
             }
 
-            double outL = std::tanh(mixL * volScale) * 28000.0;
-            double outR = std::tanh(mixR * volScale) * 28000.0;
+            // First-order DC blocker to keep PSG/ADPCM bias clean at low volume
+            const double hpL = mixL - dcPrevInL_ + 0.996 * dcPrevOutL_;
+            dcPrevInL_ = mixL;
+            dcPrevOutL_ = hpL;
+            const double hpR = mixR - dcPrevInR_ + 0.996 * dcPrevOutR_;
+            dcPrevInR_ = mixR;
+            dcPrevOutR_ = hpR;
+
+            double outL = std::tanh(hpL * volScale) * 28000.0;
+            double outR = std::tanh(hpR * volScale) * 28000.0;
             const int32_t iL = std::clamp((int32_t)outL, -32767, 32767);
             const int32_t iR = std::clamp((int32_t)outR, -32767, 32767);
             stereoOut[i * 2 + 0] = (int16_t)iL;
@@ -612,6 +634,7 @@ private:
         double decMul = 0.999;
         double susLevel = 0.8;
         double relMul = 0.999;
+        double velGain = 1.0;
         double gain = 0.0;
         double panL = 0.707;
         double panR = 0.707;
@@ -637,6 +660,10 @@ private:
     double tempoBpm_ = 120.0;
     uint8_t masterVol_ = 127;
     uint64_t rng_ = 0x9E3779B97F4A7C15ULL;
+    double dcPrevInL_ = 0.0;
+    double dcPrevOutL_ = 0.0;
+    double dcPrevInR_ = 0.0;
+    double dcPrevOutR_ = 0.0;
 
     std::vector<Sample> samples_;
     std::vector<Instrument> insts_;
@@ -696,15 +723,15 @@ private:
 
     static double EnvParamToDecayMul(uint8_t d)
     {
-        if (d >= 127) return 0.99998;
-        const double ms = 8.0 + (double)(127 - d) * (127 - d) * 0.35;
+        // Nitro SSEQ/SBNK decay: 127 = steepest (fast decay to sustain), 0 = longest slow fade.
+        const double ms = 2.5 + (double)(127 - std::min<uint8_t>(127, d)) * (127 - std::min<uint8_t>(127, d)) * 0.35;
         return std::exp(-6.9 / std::max(1.0, ms * (kSampleRate / 1000.0)));
     }
 
     static double EnvParamToRelMul(uint8_t r)
     {
-        if (r >= 127) return 0.99995;
-        const double ms = 12.0 + (double)(127 - r) * (127 - r) * 0.25;
+        // Nitro SSEQ/SBNK release: 127 = fast crisp cutoff (~3 ms), 0 = long slow tail.
+        const double ms = 3.0 + (double)(127 - std::min<uint8_t>(127, r)) * (127 - std::min<uint8_t>(127, r)) * 0.25;
         return std::exp(-6.9 / std::max(1.0, ms * (kSampleRate / 1000.0)));
     }
 
@@ -738,7 +765,10 @@ private:
 
         const double ppqn = (mode_ == SeqMode::NitroSseq) ? 48.0 : 24.0;
         const double secPerTick = 60.0 / (std::max(30.0, tempoBpm_) * ppqn);
-        v.holdSamples = durationTicks > 0 ? (uint32_t)std::max(1.0, durationTicks * secPerTick * kSampleRate) : 0x7FFFFFFFu;
+        if (durationTicks > 0)
+            v.holdSamples = (uint32_t)std::max(1.0, durationTicks * secPerTick * kSampleRate);
+        else
+            v.holdSamples = tr.tie ? 0x7FFFFFFFu : 1u;
 
         const uint8_t att = (tr.att <= 127) ? tr.att : inst->attack;
         const uint8_t dec = (tr.dec <= 127) ? tr.dec : inst->decay;
@@ -749,15 +779,15 @@ private:
         {
             v.attRate = EnvParamToAttackInc(att);
             v.decMul = EnvParamToDecayMul(dec);
-            v.susLevel = (double)sus / 127.0;
+            v.susLevel = (double)std::min<uint8_t>(127, sus) / 127.0;
             v.relMul = EnvParamToRelMul(rel);
         }
-        else // MP2K: att=0..255 (255 instant), dec=0..255 (smaller=longer), sus=0..255, rel=0..255
+        else // MP2K frame-rate (~59.7 Hz = ~800 samples/tick): env *= p / 256 per frame
         {
-            v.attRate = att >= 250 ? 1.0 : std::clamp(att / 4096.0, 0.0005, 1.0);
-            v.decMul = dec >= 254 ? 0.99995 : (1.0 - std::clamp(dec / 65536.0, 0.00001, 0.01));
-            v.susLevel = std::clamp(sus / 255.0, 0.0, 1.0);
-            v.relMul = rel == 0 ? 0.9999 : (1.0 - std::clamp(rel / 32768.0, 0.0001, 0.05));
+            v.attRate = att >= 254 ? 1.0 : std::clamp((double)att / (255.0 * 800.0), 0.00001, 1.0);
+            v.decMul = dec == 0 ? 0.93 : (dec >= 255 ? 0.99996 : std::pow((double)dec / 256.0, 1.0 / 800.0));
+            v.susLevel = std::clamp((double)sus / 255.0, 0.0, 1.0);
+            v.relMul = rel == 0 ? 0.95 : (rel >= 255 ? 0.99996 : std::pow((double)rel / 256.0, 1.0 / 800.0));
         }
 
         v.stage = (v.attRate >= 0.99) ? EnvStage::Decay : EnvStage::Attack;
@@ -766,14 +796,19 @@ private:
         const int semiOffset = ((int)rawNote - (int)inst->baseNote) + tr.transpose;
         const double bendSemis = ((double)tr.bend / 64.0) * (double)tr.bendRange;
         if (v.kind == WaveKind::Pcm && v.sampleIndex >= 0 && v.sampleIndex < (int)samples_.size())
-            v.inc = (samples_[v.sampleIndex].baseRate * std::pow(2.0, (semiOffset + bendSemis) / 12.0)) / (double)kSampleRate;
+        {
+            const double ratio = inst->fixedFreq ? 1.0 : std::pow(2.0, (semiOffset + bendSemis) / 12.0);
+            v.inc = (samples_[v.sampleIndex].baseRate * ratio) / (double)kSampleRate;
+        }
         else
             v.inc = (440.0 * std::pow(2.0, (rawNote + tr.transpose - 69 + bendSemis) / 12.0) * 8.0) / (double)kSampleRate;
 
         // Combine channel/track/instrument volume with quadratic perceptual curve
-        const double vg = (vel / 127.0) * (tr.vol / 127.0) * (tr.expr / 127.0);
+        v.velGain = std::clamp((double)vel / 127.0, 0.0, 1.0);
+        const double vg = v.velGain * (tr.vol / 127.0) * (tr.expr / 127.0);
         v.gain = vg * vg;
-        const int panVal = std::clamp((int)tr.pan + ((int)inst->pan - 64), 0, 127);
+        const int instPan = (inst->pan <= 127) ? (int)inst->pan : 64;
+        const int panVal = std::clamp((int)tr.pan + (instPan - 64), 0, 127);
         const double p = panVal / 127.0;
         v.panL = std::cos(p * 1.5707963);
         v.panR = std::sin(p * 1.5707963);
@@ -790,6 +825,7 @@ private:
 
     void UpdateTrackVoicePitchAndVol(int trackIdx)
     {
+        if (trackIdx < 0 || trackIdx >= (int)tracks_.size()) return;
         const Track& tr = tracks_[trackIdx];
         for (Voice& v : voices_)
         {
@@ -799,9 +835,20 @@ private:
             const int semiOffset = (v.note - base) + tr.transpose;
             const double bendSemis = ((double)tr.bend / 64.0) * (double)tr.bendRange;
             if (v.kind == WaveKind::Pcm && v.sampleIndex >= 0 && v.sampleIndex < (int)samples_.size())
-                v.inc = (samples_[v.sampleIndex].baseRate * std::pow(2.0, (semiOffset + bendSemis) / 12.0)) / (double)kSampleRate;
+            {
+                const double ratio = (inst && inst->fixedFreq) ? 1.0 : std::pow(2.0, (semiOffset + bendSemis) / 12.0);
+                v.inc = (samples_[v.sampleIndex].baseRate * ratio) / (double)kSampleRate;
+            }
             else if (v.kind == WaveKind::Pulse || v.kind == WaveKind::Noise)
                 v.inc = (440.0 * std::pow(2.0, (v.note + tr.transpose - 69 + bendSemis) / 12.0) * 8.0) / (double)kSampleRate;
+
+            const double vg = v.velGain * (tr.vol / 127.0) * (tr.expr / 127.0);
+            v.gain = vg * vg;
+            const int instPan = (inst && inst->pan <= 127) ? (int)inst->pan : 64;
+            const int panVal = std::clamp((int)tr.pan + (instPan - 64), 0, 127);
+            const double p = panVal / 127.0;
+            v.panL = std::cos(p * 1.5707963);
+            v.panR = std::sin(p * 1.5707963);
         }
     }
 
@@ -841,11 +888,11 @@ private:
             const int step = (int)v.pos & 7;
             // NDS PSG duty threshold: duty 0=1/8 .. duty 6=7/8
             const int hi = std::clamp((int)v.duty + 1, 1, 7);
-            return (step < hi) ? -0.35 : 0.35;
+            return (step < hi) ? -0.30 : 0.30;
         }
         if (v.kind == WaveKind::Noise)
         {
-            v.pos += v.inc * 0.5;
+            v.pos += v.inc * 2.5;
             while (v.pos >= 1.0)
             {
                 v.pos -= 1.0;
@@ -979,9 +1026,10 @@ private:
                 if (tr.pc + 4 > n) { tr.active = false; break; }
                 const uint8_t newIdx = d[tr.pc++];
                 const uint32_t off = RdU24(d, n, tr.pc); tr.pc += 3;
-                if (exec && newIdx < kMaxTracks && off < n)
+                if (exec && newIdx < kMaxTracks && (int)newIdx != ti && off < n)
                 {
-                    if ((int)newIdx >= (int)tracks_.size()) tracks_.resize(newIdx + 1);
+                    if ((int)newIdx >= (int)tracks_.size()) continue;
+                    tracks_[newIdx] = Track{};
                     tracks_[newIdx].active = true;
                     tracks_[newIdx].pc = off;
                     tracks_[newIdx].loopStartPc = off;
@@ -996,7 +1044,7 @@ private:
                 {
                     const bool backward = (off < tr.pc);
                     tr.pc = off;
-                    if (backward && ++loopJumps >= 4) { tr.waitTicks = 1; break; }
+                    if (backward && ++loopJumps >= 8) { tr.waitTicks = 1; break; }
                 }
                 continue;
             }
@@ -1047,12 +1095,12 @@ private:
                 {
                     switch (cmd)
                     {
-                    case 0xC0: tr.pan = (uint8_t)std::clamp(arg, 0, 127); break;
-                    case 0xC1: tr.vol = (uint8_t)std::clamp(arg, 0, 127); break;
+                    case 0xC0: tr.pan = (uint8_t)std::clamp(arg, 0, 127); UpdateTrackVoicePitchAndVol(ti); break;
+                    case 0xC1: tr.vol = (uint8_t)std::clamp(arg, 0, 127); UpdateTrackVoicePitchAndVol(ti); break;
                     case 0xC2: masterVol_ = (uint8_t)std::clamp(arg, 0, 127); break;
-                    case 0xC3: tr.transpose = (int8_t)arg; break;
+                    case 0xC3: tr.transpose = (int8_t)arg; UpdateTrackVoicePitchAndVol(ti); break;
                     case 0xC4: tr.bend = (int8_t)arg; UpdateTrackVoicePitchAndVol(ti); break;
-                    case 0xC5: tr.bendRange = (uint8_t)std::max(0, arg); break;
+                    case 0xC5: tr.bendRange = (uint8_t)std::max(0, arg); UpdateTrackVoicePitchAndVol(ti); break;
                     case 0xC7: tr.noteWait = (arg != 0); break;
                     case 0xC8: tr.tie = (arg != 0); if (!tr.tie) ReleaseTrackVoices(ti); break;
                     case 0xD0: tr.att = (uint8_t)std::clamp(arg, 0, 127); break;
@@ -1060,7 +1108,7 @@ private:
                     case 0xD2: tr.sus = (uint8_t)std::clamp(arg, 0, 127); break;
                     case 0xD3: tr.rel = (uint8_t)std::clamp(arg, 0, 127); break;
                     case 0xD4: tr.loopRemain = (uint8_t)std::max(0, arg); tr.loopStartPc = tr.pc; tr.inLoop = true; break;
-                    case 0xD5: tr.expr = (uint8_t)std::clamp(arg, 0, 127); break;
+                    case 0xD5: tr.expr = (uint8_t)std::clamp(arg, 0, 127); UpdateTrackVoicePitchAndVol(ti); break;
                     default: break;
                     }
                 }
@@ -1076,8 +1124,16 @@ private:
             {
                 if (exec && tr.inLoop)
                 {
-                    if (tr.loopRemain == 0) { tr.pc = tr.loopStartPc; tr.waitTicks = 1; break; }
-                    if (--tr.loopRemain > 0) { tr.pc = tr.loopStartPc; }
+                    if (tr.loopRemain == 0)
+                    {
+                        tr.pc = tr.loopStartPc;
+                        if (++loopJumps >= 8) { tr.waitTicks = 1; break; }
+                    }
+                    else if (--tr.loopRemain > 0)
+                    {
+                        tr.pc = tr.loopStartPc;
+                        if (++loopJumps >= 8) { tr.waitTicks = 1; break; }
+                    }
                     else tr.inLoop = false;
                 }
                 continue;
@@ -1128,7 +1184,7 @@ private:
                     if (op == 0xB3 && tr.callSp < 4) tr.callStack[tr.callSp++] = tr.pc;
                     const bool backward = (off < tr.pc);
                     tr.pc = off;
-                    if (op == 0xB2 && backward && ++loopJumps >= 4) { tr.waitTicks = 1; break; }
+                    if (op == 0xB2 && backward && ++loopJumps >= 8) { tr.waitTicks = 1; break; }
                 }
                 else tr.active = false;
                 continue;
@@ -1149,25 +1205,31 @@ private:
                     if (resolveSeqPtr(rawPtr, off))
                     {
                         tr.pc = off;
-                        if (++loopJumps >= 4) { tr.waitTicks = 1; break; }
+                        if (++loopJumps >= 8) { tr.waitTicks = 1; break; }
                     }
                 }
                 else tr.inLoop = false;
                 continue;
             }
-            if (op == 0xB9 || op == 0xCD) { tr.pc += 2; continue; }
+            if (op == 0xB9)
+            {
+                const uint8_t sub = (tr.pc < n) ? d[tr.pc] : 0;
+                tr.pc += (sub >= 6 && sub <= 17) ? 7u : 3u;
+                continue;
+            }
+            if (op == 0xCD) { tr.pc += 2; continue; }
             if (op >= 0xBA && op <= 0xCC)
             {
                 const uint8_t arg = (tr.pc < n) ? d[tr.pc++] : 0;
                 switch (op)
                 {
                 case 0xBB: tempoBpm_ = std::clamp((int)arg * 2, 40, 300); break;
-                case 0xBC: tr.transpose = (int8_t)arg; break;
+                case 0xBC: tr.transpose = (int8_t)arg; UpdateTrackVoicePitchAndVol(ti); break;
                 case 0xBD: tr.prog = arg; break;
-                case 0xBE: tr.vol = std::min<uint8_t>(127, arg); break;
-                case 0xBF: tr.pan = (uint8_t)std::clamp((int)arg, 0, 127); break;
+                case 0xBE: tr.vol = std::min<uint8_t>(127, arg); UpdateTrackVoicePitchAndVol(ti); break;
+                case 0xBF: tr.pan = (uint8_t)std::clamp((int)arg, 0, 127); UpdateTrackVoicePitchAndVol(ti); break;
                 case 0xC0: tr.bend = (int8_t)std::clamp((int)arg - 64, -64, 63); UpdateTrackVoicePitchAndVol(ti); break;
-                case 0xC1: tr.bendRange = std::max<uint8_t>(1, arg); break;
+                case 0xC1: tr.bendRange = std::max<uint8_t>(1, arg); UpdateTrackVoicePitchAndVol(ti); break;
                 default: break;
                 }
                 continue;
@@ -1176,6 +1238,7 @@ private:
             uint8_t cmd = op;
             uint8_t note = tr.lastNote;
             uint8_t vel = tr.lastVel;
+            uint32_t gateExtra = 0;
             bool hasNoteArg = false;
             if (op < 0x80)
             {
@@ -1203,6 +1266,8 @@ private:
             {
                 vel = d[tr.pc++];
                 tr.lastVel = vel;
+                if (cmd >= 0xD0 && tr.pc < n && d[tr.pc] < 0x80)
+                    gateExtra = d[tr.pc++]; // MP2K gtp fine duration offset (0..3 ticks)
             }
 
             if (cmd == 0xCE) // EOT
@@ -1217,7 +1282,7 @@ private:
             }
             else if (cmd >= 0xD0)
             {
-                const uint32_t dur = Mp2k::kWaitTable[cmd - 0xCF];
+                const uint32_t dur = (uint32_t)Mp2k::kWaitTable[cmd - 0xCF] + gateExtra;
                 StartNote(ti, note, vel, dur);
             }
         }
@@ -1293,7 +1358,7 @@ private:
                 {
                     const char* cs = (const char*)&symb[strOff];
                     const size_t maxn = std::min<size_t>(96, symb.size() - strOff);
-                    std::string sname = UpperAscii(cs, strnlen(cs, maxn));
+                    std::string sname = UpperAscii(cs, maxn);
                     sc += Nitro::ScoreSeqName(sname);
                 }
             }
@@ -1309,7 +1374,7 @@ private:
             const uint32_t bankEntOff = RdU32(info.data(), info.size(), bankRecOff + 4 + c.bankId * 4);
             if (bankEntOff == 0 || bankEntOff + 12 > info.size()) continue;
             const uint16_t sbnkFid = RdU16(info.data(), info.size(), bankEntOff);
-            uint16_t swarIds[4];
+            uint16_t swarIds[4] = {};
             for (int w = 0; w < 4; w++) swarIds[w] = RdU16(info.data(), info.size(), bankEntOff + 4 + w * 2);
 
             uint32_t sseqOff = 0, sseqLen = 0, sbnkOff = 0, sbnkLen = 0;
@@ -1436,7 +1501,9 @@ private:
                     for (int r = 0; r < 8; r++)
                     {
                         ps.splitUpper[r] = sbnkBuf[off + r];
-                        if (ps.splitUpper[r] != 0) cnt++;
+                        if (r > 0 && ps.splitUpper[r] == 0) break;
+                        cnt++;
+                        if (ps.splitUpper[r] >= 0x7F) break;
                     }
                     ps.subCount = cnt;
                     for (int r = 0; r < cnt; r++)
@@ -1455,11 +1522,13 @@ private:
             }
 
             if (insts_.empty()) continue;
-            seqData_.assign(sseqBuf.begin() + dataStart, sseqBuf.end());
-            if (seqData_.empty()) continue;
+            const size_t seqLen = sseqBuf.size() - (size_t)dataStart;
+            if (seqLen == 0) continue;
+            seqData_.resize(seqLen);
+            std::memcpy(seqData_.data(), sseqBuf.data() + dataStart, seqLen);
 
             mode_ = SeqMode::NitroSseq;
-            tracks_.assign(1, Track{});
+            tracks_.assign(kMaxTracks, Track{});
             tracks_[0].active = true;
             tracks_[0].pc = 0;
             tempoBpm_ = 120.0;
@@ -1567,7 +1636,7 @@ private:
                 outInst.pan = (pan & 0x80) ? (uint8_t)(pan & 0x7F) : 64;
 
                 const uint8_t kind = vtype & 0xC7;
-                if (kind == 0) // DirectSound PCM8 signed
+                if (kind == 0) // DirectSound PCM8 signed (bit 3 = 0x08 fixed frequency)
                 {
                     uint32_t woff = 0;
                     if (!Mp2k::IsRomPtr(argPtr, rsz, woff) || woff + 16 > rsz) return false;
@@ -1587,19 +1656,63 @@ private:
                     for (uint32_t k = 0; k < len; k++)
                         smp.pcm[k] = (int16_t)((int8_t)rom[woff + 16 + k]) * 256;
                     outInst.kind = WaveKind::Pcm;
+                    outInst.fixedFreq = (vtype & 0x08) != 0;
                     outInst.sampleIndex = (int)samples_.size();
                     samples_.push_back(std::move(smp));
                     return true;
                 }
-                if (kind == 1 || kind == 2 || kind == 3)
+                auto scaleCgbEnv = [&]() {
+                    // CGB hardware envelopes use 0..7 steps (sus 0..15); convert when in native range.
+                    if (outInst.attack <= 7 && outInst.decay <= 7 && outInst.sustain <= 15 && outInst.release <= 7)
+                    {
+                        outInst.attack = outInst.attack == 0 ? 255 : (uint8_t)std::max(8, 255 - outInst.attack * 34);
+                        outInst.decay = outInst.decay == 0 ? 255 : (uint8_t)(255 - outInst.decay * 10);
+                        outInst.sustain = (uint8_t)(outInst.sustain * 17);
+                        outInst.release = outInst.release == 0 ? 40 : (uint8_t)(250 - outInst.release * 16);
+                    }
+                };
+                if (kind == 3) // CGB Channel 3 programmable 4-bit Wave RAM (32 samples in 16 bytes)
                 {
+                    scaleCgbEnv();
+                    uint32_t woff = 0;
+                    if (Mp2k::IsRomPtr(argPtr, rsz, woff) && woff + 16 <= rsz)
+                    {
+                        Sample smp;
+                        smp.loop = true;
+                        smp.loopStart = 0;
+                        // Middle C (note 60 = 261.6256 Hz) * 32 samples/cycle
+                        smp.baseRate = 261.625565 * 32.0;
+                        smp.pcm.resize(32);
+                        for (int k = 0; k < 16; k++)
+                        {
+                            const uint8_t b = rom[woff + k];
+                            smp.pcm[k * 2 + 0] = (int16_t)(((int)(b >> 4) - 8) * 3200);
+                            smp.pcm[k * 2 + 1] = (int16_t)(((int)(b & 0x0F) - 8) * 3200);
+                        }
+                        outInst.kind = WaveKind::Pcm;
+                        outInst.baseNote = 60;
+                        outInst.sampleIndex = (int)samples_.size();
+                        samples_.push_back(std::move(smp));
+                        return true;
+                    }
                     outInst.kind = WaveKind::Pulse;
-                    outInst.duty = (uint8_t)(argPtr & 3u) * 2u;
+                    outInst.duty = 3;
+                    outInst.baseNote = 60;
+                    return true;
+                }
+                if (kind == 1 || kind == 2)
+                {
+                    scaleCgbEnv();
+                    // GBA duty 0..3 (12.5%, 25%, 50%, 75%) -> 1/8ths threshold (0, 1, 3, 5)
+                    static constexpr uint8_t kCgbDuty[4] = { 0, 1, 3, 5 };
+                    outInst.kind = WaveKind::Pulse;
+                    outInst.duty = kCgbDuty[argPtr & 3u];
                     outInst.baseNote = 60;
                     return true;
                 }
                 if (kind == 4)
                 {
+                    scaleCgbEnv();
                     outInst.kind = WaveKind::Noise;
                     outInst.baseNote = 60;
                     return true;
@@ -1688,15 +1801,16 @@ private:
             const size_t spanEnd = std::min(rsz, std::max<size_t>(maxOff + 65536u, spanStart + 256u * 1024u));
             const size_t spanSize = std::min<size_t>(512u * 1024u, spanEnd - spanStart);
             if (minOff < spanStart || maxOff >= spanStart + spanSize) continue;
-            seqData_.assign(rom.begin() + (ptrdiff_t)spanStart, rom.begin() + (ptrdiff_t)(spanStart + spanSize));
+            seqData_.resize(spanSize);
+            std::memcpy(seqData_.data(), rom.data() + spanStart, spanSize);
             seqBaseRomOff_ = (uint32_t)spanStart;
             gbaRomLimit_ = (uint32_t)rsz;
 
             mode_ = SeqMode::GbaMp2k;
             tempoBpm_ = 120.0;
             masterVol_ = 127;
-            tracks_.resize(pick.tracks);
-            for (uint8_t t = 0; t < pick.tracks; t++)
+            tracks_.assign(kMaxTracks, Track{});
+            for (uint8_t t = 0; t < pick.tracks && t < kMaxTracks; t++)
             {
                 tracks_[t].active = true;
                 tracks_[t].pc = trkRomOffs[t] - spanStart;

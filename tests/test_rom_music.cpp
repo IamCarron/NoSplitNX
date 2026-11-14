@@ -37,7 +37,13 @@ void PutU32(std::vector<uint8_t>& b, size_t off, uint32_t v)
 
 void AppendU16(std::vector<uint8_t>& b, uint16_t v) { const size_t p = b.size(); PutU16(b, p, v); }
 void AppendU32(std::vector<uint8_t>& b, uint32_t v) { const size_t p = b.size(); PutU32(b, p, v); }
-void AppendTag(std::vector<uint8_t>& b, const char t[4]) { b.insert(b.end(), t, t + 4); }
+void AppendTag(std::vector<uint8_t>& b, const char (&t)[5]) { for (int i = 0; i < 4; i++) b.push_back((uint8_t)t[i]); }
+void AppendBytes(std::vector<uint8_t>& b, const void* src, size_t len)
+{
+    const auto* p = static_cast<const uint8_t*>(src);
+    b.reserve(b.size() + len);
+    for (size_t i = 0; i < len; i++) b.push_back(p[i]);
+}
 void Pad4(std::vector<uint8_t>& b) { while (b.size() & 3) b.push_back(0); }
 
 std::vector<uint8_t> BuildSseq(const std::vector<uint8_t>& code)
@@ -195,8 +201,8 @@ std::vector<uint8_t> BuildSyntheticNds()
     AppendU32(symb, str1Off);
     const char n0[] = "SE_CURSOR";
     const char n1[] = "SEQ_BGM_TITLE";
-    symb.insert(symb.end(), n0, n0 + sizeof(n0));
-    symb.insert(symb.end(), n1, n1 + sizeof(n1));
+    AppendBytes(symb, n0, sizeof(n0));
+    AppendBytes(symb, n1, sizeof(n1));
     Pad4(symb);
     PutU32(symb, 4, (uint32_t)symb.size());
 
@@ -278,7 +284,7 @@ std::vector<uint8_t> BuildSyntheticNds()
     PutU16(fnt, 4, 0);
     PutU16(fnt, 6, 1);
     fnt.push_back((uint8_t)strlen(sdatName));
-    fnt.insert(fnt.end(), sdatName, sdatName + strlen(sdatName));
+    AppendBytes(fnt, sdatName, strlen(sdatName));
     fnt.push_back(0);
     Pad4(fnt);
 
@@ -303,7 +309,7 @@ std::vector<uint8_t> BuildSyntheticGba()
     std::vector<uint8_t> rom(64 * 1024, 0);
     const uint32_t base = 0x08000000u;
 
-    // 1. Place WaveData at 0x1000 (DirectSound PCM8 sine wave, 256 samples @ 16384 Hz)
+    // 1. Place DirectSound WaveData at 0x1000 (PCM8 sine wave) + CGB 4-bit Wave RAM at 0x1200
     const uint32_t waveOff = 0x1000;
     PutU16(rom, waveOff + 0, 0);
     PutU16(rom, waveOff + 2, 0x4000); // looped
@@ -312,6 +318,14 @@ std::vector<uint8_t> BuildSyntheticGba()
     PutU32(rom, waveOff + 12, 256);
     for (int i = 0; i < 256; i++)
         rom[waveOff + 16 + i] = (uint8_t)(int8_t)(std::sin(2.0 * 3.14159265 * i / 32.0) * 100.0);
+
+    const uint32_t cgbWaveOff = 0x1200;
+    for (int i = 0; i < 16; i++)
+    {
+        const uint8_t s0 = (uint8_t)(8 + 6.0 * std::sin(2.0 * 3.14159265 * (i * 2) / 32.0));
+        const uint8_t s1 = (uint8_t)(8 + 6.0 * std::sin(2.0 * 3.14159265 * (i * 2 + 1) / 32.0));
+        rom[cgbWaveOff + i] = (uint8_t)((s0 << 4) | (s1 & 0x0F));
+    }
 
     // 2. VoiceGroup at 0x1400 (128 * 12 bytes)
     const uint32_t vgOff = 0x1400;
@@ -327,11 +341,13 @@ std::vector<uint8_t> BuildSyntheticGba()
         rom[off + 10] = 220; // sus
         rom[off + 11] = 180; // rel
     };
-    writeVoice(0, 0x00, base + waveOff); // DirectSound PCM8
-    writeVoice(1, 0x01, 2);              // CGB Square
-    writeVoice(2, 0x04, 0);              // CGB Noise
+    writeVoice(0, 0x00, base + waveOff);    // DirectSound PCM8
+    writeVoice(1, 0x01, 2);                 // CGB Square (50% duty)
+    writeVoice(2, 0x04, 0);                 // CGB Noise
+    writeVoice(3, 0x08, base + waveOff);    // DirectSound Fixed-Frequency PCM8
+    writeVoice(4, 0x03, base + cgbWaveOff); // CGB Ch3 4-bit Wave RAM
 
-    // 3. Track bytecode at 0x2000 .. 0x2300 (6 tracks for rich BGM + 1 SFX track)
+    // 3. Track bytecode at 0x2000 .. 0x2300 (6 tracks: includes 0xB9 MEMACC, 0x08 fixed PCM, 0x03 Wave RAM, and gtp 3rd arg)
     const uint32_t sfxTrkOff = 0x1F00;
     rom[sfxTrkOff + 0] = 0xBD; rom[sfxTrkOff + 1] = 0;
     rom[sfxTrkOff + 2] = 0xD4; rom[sfxTrkOff + 3] = 60; rom[sfxTrkOff + 4] = 100;
@@ -354,10 +370,11 @@ std::vector<uint8_t> BuildSyntheticGba()
         PutU32(rom, bgmHdrOff + 8 + t * 4, base + toff);
         size_t p = toff;
         rom[p++] = 0xBB; rom[p++] = 65;          // tempo 130
-        rom[p++] = 0xBD; rom[p++] = (uint8_t)(t % 3); // voice
+        rom[p++] = 0xB9; rom[p++] = 0; rom[p++] = 1; rom[p++] = 7; // 3-byte MEMACC
+        rom[p++] = 0xBD; rom[p++] = (uint8_t)(t % 5); // voice (covers 0x00, 0x01, 0x04, 0x08, 0x03)
         rom[p++] = 0xBE; rom[p++] = 110;         // vol
         const uint32_t loopOff = (uint32_t)p;
-        rom[p++] = 0xE8; rom[p++] = (uint8_t)(52 + t * 3); rom[p++] = 105; // N24
+        rom[p++] = 0xE8; rom[p++] = (uint8_t)(52 + t * 3); rom[p++] = 105; rom[p++] = 2; // N24 + vel + gtp
         rom[p++] = 0x98;                         // W24
         rom[p++] = (uint8_t)(56 + t * 3);        // running status note + default vel
         rom[p++] = 0x98;                         // W24
@@ -390,7 +407,12 @@ void WriteBytes(const std::filesystem::path& p, const std::vector<uint8_t>& data
 {
     FILE* f = fopen(p.c_str(), "wb");
     assert(f);
-    if (!data.empty()) assert(fwrite(data.data(), 1, data.size(), f) == data.size());
+    if (!data.empty())
+    {
+        const size_t n = fwrite(data.data(), 1, data.size(), f);
+        (void)n;
+        assert(n == data.size());
+    }
     fclose(f);
 }
 

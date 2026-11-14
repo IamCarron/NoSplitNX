@@ -1634,6 +1634,8 @@ struct Settings
     // OTHER VERSION POKEMON (exclusives.h): SoulSilver and HeartGold's wild Pokemon of both
     // versions. Off to start.
     bool bothVersions = false;
+    // Updater and Switch launcher state kept inside settings.cfg so extra .txt files are unneeded.
+    std::string updateSha, updateTime, lastGame;
 
     void Load(const std::string& path)
     {
@@ -1699,6 +1701,9 @@ struct Settings
             else if (k == "both_versions") bothVersions = v == "1";
             else if (k == "ra_user") ra.user = v;
             else if (k == "ra_token") ra.token = v;
+            else if (k == "update_sha") updateSha = v;
+            else if (k == "update_time") updateTime = v;
+            else if (k == "last_game") lastGame = v;
             else if (k == "battle_buttons") battleButtons = v == "corner" ? 0 : v == "panel" ? 2 : 1;
             else if (k == "window")
             {
@@ -1748,6 +1753,9 @@ struct Settings
         f << "ra=" << (ra.on ? 1 : 0) << "\n";
         if (!ra.user.empty()) f << "ra_user=" << ra.user << "\n";
         if (!ra.token.empty()) f << "ra_token=" << ra.token << "\n";
+        if (!updateSha.empty()) f << "update_sha=" << updateSha << "\n";
+        if (!updateTime.empty()) f << "update_time=" << updateTime << "\n";
+        if (!lastGame.empty()) f << "last_game=" << lastGame << "\n";
 #ifdef SSR_GPU3D
         f << "gpu3d_test=" << (gpu3d ? 1 : 0) << "\n";
         f << "wide_gpu=" << (wideGpu ? 1 : 0) << "\n";
@@ -4922,39 +4930,48 @@ int main(int argc, char** argv)
             add(M_SAVESTATE, "SAVE STATE", "");
             add(M_LOADSTATE, "LOAD STATE", "");
 #ifdef __SWITCH__
-            add(M_FAST, "FAST FORWARD", cfg.switchFastForward ? onOff(fastLock) : "OFF", !cfg.switchFastForward);
+            if (cfg.switchFastForward) add(M_FAST, "FAST FORWARD", onOff(fastLock));
 #else
             add(M_FAST, "FAST FORWARD", onOff(fastLock));
 #endif
             add(M_SETTINGS, "SETTINGS", "");
-            add(M_CONTROLMENU, "CONTROLS", "");
             add(M_CHEATS, "CHEATS", cheats.On() == 1 ? std::string("1 ENABLED") : cheats.On() ? std::to_string(cheats.On()) + " ACTIVE" : "", true);
             add(M_RESET, "RESET GAME", "");
             add(M_QUIT, "QUIT", "");
         }
         else if (menuPage == PAGE_SETTINGS)
         {
-            add(M_VOLUME, "VOLUME", cfg.volume == 0 ? std::string("OFF") : std::to_string(cfg.volume) + "%");
-            menu.items.back().slider = cfg.volume / 10;
+            add(M_GRAPHICS, "GRAPHICS", "");
+            add(M_SOUND, "SOUND", "");
+            add(M_CONTROLMENU, "CONTROLS", "");
+            add(M_LANGUAGE, "LANGUAGE", UiLang::ChoiceName());
+            if (exclusives.Supported()) add(M_BOTHVER, "OTHER VERSION POKEMON", onOff(exclusives.on));
+            if (!opt.noSave) add(M_BACKUPS, "SAVE BACKUPS", "");
+            if (Achievements::Available()) add(M_RA, "RETROACHIEVEMENTS", onOff(cfg.ra.on));
+            add(M_BACK, "BACK", "");
+        }
+        else if (menuPage == PAGE_GRAPHICS)
+        {
             add(M_FPS60, "60 FPS", onOff(cfg.fps60));
             add(M_WIDE, "WIDESCREEN WORLD", onOff(cfg.wide));
             add(M_SMOOTH, "SMOOTH SCALING", onOff(cfg.smooth));
             add(M_SHOWFPS, "FPS COUNTER", onOff(cfg.showFps));
-            add(M_FFMUTE, "FAST FORWARD SOUND", cfg.ffMute ? "OFF" : "ON");
 #ifdef __SWITCH__
             add(M_SWITCH_FF, "FAST FORWARD (EXPERIMENTAL)", onOff(cfg.switchFastForward));
-#endif
-            add(M_LANGUAGE, "LANGUAGE", UiLang::ChoiceName());
-#ifndef __SWITCH__
+#else
             add(M_LAYOUT, "SCREEN LAYOUT", LayoutName(layout.mode));
             add(M_LARGE, "LARGE SCREEN", large[focus.mode]);
 #if !defined(SSR_PHONE)
             add(M_FULLSCREEN, "BORDERLESS FULLSCREEN", onOff(cfg.fullscreen));
 #endif
 #endif
-            if (exclusives.Supported()) add(M_BOTHVER, "OTHER VERSION POKEMON", onOff(exclusives.on));
-            if (!opt.noSave) add(M_BACKUPS, "SAVE BACKUPS", "");
-            if (Achievements::Available()) add(M_RA, "RETROACHIEVEMENTS", onOff(cfg.ra.on));
+            add(M_BACK, "BACK", "");
+        }
+        else if (menuPage == PAGE_SOUND)
+        {
+            add(M_VOLUME, "VOLUME", cfg.volume == 0 ? std::string("OFF") : std::to_string(cfg.volume) + "%");
+            menu.items.back().slider = cfg.volume / 10;
+            add(M_FFMUTE, "FAST FORWARD SOUND", cfg.ffMute ? "OFF" : "ON");
             add(M_BACK, "BACK", "");
         }
         else if (menuPage == PAGE_CHEATS)
@@ -6417,8 +6434,14 @@ int main(int argc, char** argv)
             int backTo = -1;
             if (nav.back && menuPage != PAGE_MAIN)
             {
-                backTo = menuPage == PAGE_SETTINGS ? M_SETTINGS : menuPage == PAGE_SOUND ? M_SETTINGS : menuPage == PAGE_GRAPHICS ? M_SETTINGS
-                       : menuPage == PAGE_CHEATS ? M_CHEATS : menuPage == PAGE_RA ? M_RA : M_CONTROLMENU;
+                backTo = menuPage == PAGE_SETTINGS ? M_SETTINGS
+                       : menuPage == PAGE_SOUND ? M_SOUND
+                       : menuPage == PAGE_GRAPHICS ? M_GRAPHICS
+                       : menuPage == PAGE_CONTROLS ? M_CONTROLMENU
+                       : menuPage == PAGE_BACKUPS ? M_BACKUPS
+                       : menuPage == PAGE_CHEATS ? M_CHEATS
+                       : menuPage == PAGE_RA ? M_RA
+                       : M_SETTINGS;
                 nav = MenuInput();
             }
             else if (nav.back)
@@ -6547,9 +6570,15 @@ int main(int argc, char** argv)
                 break;
             case M_SETTINGS:
             case M_DISPLAY:
-            case M_SOUND:
-            case M_GRAPHICS:
                 goPage(PAGE_SETTINGS, -1);
+                hit = -1;
+                break;
+            case M_GRAPHICS:
+                goPage(PAGE_GRAPHICS, -1);
+                hit = -1;
+                break;
+            case M_SOUND:
+                goPage(PAGE_SOUND, -1);
                 hit = -1;
                 break;
             case M_CONTROLMENU:
@@ -6561,8 +6590,7 @@ int main(int argc, char** argv)
                 if(menuPage == PAGE_CDETAIL) {goPage(PAGE_CHEATS,M_CHEAT0+cheatDetail);hit=-1;break;}
                 if(menuPage == PAGE_CINFO) {goPage(PAGE_CHEATS,M_CINFO);hit=-1;break;}
                 if(menuPage == PAGE_RESTORE_CONFIRM) {goPage(PAGE_BACKUPS,M_BACKUP0+restoreChoice);hit=-1;break;}
-                if(menuPage == PAGE_BACKUPS || menuPage == PAGE_LOAD_CONFIRM)
-                {goPage(PAGE_MAIN,menuPage == PAGE_BACKUPS ? M_SETTINGS : M_LOADSTATE);hit=-1;break;}
+                if(menuPage == PAGE_LOAD_CONFIRM) {goPage(PAGE_MAIN,M_LOADSTATE);hit=-1;break;}
                 if(menuPage == PAGE_CHEATS && cheatWhere == -4)
                 {cheatWhere=-2;goPage(PAGE_CHEATS,M_CSEARCH);hit=-1;break;}
                 // A folder's codes (or ON NOW) go back to the folders. The folder list goes back
@@ -6587,9 +6615,20 @@ int main(int argc, char** argv)
                     hit = -1;
                     break;
                 }
+                if (menuPage == PAGE_GRAPHICS || menuPage == PAGE_SOUND || menuPage == PAGE_CONTROLS || menuPage == PAGE_BACKUPS || menuPage == PAGE_RA)
+                {
+                    const int parentId = backTo >= 0 ? backTo
+                                       : menuPage == PAGE_GRAPHICS ? M_GRAPHICS
+                                       : menuPage == PAGE_SOUND ? M_SOUND
+                                       : menuPage == PAGE_CONTROLS ? M_CONTROLMENU
+                                       : menuPage == PAGE_BACKUPS ? M_BACKUPS
+                                       : M_RA;
+                    goPage(PAGE_SETTINGS, parentId);
+                    hit = -1;
+                    break;
+                }
                 if (backTo < 0)
-                    backTo = menuPage == PAGE_SETTINGS ? M_SETTINGS : menuPage == PAGE_SOUND ? M_SETTINGS : menuPage == PAGE_GRAPHICS ? M_SETTINGS
-                           : menuPage == PAGE_CHEATS ? M_CHEATS : menuPage == PAGE_RA ? M_RA : M_CONTROLMENU;
+                    backTo = menuPage == PAGE_SETTINGS ? M_SETTINGS : M_CHEATS;
                 goPage(PAGE_MAIN, backTo);
                 hit = -1;
                 break;

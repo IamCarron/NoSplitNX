@@ -665,22 +665,22 @@ struct Canvas
 inline uint32_t AccentNamed(const std::string& name)
 {
     static const struct { const char* name; uint32_t argb; } colours[] = {
-        { "red", 0xFFE52535 },      // Crimson Switch Red
-        { "crimson", 0xFFE52535 },
-        { "blue", 0xFF0090FF },     // Electric Azure Blue
-        { "cyber", 0xFF0090FF },
-        { "green", 0xFF00D668 },    // Emerald Mint
-        { "emerald", 0xFF00D668 },
-        { "purple", 0xFFA855F7 },   // Cosmic Amethyst
-        { "amethyst", 0xFFA855F7 },
-        { "gold", 0xFFFFB020 },     // Sunset Amber Gold
-        { "amber", 0xFFFFB020 },
-        { "pink", 0xFFFF3B88 },     // Neon Coral Pink
-        { "neon_pink", 0xFFFF3B88 },
-        { "teal", 0xFF00C7B5 },     // Cyan Aqua Mint
-        { "cyan", 0xFF00C7B5 },
-        { "obsidian", 0xFFCBD5E1 }, // Luxury Platinum Silver
-        { "silver", 0xFFCBD5E1 },
+        { "red", 0xFFD94F5C },      // Soft Crimson Coral
+        { "crimson", 0xFFD94F5C },
+        { "blue", 0xFF4A90D9 },     // Calm Azure Slate
+        { "cyber", 0xFF4A90D9 },
+        { "green", 0xFF45B380 },    // Soft Sage Emerald
+        { "emerald", 0xFF45B380 },
+        { "purple", 0xFF9B79D9 },   // Muted Twilight Lavender
+        { "amethyst", 0xFF9B79D9 },
+        { "gold", 0xFFDBA44A },     // Brushed Champagne Amber
+        { "amber", 0xFFDBA44A },
+        { "pink", 0xFFD97296 },     // Soft Dusty Rose
+        { "neon_pink", 0xFFD97296 },
+        { "teal", 0xFF4BA8A8 },     // Serene Seafoam Teal
+        { "cyan", 0xFF4BA8A8 },
+        { "obsidian", 0xFF9FB0C7 }, // Brushed Platinum Silver
+        { "silver", 0xFF9FB0C7 },
     };
     for (const auto& c : colours)
         if (name == c.name) return c.argb;
@@ -882,10 +882,21 @@ struct Menu
 
             if (sel)
             {
-                const uint32_t glowAlpha = (uint32_t)(45 + 35 * pulse) << 24;
+                auto mixRgb = [](uint32_t a, uint32_t b, uint32_t wA, uint32_t wB, uint32_t alpha) -> uint32_t {
+                    const uint32_t d = wA + wB;
+                    const uint32_t r = (((a >> 16) & 0xFFu) * wA + ((b >> 16) & 0xFFu) * wB) / d;
+                    const uint32_t g = (((a >> 8) & 0xFFu) * wA + ((b >> 8) & 0xFFu) * wB) / d;
+                    const uint32_t bl = ((a & 0xFFu) * wA + (b & 0xFFu) * wB) / d;
+                    return (alpha << 24) | (r << 16) | (g << 8) | bl;
+                };
+                const uint32_t glowAlpha = (uint32_t)(22 + 14 * pulse) << 24;
+                const uint32_t rowTop = mixRgb(0x1C283B, Accent, 5, 1, 0xF0);
+                const uint32_t rowBot = mixRgb(0x131C2B, Accent, 6, 1, 0xF0);
+                const uint32_t rowBd  = mixRgb(Accent, 0xCBD5E1, 3, 2, 0xD8);
+                const uint32_t barCol = mixRgb(Accent, 0xF1F5F9, 4, 1, 0xE8);
                 const_cast<Canvas&>(c).GlowRound(rx, ry, rw, rh, rowRad, scale, (Accent & 0x00FFFFFF) | glowAlpha);
-                c.FillGlass(rx, ry, rw, rh, rowRad, 0xFF20324E, 0xFF142034, 0xFF00E5FF, 1);
-                c.FillRound(rx + 2 * scale, ry + 2 * scale, std::max(2, 2 * scale), rh - 4 * scale, scale, 0xFF00E5FF);
+                c.FillGlass(rx, ry, rw, rh, rowRad, rowTop, rowBot, rowBd, 1);
+                c.FillRound(rx + 2 * scale, ry + 2 * scale, std::max(2, 2 * scale), rh - 4 * scale, scale, barCol);
             }
             else
             {
@@ -906,8 +917,14 @@ struct Menu
                 const int pillY = ry + 2 * scale;
                 const int pillH = rh - 4 * scale;
                 const int pillRad = std::max(3, pillH / 3);
-                c.FillRound(pillX, pillY, pillW, pillH, pillRad, sel ? 0xFF284166 : 0xB0182438);
-                c.OutlineRound(pillX, pillY, pillW, pillH, pillRad, 1, sel ? 0x9900E5FF : 0x802E3F5A);
+                const uint32_t pillFill = sel
+                    ? (0xF0000000u | (((((0x20u * 4u) + ((Accent >> 16) & 0xFFu)) / 5u) << 16)
+                                   | ((((0x2Eu * 4u) + ((Accent >> 8) & 0xFFu)) / 5u) << 8)
+                                   | (((0x44u * 4u) + (Accent & 0xFFu)) / 5u)))
+                    : 0xB0182438u;
+                const uint32_t pillBd = sel ? ((Accent & 0x00FFFFFFu) | 0x78000000u) : 0x702E3F5Au;
+                c.FillRound(pillX, pillY, pillW, pillH, pillRad, pillFill);
+                c.OutlineRound(pillX, pillY, pillW, pillH, pillRad, 1, pillBd);
                 c.ModernText(textVx, ry + (rh - itemFontH) / 2, v, itemFontH, sel ? 0xFFFFFFFF : 0xFFD0DCF0);
                 if (items[i].slider >= 0)
                 {
