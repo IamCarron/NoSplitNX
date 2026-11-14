@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace RomMusic
@@ -504,7 +505,8 @@ public:
     void Mix(int16_t* stereoOut, int frames)
     {
         if (!stereoOut || frames <= 0) return;
-        std::fill_n(stereoOut, (size_t)frames * 2, int16_t(0));
+        const size_t totalSamples = (size_t)frames * 2;
+        for (size_t i = 0; i < totalSamples; i++) stereoOut[i] = 0;
         if (!active_ || mode_ == SeqMode::None || volumePct_ <= 0)
         {
             for (int b = 0; b < kBandCount; b++) bands_[b] *= 0.80f;
@@ -1085,7 +1087,7 @@ private:
                     case 0xB2: v -= rhs; break;
                     case 0xB3: v *= rhs; break;
                     case 0xB4: if (rhs) v /= rhs; break;
-                    case 0xB5: v = (rhs >= 0) ? (v << std::min(15, (int)rhs)) : (v >> std::min(15, -(int)rhs)); break;
+                    case 0xB5: v = (rhs >= 0) ? (decltype(v))((uint32_t)v << std::min(15, (int)rhs)) : (v >> std::min(15, -(int)rhs)); break;
                     case 0xB6: v = rhs > 0 ? (int32_t)(NextRand() % (uint32_t)(rhs + 1)) : 0; break;
                     case 0xB8: tr.cmpFlag = (v == rhs); break;
                     case 0xB9: tr.cmpFlag = (v >= rhs); break;
@@ -1369,7 +1371,7 @@ private:
                 const uint32_t strOff = RdU32(symb.data(), symb.size(), symbSeqOff + 4 + i * 4);
                 if (strOff != 0 && strOff < symb.size())
                 {
-                    const char* cs = (const char*)&symb[strOff];
+                    const char* cs = (const char*)(symb.data() + strOff);
                     const size_t maxn = std::min<size_t>(96, symb.size() - strOff);
                     std::string sname = UpperAscii(cs, maxn);
                     sc += Nitro::ScoreSeqName(sname);
@@ -1735,7 +1737,7 @@ private:
             {
                 const uint32_t eoff = pick.vgOff + pi * 12;
                 if (eoff + 12 > rsz) break;
-                const uint8_t* ent = &rom[eoff];
+                const uint8_t* ent = rom.data() + eoff;
                 const uint8_t vtype = ent[0];
                 ProgramSlot& ps = progs_[pi];
                 if (vtype == 0x80) // MultiSample / DrumSet

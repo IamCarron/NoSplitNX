@@ -36,8 +36,18 @@ void PutU32(std::vector<uint8_t>& b, size_t off, uint32_t v)
     b[off + 3] = (uint8_t)((v >> 24) & 0xFF);
 }
 
-void AppendU16(std::vector<uint8_t>& b, uint16_t v) { const size_t p = b.size(); PutU16(b, p, v); }
-void AppendU32(std::vector<uint8_t>& b, uint32_t v) { const size_t p = b.size(); PutU32(b, p, v); }
+void AppendU16(std::vector<uint8_t>& b, uint16_t v)
+{
+    b.push_back((uint8_t)(v & 0xFF));
+    b.push_back((uint8_t)((v >> 8) & 0xFF));
+}
+void AppendU32(std::vector<uint8_t>& b, uint32_t v)
+{
+    b.push_back((uint8_t)(v & 0xFF));
+    b.push_back((uint8_t)((v >> 8) & 0xFF));
+    b.push_back((uint8_t)((v >> 16) & 0xFF));
+    b.push_back((uint8_t)((v >> 24) & 0xFF));
+}
 void AppendTag(std::vector<uint8_t>& b, const char (&t)[5]) { for (int i = 0; i < 4; i++) b.push_back((uint8_t)t[i]); }
 void PutTag(std::vector<uint8_t>& b, size_t off, const char (&t)[5])
 {
@@ -46,16 +56,19 @@ void PutTag(std::vector<uint8_t>& b, size_t off, const char (&t)[5])
 }
 void AppendBytes(std::vector<uint8_t>& b, const void* src, size_t len)
 {
+    if (!src || len == 0) return;
     const auto* p = static_cast<const uint8_t*>(src);
     b.reserve(b.size() + len);
     for (size_t i = 0; i < len; i++) b.push_back(p[i]);
 }
 void AppendVec(std::vector<uint8_t>& b, const std::vector<uint8_t>& src)
 {
+    if (src.empty()) return;
     AppendBytes(b, src.data(), src.size());
 }
 void PutVec(std::vector<uint8_t>& b, size_t off, const std::vector<uint8_t>& src)
 {
+    if (src.empty()) return;
     if (off + src.size() > b.size()) b.resize(off + src.size(), 0);
     for (size_t i = 0; i < src.size(); i++) b[off + i] = src[i];
 }
@@ -445,13 +458,15 @@ int main()
     // 1. Corrupt / empty / truncated inputs fail safely with zero crashes
     {
         const auto emptyPath = tmp / "empty.nds";
-        WriteBytes(emptyPath, {});
+        const std::vector<uint8_t> emptyBytes;
+        WriteBytes(emptyPath, emptyBytes);
         RomMusic::Player p;
         assert(!p.LoadFromRom(emptyPath.string(), 0, "IPKE"));
         assert(!p.IsLoaded());
 
         const auto garbageGba = tmp / "garbage.gba";
-        WriteBytes(garbageGba, std::vector<uint8_t>(8192, 0xA5));
+        const std::vector<uint8_t> garbageBytes(8192, 0xA5);
+        WriteBytes(garbageGba, garbageBytes);
         assert(!p.LoadFromRom(garbageGba.string(), 1, "BPEE"));
         assert(!p.IsLoaded());
 

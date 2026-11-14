@@ -11,9 +11,16 @@ class RomMusicTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('c++'), 'C++ compiler required')
     def test_synthetic_nds_and_gba_soundtrack_synthesis_and_fuzz(self):
         with tempfile.TemporaryDirectory() as folder:
+            obj = Path(folder) / 'rommusic.o'
             exe = Path(folder) / 'rommusic'
             subprocess.run([
-                'c++', '-O2', '-std=c++17', '-Wall', '-Wextra', '-Werror',
+                'c++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
+                '-I' + str(ROOT / 'frontend'),
+                str(ROOT / 'tests/test_rom_music.cpp'),
+                '-c', '-o', str(obj),
+            ], check=True)
+            subprocess.run([
+                'c++', '-O2', '-std=c++17',
                 '-I' + str(ROOT / 'frontend'),
                 str(ROOT / 'tests/test_rom_music.cpp'),
                 '-o', str(exe),
