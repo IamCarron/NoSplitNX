@@ -91,7 +91,13 @@ say "Configuring ($BUILD)"
 if [ "$JIT" = 1 ]; then
     # (Configured every time, so that an older build folder picks up new options.)
     [ -f "$GEN/sources.cmake" ] || fail "no generated tables in $GEN"
-    cmake -S . -B "$BUILD" -G Ninja "${PKGCONF[@]}" \
+    GBA_CMAKE_ARGS=()
+    [ -n "${SSR_GBA_UI_SOURCE:-}" ] && GBA_CMAKE_ARGS+=("-DSSR_GBA_UI_SOURCE=$SSR_GBA_UI_SOURCE")
+    [ -n "${GBAW_MGBA:-}" ] && GBA_CMAKE_ARGS+=("-DGBAW_MGBA=$GBAW_MGBA")
+    [ -n "${GBAW_PATCHES:-}" ] && GBA_CMAKE_ARGS+=("-DGBAW_PATCHES=$GBAW_PATCHES")
+    [ -n "${GBAW_PATCHES_H:-}" ] && GBA_CMAKE_ARGS+=("-DGBAW_PATCHES_H=$GBAW_PATCHES_H")
+    [ -n "${GBAW_ART_H:-}" ] && GBA_CMAKE_ARGS+=("-DGBAW_ART_H=$GBAW_ART_H")
+    cmake -S . -B "$BUILD" -G Ninja "${PKGCONF[@]}" "${GBA_CMAKE_ARGS[@]}" \
         -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/Switch.cmake" \
         -DCMAKE_BUILD_TYPE=Release \
         -DSSR_GENERATED_DIR="$GEN" \

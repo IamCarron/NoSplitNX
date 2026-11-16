@@ -190,28 +190,71 @@ all)
     icon="${SSR_SWITCH_ICON_ALL:-${SSR_SWITCH_ICON:-$HERE/tools/switch/icon.jpg}}"
     rm -f "$BUILD/icon.jpg"
     [ -f "$icon" ] && install -D -m 644 "$icon" "$BUILD/icon.jpg"
-    # GBA games too (SSR_GBA_DIR: Pokemon GBA Widescreen's folder, after its setup.sh): with
-    # devkitPro installed or unpacked (DEVKITPRO), not its Docker image, which sees only this folder.
+    # GBA games too (mGBA + wide patches + ROM hacks): enabled by default for `all` when gba/
+    # is present (SSR_GBA=0 to omit). Prepared inside $HERE so Docker sees every path.
+    SSR_GBA_UI_SOURCE=""
+    GBAW_MGBA="${GBAW_MGBA:-}"
+    GBAW_PATCHES="${GBAW_PATCHES:-}"
+    GBAW_PATCHES_H=""
+    GBAW_ART_H=""
+    if [ "${SSR_GBA:-1}" != 0 ] && [ -z "${SSR_GBA_DIR:-}" ] && [ -f "$HERE/gba/frontend/embed.h" ]; then
+        SSR_GBA_DIR="$HERE/gba"
+    fi
     if [ -n "${SSR_GBA_DIR:-}" ]; then
         [ -f "$SSR_GBA_DIR/frontend/embed.h" ] || fail "SSR_GBA_DIR: not Pokemon GBA Widescreen: $SSR_GBA_DIR"
-        [ -z "$DOCKER" ] || fail "GBA games too (SSR_GBA_DIR) needs devkitPro installed, not its Docker image: set DEVKITPRO (Pokemon GBA Widescreen's tools/switch/build.sh unpacks one)"
-        SSR_GBA_DIR="$(realpath "$SSR_GBA_DIR")"
-        export SSR_GBA_DIR
-        say "GBA games too: $SSR_GBA_DIR"
+        SSR_GBA_DIR="$(cd "$SSR_GBA_DIR" && pwd)"
+        if [ -z "$GBAW_MGBA" ]; then
+            GBAW_MGBA="$HERE/build-gba-mgba"
+            MGBA_COMMIT="$(tr -d '[:space:]' < "$SSR_GBA_DIR/patches/mgba.commit")"
+            if [ ! -f "$GBAW_MGBA/.wide-patched-${MGBA_COMMIT}" ] || [ ! -f "$GBAW_MGBA/include/mgba/internal/gba/video.h" ]; then
+                say "Fetching and patching mGBA ($MGBA_COMMIT) for GBA playback"
+                if [ ! -d "$GBAW_MGBA/.git" ]; then
+                    rm -rf "$GBAW_MGBA"
+                    git init -q "$GBAW_MGBA"
+                    git -C "$GBAW_MGBA" remote add origin https://github.com/mgba-emu/mgba.git
+                fi
+                if ! git -C "$GBAW_MGBA" fetch -q --depth 1 origin "$MGBA_COMMIT" 2>/dev/null; then
+                    git -C "$GBAW_MGBA" fetch -q origin
+                fi
+                git -C "$GBAW_MGBA" checkout -q --force "$MGBA_COMMIT"
+                git -C "$GBAW_MGBA" clean -q -fdx
+                git -C "$GBAW_MGBA" apply "$SSR_GBA_DIR/patches/mgba-wide.patch"
+                rm -f "$GBAW_MGBA"/.wide-patched-*
+                : > "$GBAW_MGBA/.wide-patched-${MGBA_COMMIT}"
+            fi
+        fi
+        [ -f "$GBAW_MGBA/include/mgba/internal/gba/video.h" ] || fail "no mGBA source at $GBAW_MGBA"
+        GBAW_MGBA="$(cd "$GBAW_MGBA" && pwd)"
+        if [ -z "$GBAW_PATCHES" ]; then
+            GBAW_PATCHES="$SSR_GBA_DIR/wide-patches"
+        fi
+        GBAW_PATCHES="$(cd "$GBAW_PATCHES" && pwd)"
+        mkdir -p "$HERE/$BUILD"
+        SSR_GBA_UI_SOURCE="$HERE/$BUILD/gba-localised"
+        GBAW_PATCHES_H="$HERE/$BUILD/gba-patches.h"
+        GBAW_ART_H="$HERE/$BUILD/gba-art.h"
+        python3 tools/localisation/prepare_gba.py "$SSR_GBA_DIR" "$SSR_GBA_UI_SOURCE"
+        python3 "$SSR_GBA_DIR/tools/embed_patches.py" "$GBAW_PATCHES" "$GBAW_PATCHES_H"
+        python3 "$SSR_GBA_DIR/tools/embed_art.py" "$SSR_GBA_DIR/art" "$GBAW_ART_H"
+        export SSR_GBA_DIR SSR_GBA_UI_SOURCE GBAW_MGBA GBAW_PATCHES GBAW_PATCHES_H GBAW_ART_H
+        say "GBA games & ROM hacks enabled: $SSR_GBA_DIR (mGBA: $GBAW_MGBA)"
     fi
     say "Compiling for the Switch"
     build SSR_SWITCH_JIT=1 SSR_SWITCH_GEN="$GEN" SSR_SWITCH_BUILD="$BUILD" \
-        SSR_SWITCH_ROMFS="$ROMFS" SSR_ALL_GAMES=ON SSR_PC_ART="$ART" SSR_NRO_TITLE="NoSplitNX" bash tools/switch/build.sh
+        SSR_SWITCH_ROMFS="$ROMFS" SSR_ALL_GAMES=ON SSR_PC_ART="$ART" \
+        SSR_GBA_DIR="${SSR_GBA_DIR:-}" SSR_GBA_UI_SOURCE="${SSR_GBA_UI_SOURCE:-}" \
+        GBAW_MGBA="${GBAW_MGBA:-}" GBAW_PATCHES="${GBAW_PATCHES:-}" \
+        GBAW_PATCHES_H="${GBAW_PATCHES_H:-}" GBAW_ART_H="${GBAW_ART_H:-}" \
+        SSR_NRO_TITLE="NoSplitNX" bash tools/switch/build.sh
     mkdir -p build-sd/switch/nosplitnx/roms
     cp "$BUILD/ssrecomp.nro" build-sd/switch/nosplitnx/nosplitnx.nro
     # The licences: this program's (GPL-3) and, with the GBA games built in, mGBA's (MPL-2.0).
     cp LICENSE build-sd/switch/nosplitnx/LICENSE.txt
     cp LICENSE-Noto.txt build-sd/switch/nosplitnx/LICENSE-Noto.txt
     LICENCES="switch/nosplitnx/LICENSE.txt switch/nosplitnx/LICENSE-Noto.txt"
-    GBA_WORK="${GBAW_WORK:-$HOME/pokemon-gba-wide}"
     if [ -n "${SSR_GBA_DIR:-}" ]; then
-        [ -f "$GBA_WORK/mgba/LICENSE" ] || fail "no mGBA in $GBA_WORK (Pokemon GBA Widescreen's setup.sh makes it; GBAW_WORK if elsewhere)"
-        cp "$GBA_WORK/mgba/LICENSE" build-sd/switch/nosplitnx/LICENSE-mGBA.txt
+        [ -f "$GBAW_MGBA/LICENSE" ] || fail "no mGBA LICENSE in $GBAW_MGBA"
+        cp "$GBAW_MGBA/LICENSE" build-sd/switch/nosplitnx/LICENSE-mGBA.txt
         LICENCES="$LICENCES switch/nosplitnx/LICENSE-mGBA.txt"
     else
         rm -f build-sd/switch/nosplitnx/LICENSE-mGBA.txt
@@ -242,7 +285,7 @@ print('zip holds:', ', '.join(names))
     cat <<EOF
 
 Copy build-sd/switch to the root of the SD card, then your ROMs into /switch/nosplitnx/roms/ (any
-names; English Black, White, Black 2, White 2; SoulSilver and HeartGold US$([ -n "${SSR_GBA_DIR:-}" ] && printf '; the GBA games, Emerald,\nFireRed, LeafGreen and Ultra Violet, there or in a GBA folder in it')). Its list also shows
+names; English/Spanish/French/German/Italian Black, White, Black 2, White 2; SoulSilver, HeartGold, Platinum, Diamond, Pearl$([ -n "${SSR_GBA_DIR:-}" ] && printf '; plus GBA games and GBA ROM hacks (.gba, .ips, .ups, .bps, .xdelta) there or in roms/GBA')). Its list also shows
 the games in the other folders of /switch (the one-game downloads), each with the save in its folder.
 On the Switch, hold R while starting any game and choose NoSplitNX.
 The zip holds only the program, ready to share: nothing of the games.

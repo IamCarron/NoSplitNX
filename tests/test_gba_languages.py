@@ -2,9 +2,11 @@ from pathlib import Path
 import os,subprocess,tempfile,unittest,sys,hashlib
 ROOT=Path(__file__).resolve().parents[1]
 class GbaLanguageTests(unittest.TestCase):
- @unittest.skipUnless(os.environ.get('SSR_TEST_GBA_SOURCE'),'Optional external GBA source required')
  def test_embedded_gba_language_renderer(self):
-  source=Path(os.environ['SSR_TEST_GBA_SOURCE'])
+  default_src=ROOT/'gba'
+  source=Path(os.environ['SSR_TEST_GBA_SOURCE']) if os.environ.get('SSR_TEST_GBA_SOURCE') else default_src
+  if not (source/'frontend/ui.h').is_file():
+   self.skipTest('GBA source directory not present')
   before={str(p.relative_to(source)):hashlib.sha256(p.read_bytes()).hexdigest() for p in [source/'frontend/ui.h',source/'frontend/main.cpp']}
   with tempfile.TemporaryDirectory() as folder:
    folder=Path(folder);prepared=folder/'source'

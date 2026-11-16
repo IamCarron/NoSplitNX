@@ -394,7 +394,7 @@ std::string InstallHomeIcons(const std::vector<Launcher::Game>& games)
     std::vector<std::string> done;
     for (const Launcher::Game& g : games)
     {
-        if (!Playable(g) || std::find(done.begin(), done.end(), g.code) != done.end()) continue;
+        if (!Playable(g) || g.hack || std::find(done.begin(), done.end(), g.code) != done.end()) continue;
         done.push_back(g.code);
         SwitchForwarder::Entry e;
         const Launcher::KnownGame* k = Launcher::Known(g.code);
@@ -1354,11 +1354,8 @@ bool Start(int& argc, char**& argv)
 #else
     int directGame = -1;
     for (size_t i = 0; i < games.size() && !direct.empty(); i++)
-        if (games[i].code == direct && Playable(games[i]))
-        {
+        if (games[i].code == direct && Playable(games[i]) && (directGame < 0 || (games[directGame].hack && !games[i].hack)))
             directGame = (int)i;
-            break;
-        }
     if (!direct.empty() && directGame < 0) fprintf(stderr, "[switch] --game %s: not in the list\n", direct.c_str());
     if (directGame >= 0)
     {

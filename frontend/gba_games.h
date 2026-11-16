@@ -18,10 +18,21 @@ namespace GbaGames
 // own, except Ultra Violet's (a FireRed hack: BPRE too).
 inline std::string CodeOf(const std::string& key)
 {
-    if (key == "emerald") return "BPEE";
-    if (key == "ultraviolet") return "UV22";
-    if (key == "firered") return "BPRE";
-    if (key == "leafgreen") return "BPGE";
+    static const struct { const char* key; const char* code; } kCodes[] = {
+        { "emerald", "BPEE" }, { "emeraldfr", "BPEF" }, { "emeraldde", "BPED" },
+        { "emeraldes", "BPES" }, { "emeraldit", "BPEI" }, { "emeraldjp", "BPEJ" },
+        { "ultraviolet", "UV22" },
+        { "firered", "BPRE" }, { "fireredfr", "BPRF" }, { "fireredde", "BPRD" },
+        { "fireredes", "BPRS" }, { "fireredit", "BPRI" },
+        { "leafgreen", "BPGE" }, { "leafgreenfr", "BPGF" }, { "leafgreende", "BPGD" },
+        { "leafgreenes", "BPGS" }, { "leafgreenit", "BPGI" },
+        { "ruby", "AXVE" }, { "rubyde", "AXVD" }, { "rubyfr", "AXVF" },
+        { "rubyes", "AXVS" }, { "rubyit", "AXVI" }, { "rubyjp", "AXVJ" },
+        { "sapphire", "AXPE" }, { "sapphirede", "AXPD" }, { "sapphirefr", "AXPF" },
+        { "sapphirees", "AXPS" }, { "sapphireit", "AXPI" }, { "sapphirejp", "AXPJ" },
+    };
+    for (const auto& kv : kCodes)
+        if (key == kv.key) return kv.code;
     return "GBA-" + key;
 }
 
@@ -40,6 +51,7 @@ inline void Add(const std::string& roms, const std::string& saves, std::vector<L
         g.name = l.name;
         g.saveName = l.key + ".sav";
         g.known = true; // (any GBA game plays: with widescreen when it is one of these)
+        g.hack = l.hack;
         g.hasSave = l.hasSave;
         auto it = artCache.find(g.rom);
         if (it == artCache.end())

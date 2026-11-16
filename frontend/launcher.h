@@ -77,6 +77,8 @@ struct Game
     std::string where;
     // A game on its way (AddComingSoon): its tile says so and it cannot be played.
     bool comingSoon = false;
+    // A ROM hack (or custom non-vanilla ROM): gets its own save and never collides with vanilla HOME icons.
+    bool hack = false;
 };
 
 // The size the larger pictures are kept at (the tiles of the list at 720 lines).
@@ -1173,8 +1175,16 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int tileW, int tileH, int
     const int nw = ModernTextWidth(cardTitle, nameFontH);
     ModernText(c, x + (tileW - nw) / 2, fy + 3 * s, cardTitle, nameFontH, sel ? 0xFFFFFFFF : 0xFFE2E8F0, true);
 
-    std::string serial = (isGba ? "AGB-" : is3ds ? "CTR-" : "NTR-") + code;
+    std::string serial = (isGba ? "AGB-" : is3ds ? "CTR-" : "NTR-") +
+                         (isGba && code.rfind("GBA-", 0) == 0 ? code.substr(4) : code);
+    for (char& ch : serial) ch = (char)toupper((unsigned char)ch);
     const int serH = std::max(13, 4 * s + 1);
+    if (ModernTextWidth(serial, serH) > tileW - 10 * s)
+    {
+        while (serial.size() > 6 && ModernTextWidth(serial + "...", serH) > tileW - 10 * s)
+            serial.pop_back();
+        serial += "...";
+    }
     const int swidth = ModernTextWidth(serial, serH);
     ModernText(c, x + (tileW - swidth) / 2, fy + 3 * s + nameFontH + s, serial, serH, sel ? 0xFF93C5FD : 0xFF64748B);
 }

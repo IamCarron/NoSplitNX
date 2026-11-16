@@ -4,6 +4,11 @@
 ## Unreleased
 
 
+## v1.2.0 — GBA Player & GBA ROM Hack Support
+
+- **GBA & GBA ROM hack support on Nintendo Switch**: built the patched mGBA widescreen player (`gba/`) into `nosplitnx.nro` alongside `.ips`, `.ups`, `.bps` and `.xdelta` patcher support (`frontend/romhacks.h`); allowed any valid GBA ROM or ROM hack regardless of internal header title or game code with isolated per-hack saves; added widescreen patches for French, German, Spanish, Italian and Japanese Emerald/FireRed/LeafGreen as well as Radical Red, Unbound, Emerald Legacy, Inclement Emerald and Monomyth; and added `PatchCantTry` compatibility checks so hacks that move game functions or reuse free space safely fall back to 3:2 / 4:3 without freezing.
+
+
 ## v1.1.0 — Overworld Zoom, Sun & Moon Battle Buttons & Visual Polish
 
 - **Overworld Zoom & Look Around (DS)**: added configurable camera zoom steps (`1x`, `1.5x`, `2x` on Right Stick click or `C`) and smooth camera panning (Right Stick or `I`/`J`/`K`/`L`), with **Zoom and Look Around** and **Auto Zoom In** toggles in **Settings -> Graphics** so dialogues, menus and battles automatically bring the view back close.

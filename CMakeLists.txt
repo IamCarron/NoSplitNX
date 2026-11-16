@@ -102,8 +102,14 @@ file(GLOB_RECURSE SSR_RCHEEVOS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/frontend/thi
 add_library(rcheevos STATIC ${SSR_RCHEEVOS_SOURCES})
 target_include_directories(rcheevos PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/frontend/thirdparty/rcheevos/include")
 
+# ROM hacks' xdelta patches (frontend/romhacks.h): their LZMA2-compressed sections, with the LZMA
+# SDK's decoder (public domain; frontend/thirdparty/lzma, as mGBA carries it).
+add_library(romhacks_lzma OBJECT frontend/romhacks_lzma.c frontend/thirdparty/lzma/LzmaDec.c frontend/thirdparty/lzma/Lzma2Dec.c)
+target_include_directories(romhacks_lzma PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/frontend/thirdparty/lzma")
+
 set(SSRECOMP_SOURCES
     frontend/main.cpp
+    $<TARGET_OBJECTS:romhacks_lzma>
     frontend/achievements.cpp
     frontend/achievements_http.cpp
     frontend/platform.cpp
@@ -328,18 +334,35 @@ endif()
 # ~/pokemon-gba-wide, or GBAW_WORK); the list gets a GBA section and plays them
 # (frontend/gba_games.h, its frontend/embed.h). Empty: DS games only.
 set(SSR_GBA_DIR "" CACHE PATH "Pokemon GBA Widescreen's folder, to play GBA games too")
+set(SSR_GBA_UI_SOURCE "" CACHE PATH "Pre-prepared localised GBA UI source folder (optional)")
 if(SSR_GBA_DIR AND (SSR_PC_ALL_GAMES OR SSR_ALL_GAMES))
     set(GBAW_EMBEDDED ON CACHE BOOL "" FORCE)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    set(SSR_GBA_UI_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/gba-localised")
-    execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/localisation/prepare_gba.py"
-        "${SSR_GBA_DIR}" "${SSR_GBA_UI_SOURCE}" RESULT_VARIABLE SSR_GBA_UI_RESULT)
-    if(NOT SSR_GBA_UI_RESULT EQUAL 0)
-        message(FATAL_ERROR "Could not prepare the localised GBA interface")
+    if(NOT GBAW_PATCHES AND EXISTS "${SSR_GBA_DIR}/wide-patches/emerald-wide.ips")
+        set(GBAW_PATCHES "${SSR_GBA_DIR}/wide-patches" CACHE PATH "The widescreen patches" FORCE)
+    endif()
+    if(NOT GBAW_MGBA AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/build-gba-mgba/include/mgba/internal/gba/video.h")
+        set(GBAW_MGBA "${CMAKE_CURRENT_SOURCE_DIR}/build-gba-mgba" CACHE PATH "mGBA with patches/mgba-wide.patch applied" FORCE)
+    endif()
+    if(NOT SSR_GBA_UI_SOURCE OR NOT EXISTS "${SSR_GBA_UI_SOURCE}/CMakeLists.txt")
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        set(_ssr_gba_ui_dir "${CMAKE_CURRENT_BINARY_DIR}/gba-localised")
+        execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/localisation/prepare_gba.py"
+            "${SSR_GBA_DIR}" "${_ssr_gba_ui_dir}" RESULT_VARIABLE SSR_GBA_UI_RESULT)
+        if(NOT SSR_GBA_UI_RESULT EQUAL 0)
+            message(FATAL_ERROR "Could not prepare the localised GBA interface")
+        endif()
+    else()
+        set(_ssr_gba_ui_dir "${SSR_GBA_UI_SOURCE}")
     endif()
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/tools/localisation/prepare_gba.py" "${CMAKE_CURRENT_SOURCE_DIR}/frontend/touchlayout.h" "${SSR_GBA_DIR}/frontend/ui.h" "${SSR_GBA_DIR}/frontend/main.cpp")
-    add_subdirectory("${SSR_GBA_UI_SOURCE}" gbaw EXCLUDE_FROM_ALL)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/localisation/prepare_gba.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/touchlayout.h"
+        "${SSR_GBA_DIR}/CMakeLists.txt"
+        "${SSR_GBA_DIR}/frontend/embed.h"
+        "${SSR_GBA_DIR}/frontend/games.h"
+        "${SSR_GBA_DIR}/frontend/ui.h"
+        "${SSR_GBA_DIR}/frontend/main.cpp")
+    add_subdirectory("${_ssr_gba_ui_dir}" gbaw EXCLUDE_FROM_ALL)
     target_include_directories(gbawide PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/frontend")
     target_link_libraries(ssrecomp PRIVATE gbawide)
     target_compile_definitions(ssrecomp PRIVATE SSR_GBA)
