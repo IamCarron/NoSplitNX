@@ -4,6 +4,11 @@
 ## Unreleased
 
 
+## v1.2.1 — Authentic Co-Sized Gen 5 Battle Buttons
+
+- **Authentic Gen 5 battle buttons with mutual tray co-sizing**: restored authentic DS game command and move plates (`BattleStripClassic` in Black/White and `Gen5Strip::Black2Authentic` in Black 2/White 2) as the default **Strip** battle button style, mutually co-sized edge-to-edge with the left battle prompt (`AdaptGen5BattlePrompt`) while preserving transition layer checks and fade-to-Party/Bag continuity (keeping the optional flat **Standard** and **Sun and Moon** styles available under **Battle Buttons**).
+
+
 ## v1.2.0 — GBA Player & GBA ROM Hack Support
 
 - **GBA & GBA ROM hack support on Nintendo Switch**: built the patched mGBA widescreen player (`gba/`) into `nosplitnx.nro` alongside `.ips`, `.ups`, `.bps` and `.xdelta` patcher support (`frontend/romhacks.h`); allowed any valid GBA ROM or ROM hack regardless of internal header title or game code with isolated per-hack saves; added widescreen patches for French, German, Spanish, Italian and Japanese Emerald/FireRed/LeafGreen as well as Radical Red, Unbound, Emerald Legacy, Inclement Emerald and Monomyth; and added `PatchCantTry` compatibility checks so hacks that move game functions or reuse free space safely fall back to 3:2 / 4:3 without freezing.

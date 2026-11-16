@@ -1629,9 +1629,9 @@ struct Settings
     bool ds3dGpu = true;         // with it, the DS-resolution 3D picture too
     bool zoom = true, zoomText = true; // ZOOM AND LOOK AROUND, AUTO ZOOM IN (ds_zoom.h)
     // Black and Black 2: how a battle's buttons are shown beside the wide view (BATTLE BUTTONS):
-    // 0 CORNER, the touch screen's panel in the lower right corner; 1 STRIP, rounded buttons in
-    // the message box's band; 2 PANEL, the touch screen's panel as tall as the message box;
-    // 3 CLASSIC, the earlier strip; 4 SUN AND MOON (Bw1Layouts::BUTTONS_*).
+    // 0 CORNER, touch-screen panel in the lower right corner; 1 STRIP (default), authentic BW/B2W2
+    // plates co-sized with the prompt; 2 PANEL, panel scaled to the message box; 3 STANDARD,
+    // Gen5Strip rounded buttons; 4 SUN AND MOON (Bw1Layouts::BUTTONS_*).
     int battleButtons = 1;
     // The PC all-games program: the window's size when it last closed (0: 1280x720, a wide view).
     int windowW = 0, windowH = 0;
@@ -1714,7 +1714,7 @@ struct Settings
             else if (k == "last_game") lastGame = v;
             else if (k == "zoom") zoom = v != "0";
             else if (k == "zoom_text") zoomText = v != "0";
-            else if (k == "battle_buttons") battleButtons = v == "corner" ? 0 : v == "panel" ? 2 : v == "classic" ? 3 : v == "sunmoon" ? 4 : 1;
+            else if (k == "battle_buttons") battleButtons = v == "corner" ? 0 : v == "panel" ? 2 : (v == "standard" || v == "rounded") ? 3 : v == "sunmoon" ? 4 : 1;
             else if (k == "window")
             {
                 const size_t x = v.find('x');
@@ -1759,7 +1759,7 @@ struct Settings
         f << "start_button=" << (startMenu ? "menu" : "ds") << "\n";
         f << "zoom=" << (zoom ? 1 : 0) << "\n";
         f << "zoom_text=" << (zoomText ? 1 : 0) << "\n";
-        static const char* const battleButtonNames[] = { "corner", "strip", "panel", "classic", "sunmoon" };
+        static const char* const battleButtonNames[] = { "corner", "strip", "panel", "standard", "sunmoon" };
         f << "battle_buttons=" << battleButtonNames[std::clamp(battleButtons, 0, 4)] << "\n";
         controls.Save(f);
         f << "both_versions=" << (bothVersions ? 1 : 0) << "\n";
@@ -3429,7 +3429,7 @@ int main(int argc, char** argv)
             {
                 if (funcWatch.CurrentFrame() - bw2BoxesFrame < 600 && !topScreenFaded())
                     Gen5Strip::KeepBoxes(sc, bw2BoxesTop, bw2Boxes, 1);
-                if (cfg.battleButtons == 1 || cfg.battleButtons == 4)
+                if (cfg.battleButtons == 1 || cfg.battleButtons == 3 || cfg.battleButtons == 4)
                 {
                     const Scene cut = sc;
                     if (Gen5Strip::ChoiceBars(sc, (wideView ? 128 + viewWidth / 2 : 256.0f) - 2, screens, 147, 42))
@@ -3482,8 +3482,8 @@ int main(int argc, char** argv)
                 kind = enemyH > 0 && enemyH <= 32 && mineH > 0 && mineH <= 34 ? 1 : 2;
             }
             // (The compositor leaves the boxes where they are in any frame without the wide arena.)
-            // The player's box is lifted higher when STRIP / SUNMOON draws party balls under it.
-            const int BattleBoxLift = !bw1.on && (cfg.battleButtons == 1 || cfg.battleButtons == 4) ? 8 : 4;
+            // The player's box is lifted higher when STRIP / STANDARD / SUNMOON draws party balls under it.
+            const int BattleBoxLift = !bw1.on && (cfg.battleButtons == 1 || cfg.battleButtons == 3 || cfg.battleButtons == 4) ? 8 : 4;
             // How much of a part of the top screen is 2D, in tenths: where the HP boxes are, some
             // of it; none when the boxes are not shown (the screen going black into an evolution,
             // where the wide arena can still show the last picture through the holes); nearly all
@@ -3579,13 +3579,12 @@ int main(int argc, char** argv)
             // panels above, the player's side below (touch screen rows 22-131).
             const bool target = !moves && !command && funcWatch.Ran(bw2.battleTarget, 1);
             int style = bw1.on || !screens ? 0 : cfg.battleButtons;
-            if (style == 3) style = 0; // CLASSIC falls back to CORNER for BW2
-            if (style == 4) style = 1; // SUN AND MOON uses Gen5Strip::Black2
-            const bool strip = style == 1 && (funcWatch.Ran(bw2.battleMove, 4) ||
+            const bool gen5RoundStrip = style == 3 || style == 4;
+            const bool roundStrip = gen5RoundStrip && (funcWatch.Ran(bw2.battleMove, 4) ||
                 funcWatch.Ran(bw2.battleCommand, 4) || funcWatch.Ran(bw2.battleTarget, 4));
-            if (!wideView && style != 1) style = 0;
+            if (!wideView && style != 1 && !gen5RoundStrip) style = 0;
             if (wideView && screens && !bw1.on && kind == 2 && style == 0) style = 2;
-            if (strip)
+            if (roundStrip || (style == 1 && !wideView && (moves || command || target)))
             {
                 Gen5Strip::PartyPlaces party;
                 const Element* piece[2] = {};
@@ -3605,42 +3604,82 @@ int main(int argc, char** argv)
                         party.mineTop = piece[1]->dy + 33;
                     }
                 }
-                Gen5Strip::Black2(sc, wideView ? viewRight : 256, screens, moves || target || !command, party);
+                float availRoom = -1.0f;
+                bool gridArg = moves || target || !command;
+                if (wideView && (moves || command || target))
+                {
+                    bool readyMoves = gridArg;
+                    if (!screens[1].flags || Gen5Strip::Black2ButtonsReady(screens[1], readyMoves))
+                    {
+                        float promptRight = viewLeft + 4.0f;
+                        float minBtnW = 96.0f, idealBtnW = 112.0f, maxBtnW = 120.0f;
+                        Gen5BattleButtonBounds(1, readyMoves, target, 110, minBtnW, idealBtnW, maxBtnW);
+                        float targetBtnW = idealBtnW;
+                        AdaptGen5BattlePrompt(sc, viewWidth, screens, minBtnW, idealBtnW, maxBtnW,
+                            promptRight, targetBtnW);
+                        availRoom = std::max(84.0f, viewRight - 2.0f - (promptRight + 5.0f));
+                    }
+                }
+                Gen5Strip::Black2(sc, wideView ? viewRight : 256, screens, gridArg, party, availRoom);
             }
-            else if (style == 1) {} // (STRIP between two menus: nothing)
+            else if (gen5RoundStrip) {} // (STANDARD / SUNMOON between two menus: nothing)
             else
             {
-                float promptRight = viewLeft + 4.0f;
-                float minBtnW = 96.0f, idealBtnW = 112.0f, maxBtnW = 120.0f;
-                const int btnStyle = (style == 2) ? 2 : 0;
-                Gen5BattleButtonBounds(btnStyle, moves, target, 110, minBtnW, idealBtnW, maxBtnW);
-                float targetBtnW = idealBtnW;
-                if (!bw1.on && wideView && screens && (moves || command || target))
+                bool stripMoves = moves;
+                if (style == 1 && !target && screens[1].flags && !Gen5Strip::Black2ButtonsReady(screens[1], stripMoves))
                 {
-                    AdaptGen5BattlePrompt(sc, viewWidth, screens, minBtnW, idealBtnW, maxBtnW,
-                        promptRight, targetBtnW);
+                    // Mid-animation Poke Ball transition: wait until plates settle.
                 }
-                const float availBtnW = std::max(84.0f,
-                    std::min(wideView ? maxBtnW : 128.0f, viewRight - 2.0f - (promptRight + 5.0f)));
-                if ((moves || command || target) && style == 2)
+                else
                 {
-                    // PANEL: the corner panel's piece as tall as the message box (rows 147-189),
-                    // against the view's right edge, shrunk if needed so translated prompts never overlap.
-                    Element c = moves ? Crop(1, 0, 30, 256, 98) : target ? Crop(1, 0, 22, 256, 110) : Crop(1, 0, 78, 256, 114);
-                    c.scale = std::min(44.0f / c.sh, availBtnW / c.sw);
-                    c.dx = viewRight - 2 - c.sw * c.scale;
-                    c.dy = 190 - c.sh * c.scale;
-                    c.border = true;
-                    c.borderRadius = 3.0f;
-                    c.borderColor = 0x2A2E38;
-                    sc.items.push_back(c);
+                    float promptRight = viewLeft + 4.0f;
+                    float minBtnW = 96.0f, idealBtnW = 112.0f, maxBtnW = 120.0f;
+                    const int btnStyle = (style == 2 || style == 1) ? style : 0;
+                    Gen5BattleButtonBounds(btnStyle, stripMoves, target, 110, minBtnW, idealBtnW, maxBtnW);
+                    float targetBtnW = idealBtnW;
+                    if (!bw1.on && wideView && screens && (moves || command || target))
+                    {
+                        AdaptGen5BattlePrompt(sc, viewWidth, screens, minBtnW, idealBtnW, maxBtnW,
+                            promptRight, targetBtnW);
+                    }
+                    const float availBtnW = std::max(84.0f,
+                        std::min(wideView ? maxBtnW : 128.0f, viewRight - 2.0f - (promptRight + 5.0f)));
+                    if (style == 1 && wideView && (moves || command || target))
+                    {
+                        if (target)
+                        {
+                            Element c = Crop(1, 0, 22, 256, 110);
+                            c.scale = std::min(44.0f / c.sh, availBtnW / c.sw);
+                            c.dx = viewRight - 2 - c.sw * c.scale;
+                            c.dy = 190 - c.sh * c.scale;
+                            c.border = true;
+                            c.borderRadius = 3.0f;
+                            c.borderColor = 0x2A2E38;
+                            sc.items.push_back(c);
+                        }
+                        else
+                            Gen5Strip::Black2Authentic(sc, viewRight, screens[1], stripMoves, promptRight);
+                    }
+                    else if ((moves || command || target) && style == 2)
+                    {
+                        // PANEL: the corner panel's piece as tall as the message box (rows 147-189),
+                        // against the view's right edge, shrunk if needed so translated prompts never overlap.
+                        Element c = moves ? Crop(1, 0, 30, 256, 98) : target ? Crop(1, 0, 22, 256, 110) : Crop(1, 0, 78, 256, 114);
+                        c.scale = std::min(44.0f / c.sh, availBtnW / c.sw);
+                        c.dx = viewRight - 2 - c.sw * c.scale;
+                        c.dy = 190 - c.sh * c.scale;
+                        c.border = true;
+                        c.borderRadius = 3.0f;
+                        c.borderColor = 0x2A2E38;
+                        sc.items.push_back(c);
+                    }
+                    else if (moves)
+                        cornerPanel(Crop(1, 0, 30, 256, 98), wideView ? std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f) : 0.5f);
+                    else if (command)
+                        cornerPanel(Crop(1, 0, 78, 256, 114), wideView ? std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f) : 0.44f);
+                    else if (target)
+                        cornerPanel(Crop(1, 0, 22, 256, 110), wideView ? std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f) : 0.45f);
                 }
-                else if (moves)
-                    cornerPanel(Crop(1, 0, 30, 256, 98), wideView ? std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f) : 0.5f);
-                else if (command)
-                    cornerPanel(Crop(1, 0, 78, 256, 114), wideView ? std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f) : 0.44f);
-                else if (target)
-                    cornerPanel(Crop(1, 0, 22, 256, 110), wideView ? std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f) : 0.45f);
             }
         }
         else if (funcWatch.Ran(bw2.save, 8) || (funcWatch.Ran(bw2.saveWrite, 8) && !strcmp(lastKnownBw2.name, "save")))
@@ -5268,7 +5307,7 @@ int main(int argc, char** argv)
             add(M_WIDE, "WIDESCREEN WORLD", onOff(cfg.wide));
             add(M_SMOOTH, "SMOOTH SCALING", onOff(cfg.smooth));
             {
-                static const char* const btnNames[] = { "CORNER", "STRIP", "PANEL", "CLASSIC", "SUN AND MOON" };
+                static const char* const btnNames[] = { "CORNER", "STRIP", "PANEL", "STANDARD", "SUN AND MOON" };
                 const bool gen4Own = pt.on || !funcWatchOn;
                 const char* btnVal = gen4Own ? (cfg.battleButtons == 4 ? "SUN AND MOON" : "STANDARD")
                                              : btnNames[std::clamp(cfg.battleButtons, 0, 4)];
@@ -7021,7 +7060,7 @@ int main(int argc, char** argv)
                 break;
             case M_BATTLEBUTTONS:
                 if (pt.on || !funcWatchOn) cfg.battleButtons = cfg.battleButtons == 4 ? 1 : 4;
-                else cfg.battleButtons = (cfg.battleButtons + (dir < 0 ? 4 : 1)) % 5; // CORNER, STRIP, PANEL, CLASSIC, SUN AND MOON
+                else cfg.battleButtons = (cfg.battleButtons + (dir < 0 ? 4 : 1)) % 5; // CORNER, STRIP, PANEL, STANDARD, SUN AND MOON
                 bw1.battleButtons = cfg.battleButtons;
                 break;
             case M_ZOOM:

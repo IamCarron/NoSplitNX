@@ -364,6 +364,76 @@ int main()
         assert(std::fabs(z.zoom - 1.0f) < 0.01f && std::fabs(z.lookX) < 0.01f && std::fabs(z.lookY) < 0.01f);
     }
 
+    // Authentic BW1 + B2W2 battle strips mutually co-sized with AdaptGen5BattlePrompt.
+    {
+        constexpr uint32_t darkTray = 0xFF1A2024u, crimson = 0xFF682428u, arena = 0xFF103020u;
+        std::vector<uint32_t> promptTop(256 * 192, arena), bw1Touch(256 * 192, 0xFF282830u), bw2Touch(256 * 192, 0xFF202028u);
+        for (int x = 0; x < 256; x++)
+        {
+            for (int y = 147; y < 150; y++) promptTop[y * 256 + x] = crimson;
+            for (int y = 150; y < 192; y++) promptTop[y * 256 + x] = darkTray;
+        }
+        for (int y = 158; y < 174; y++)
+            for (int x = 16; x < 185; x++)
+                promptTop[y * 256 + x] = white;
+        // BW1 magenta cursor around BAG + BW2 crimson cursor around RUN.
+        bw1Touch[146 * 256 + 6] = bw1Touch[182 * 256 + 74] = 0xFFFB0092u;
+        bw2Touch[154 * 256 + 94] = bw2Touch[188 * 256 + 162] = 0xFFC31028u;
+
+        const ScreenImage sBw1[2] = { { promptTop.data(), nullptr }, { bw1Touch.data(), nullptr } };
+        const ScreenImage sBw2[2] = { { promptTop.data(), nullptr }, { bw2Touch.data(), nullptr } };
+        const float viewW = 341.333f, viewRight = 128.0f + viewW / 2.0f;
+
+        for (bool isMoves : { false, true })
+        {
+            Scene sc1;
+            sc1.name = "battle";
+            sc1.wide = true;
+            sc1.items = { FullScreen(0) };
+            float pr1 = 0.0f, btnW1 = 0.0f, minW = 0.0f, idealW = 0.0f, maxW = 0.0f;
+            Gen5BattleButtonBounds(1, isMoves, false, 103, minW, idealW, maxW);
+            assert(AdaptGen5BattlePrompt(sc1, viewW, sBw1, minW, idealW, maxW, pr1, btnW1));
+            Bw1Layouts::BattleStripClassic(sc1, viewRight, bw1Touch.data(), isMoves, pr1);
+            int bw1Crops = 0, bw1Mag = 0;
+            for (const Element& e : sc1.items)
+                if (e.screen == 1)
+                {
+                    bw1Crops++;
+                    assert(e.dx >= pr1 + 4.9f && e.dx + e.sw * e.scale <= viewRight + 0.01f);
+                    assert(e.dy >= 146.5f && e.dy + e.sh * e.scale <= 190.5f);
+                    if (e.border && e.borderColor == 0xFB0092u) bw1Mag++;
+                }
+            assert(bw1Crops == 4 && (isMoves || bw1Mag == 1));
+
+            Scene sc2;
+            sc2.name = "battle";
+            sc2.wide = true;
+            sc2.items = { FullScreen(0) };
+            float pr2 = 0.0f, btnW2 = 0.0f;
+            Gen5BattleButtonBounds(1, isMoves, false, 110, minW, idealW, maxW);
+            assert(AdaptGen5BattlePrompt(sc2, viewW, sBw2, minW, idealW, maxW, pr2, btnW2));
+            Gen5Strip::Black2Authentic(sc2, viewRight, sBw2[1], isMoves, pr2);
+            int bw2Crops = 0, bw2Crim = 0;
+            for (const Element& e : sc2.items)
+            {
+                if (e.screen == 1 && e.alpha > 0)
+                {
+                    bw2Crops++;
+                    assert(e.dx >= pr2 + 4.9f && e.dx + e.sw * e.scale <= viewRight + 0.01f);
+                    assert(e.dy >= 146.5f && e.dy + e.sh * e.scale <= 190.5f);
+                }
+                if (e.border && e.borderColor == 0xC31028u) bw2Crim++;
+            }
+            assert(bw2Crops == 4 && (isMoves || bw2Crim == 1));
+            if (!isMoves)
+            {
+                int tx = 0, ty = 0;
+                assert(MergedTouch(sc2, viewRight - 20.0f, 155.0f, tx, ty));
+                assert(tx >= 82 && tx < 174 && ty >= 54 && ty < 134);
+            }
+        }
+    }
+
     SDL_Quit();
-    puts("Gen 5 layouts: single-screen Bag, battle questions, Gen5Strip, SmButtons, DsZoom and compositors passed.");
+    puts("Gen 5 layouts: single-screen Bag, battle questions, Gen5Strip, authentic BW1/B2W2 strips, SmButtons, DsZoom and compositors passed.");
 }

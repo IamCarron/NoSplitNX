@@ -464,7 +464,8 @@ inline const BelowButton& BlackBack()
 // screen has below them (back, SHIFT, the rotation's) beside them. viewRight: the right edge of the view; grid: the moves or targets
 // rather than the command menu, when the touch screen's layers cannot tell; party: where the
 // parties' rows of balls go.
-inline void Black2(Scene& sc, float viewRight, const ScreenImage* screens, bool grid, const PartyPlaces& party)
+inline void Black2(Scene& sc, float viewRight, const ScreenImage* screens, bool grid, const PartyPlaces& party,
+    float availRoom = -1.0f)
 {
     // Which menu the touch screen shows, by the layers at a few places: the command menu's
     // banners (BG0: BAG, RUN, POKEMON) and the inside of the FIGHT! plate above its banner (the
@@ -492,8 +493,9 @@ inline void Black2(Scene& sc, float viewRight, const ScreenImage* screens, bool 
     }
     const float right = viewRight - 2;
     // The buttons are drawn smaller where they would reach the message (a long name on a narrow
-    // view): at least 4 pixels clear of it.
-    const float room = right - (MessageEnd(screens[0]) + 4);
+    // view): at least 4 pixels clear of it. When AdaptGen5BattlePrompt already resized the tray,
+    // use its computed room directly.
+    const float room = availRoom > 0.0f ? availRoom : (right - (MessageEnd(screens[0]) + 4));
     // The rows of balls: the foe's x 105-151, rows 44-51 on the command menu and 20-27 on the
     // others; the player's x 80-171, rows 128-142.
     PartyRows(sc, party, Crop(1, 104, grid ? 19 : 43, 49, 10), Crop(1, 79, 127, 94, 16));
@@ -537,5 +539,140 @@ inline void Black2(Scene& sc, float viewRight, const ScreenImage* screens, bool 
     buttons.drop = LAYER_BACKDROP;
     sc.items.push_back(buttons);
     Below(sc, screens[1], below, n, left, top + 35 * s, 90 * s, s, gap, 0xC31028);
+}
+
+// Whether Black 2 / White 2's battle touch screen has finished sliding its command or move
+// buttons into place (or flags are unavailable). Avoids showing mid-animation Poke Ball slices.
+inline bool Black2ButtonsReady(const ScreenImage& touch, bool& gridOut)
+{
+    const uint8_t* fl = touch.flags;
+    if (!fl) return true;
+    auto layer = [&](int x, int y) { return LayerClass(fl[y * 256 + x]); };
+    const bool commands = layer(39, 170) == LAYER_BG0 && layer(127, 180) == LAYER_BG0 &&
+                          layer(216, 170) == LAYER_BG0 && layer(128, 70) == LAYER_BACKDROP &&
+                          layer(39, 146) == LAYER_BG0 && layer(127, 156) == LAYER_BG0 && layer(216, 146) == LAYER_BG0;
+    const bool buttons = layer(40, 74) == LAYER_BG1 && layer(216, 74) == LAYER_BG1 &&
+                         layer(40, 120) == LAYER_BG1 && layer(216, 120) == LAYER_BG1 &&
+                         layer(0, 80) == LAYER_BACKDROP && layer(255, 80) == LAYER_BACKDROP;
+    if (!commands && !buttons) return false;
+    gridOut = buttons;
+    return true;
+}
+
+// Authentic Black 2 / White 2 battle strip: crops the real textured touch-screen plates (FIGHT!
+// metallic bar above dotted-hexagonal BAG / RUN / POKEMON, or the 2x2 move cards) mutually
+// co-sized with AdaptGen5BattlePrompt on the bottom tray, highlighted with B2W2's crimson cursor.
+inline void Black2Authentic(Scene& sc, float viewRight, const ScreenImage& touch, bool moves, float promptRight)
+{
+    const uint32_t* px = touch.pixels;
+    if (!px) return;
+    struct Cell { int sx, sy, sw, sh; int hit[4]; float dx, dy, scale; };
+    const float boxTop = 147, boxBottom = 190, gap = 2, right = viewRight - 2;
+    const float top = boxTop + 2, bottom = boxBottom - 1, height = bottom - top;
+    const float availW = std::max(84.0f, right - (promptRight + 5.0f));
+    constexpr uint32_t kCursorCrimson = 0xC31028;
+
+    int x0 = 0, y0 = 0, x1 = -1, y1 = -1;
+    const bool hasCursor = CursorBox(px, kCursorCrimson, x0, y0, x1, y1);
+    auto cursorBest = [&](const std::vector<Cell>& cells) {
+        if (!hasCursor) return -1;
+        const float cx = (x0 + x1) / 2.0f, cy = (y0 + y1) / 2.0f;
+        if (!moves && y1 - y0 >= 80) return 0;
+        int best = -1;
+        float bestD = 1e9f;
+        for (size_t i = moves ? 0 : 1; i < cells.size(); i++)
+        {
+            const int* h = cells[i].hit;
+            const float dx = cx - (h[0] + h[2]) / 2.0f, dy = cy - (h[1] + h[3]) / 2.0f;
+            if (dx * dx + dy * dy < bestD) { bestD = dx * dx + dy * dy; best = (int)i; }
+        }
+        return best;
+    };
+
+    if (!moves)
+    {
+        const float sc1 = std::min((height - gap) / 62.0f, (availW - 2 * gap) / 204.0f);
+        const float cw = 68.0f * sc1, fightH = 22.0f * sc1;
+        const float totalH = fightH + 40.0f * sc1 + gap;
+        const float width = 3 * cw + 2 * gap;
+        const float left = right - width;
+        const float rowT = top + (height - totalH) / 2.0f;
+        const float rowB = rowT + fightH + gap;
+
+        std::vector<Cell> cells;
+        cells.push_back({ 82, 74, 92, 42, { 48, 46, 208, 136 }, left, rowT, sc1 });                       // FIGHT
+        cells.push_back({ 6, 146, 68, 40, { 0, 134, 84, 192 }, left, rowB, sc1 });                         // BAG
+        cells.push_back({ 94, 154, 68, 36, { 84, 144, 172, 192 }, left + cw + gap, rowB + 2 * sc1, sc1 }); // RUN
+        cells.push_back({ 182, 146, 68, 40, { 172, 134, 256, 192 }, left + 2 * (cw + gap), rowB, sc1 });   // POKEMON
+        const int best = cursorBest(cells);
+
+        // Upper FIGHT! plate: real centre banner unstretched inside a matching #202020 rounded plate.
+        Element fightBg = FillRect(left, rowT, 1000, std::max(1, (int)std::lround(1000 * fightH / width)), 0x202020);
+        fightBg.scale = width / 1000.0f;
+        fightBg.border = true;
+        fightBg.borderRadius = 2.0f;
+        fightBg.borderColor = best == 0 ? kCursorCrimson : 0xF3F3FB;
+        fightBg.borderWidth = best == 0 ? 10 : 5;
+        sc.items.push_back(fightBg);
+
+        const Cell& fc = cells[0];
+        const float fs = std::min((fightH - 2.0f) / (float)fc.sh, (width - 4.0f) / (float)fc.sw);
+        Element fightArt = Crop(1, fc.sx, fc.sy, fc.sw, fc.sh);
+        fightArt.scale = fs;
+        fightArt.dx = left + (width - fc.sw * fs) / 2.0f;
+        fightArt.dy = rowT + (fightH - fc.sh * fs) / 2.0f;
+        sc.items.push_back(fightArt);
+        const int fightTouch[4] = { 82, 54, 92, 80 }; // (x, y, w, h) of B2W2 FIGHT! plate
+        TouchArea(sc, fightTouch, left, rowT, width, fightH);
+
+        for (size_t i = 1; i < cells.size(); i++)
+        {
+            const Cell& c = cells[i];
+            Element e = Crop(1, c.sx, c.sy, c.sw, c.sh);
+            e.dx = c.dx;
+            e.dy = c.dy;
+            e.scale = c.scale;
+            e.border = true;
+            e.borderRadius = 2.0f;
+            if ((int)i == best)
+            {
+                e.borderColor = kCursorCrimson;
+                e.borderWidth = 10;
+            }
+            sc.items.push_back(e);
+        }
+        return;
+    }
+
+    const float ms = std::min((height - gap) / (2.0f * 40.0f), (availW - gap) / 256.0f);
+    const float cw = 128.0f * ms, rowH = 40.0f * ms;
+    const float width = 2 * cw + gap;
+    const float left = right - width;
+    const float totalH = 2 * rowH + gap;
+    const float topM = top + (height - totalH) / 2.0f;
+    std::vector<Cell> cells;
+    for (int i = 0; i < 4; i++)
+    {
+        const int col = i & 1, row = i >> 1;
+        cells.push_back({ col * 128, 36 + row * 48, 128, 40, { col * 128, 30 + row * 50, col * 128 + 128, 80 + row * 50 },
+            left + col * (cw + gap), topM + row * (rowH + gap), ms });
+    }
+    const int best = cursorBest(cells);
+    for (size_t i = 0; i < cells.size(); i++)
+    {
+        const Cell& c = cells[i];
+        Element e = Crop(1, c.sx, c.sy, c.sw, c.sh);
+        e.dx = c.dx;
+        e.dy = c.dy;
+        e.scale = c.scale;
+        e.border = true;
+        e.borderRadius = 2.0f;
+        if ((int)i == best)
+        {
+            e.borderColor = kCursorCrimson;
+            e.borderWidth = 10;
+        }
+        sc.items.push_back(e);
+    }
 }
 } // namespace Gen5Strip
