@@ -24,8 +24,10 @@ public:
     void Draw(const Scene& scene, const ScreenImage screens[2], int outW, int outH, bool smooth, const WideImage* wide)
     {
         uint32_t bg = 0;
-        if (scene.bgScreen >= 0 && scene.bgScreen < 2 && screens[scene.bgScreen].pixels)
+        if (scene.bgScreen >= 0 && screens[scene.bgScreen].pixels)
             bg = screens[scene.bgScreen].pixels[std::clamp(scene.bgY, 0, 191) * 256 + std::clamp(scene.bgX, 0, 255)] & 0xFFFFFF;
+        else if (scene.bgColor)
+            bg = scene.bgColor & 0xFFFFFF;
         const bool useWide = scene.wide && !scene.narrow && wide && wide->pixels && wide->w > 0 && wide->h > 0;
         const MergedView v = MergedMakeView(outW, outH);
 
@@ -110,18 +112,20 @@ public:
                 }
                 continue;
             }
-            if (el.screen >= 2 || !screens[el.screen].pixels) continue;
+            if (!screens[el.screen].pixels) continue;
             const ScreenImage& src = screens[el.screen];
 
-            const bool nearest = el.crisp || !smooth;
-            const bool keyed = el.keys[0] != 0xFFFFFFFF;
+            const bool nearest = MergedNearest(el, s, smooth);
+            // Sharp pixels at an uneven scale (#69): expand by an integer factor then filter.
+            const bool sharp = nearest && MergedSharp(s * el.stretchX, s);
+            const bool keyed = el.keys[0] != 0xFFFFFFFF || el.keyGrey;
             const bool spriteKey = el.dropSpriteCorner > 0 && src.flags;
             const bool plain = !(el.drop && src.flags) && !keyed && !spriteKey && el.alpha == 255 && el.cutX >= 256 && !el.holeCount;
             const int slotIndex = slot++;
             SDL_Texture* tex = Slot(slotIndex, el.sw, el.sh);
             if (!tex) continue;
             Tex& cached = Slots[slotIndex];
-            const SDL_ScaleMode scaleMode = nearest ? SDL_ScaleModeNearest : SDL_ScaleModeLinear;
+            const SDL_ScaleMode scaleMode = (nearest || sharp) ? SDL_ScaleModeNearest : SDL_ScaleModeLinear;
             if (!cached.hasScale || cached.scale != scaleMode)
             {
                 SDL_SetTextureScaleMode(tex, scaleMode);
@@ -145,6 +149,7 @@ public:
             {
                 const auto tp = std::chrono::steady_clock::now();
                 sig = Signature(el, src, plain, nearest) ^ (overWorld ? ws * 1099511628211ull : 0ull);
+                if (!sig) sig = 1;
                 SignatureMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tp).count();
                 cacheHit = cached.hasSig && cached.sig == sig;
             }
@@ -157,7 +162,7 @@ public:
                     cached.blend = bm;
                     cached.hasBlend = true;
                 }
-                DrawPiece(tex, dst, el);
+                DrawPiece(tex, dst, el, sharp ? slotIndex : -1, true, true, sig);
                 continue;
             }
             cached.hasSig = canCache && steadyWorld;
@@ -270,7 +275,7 @@ public:
             }
             (overWorld ? UnderWorldMs : UploadMs) += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tu).count();
             Uploads++;
-            DrawPiece(tex, dst, el);
+            DrawPiece(tex, dst, el, sharp ? slotIndex : -1, false, cached.hasSig, sig);
         }
         if (!useWide && scene.edgeFill && !scene.items.empty() && scene.items[0].screen >= 0 && scene.items[0].screen < 2 && screens[scene.items[0].screen].pixels)
         {
@@ -307,8 +312,72 @@ private:
         return x.t;
     }
 
-    void DrawPiece(SDL_Texture* tex, const SDL_Rect& dst, const Element& el)
+    void DrawPiece(SDL_Texture* tex, const SDL_Rect& dst, const Element& el, int sharpSlot = -1,
+        bool isCacheHit = false, bool canCacheSharp = false, uint64_t pieceSig = 0)
     {
+        // Sharp pixels at an uneven scale (#69): upscale by an integer factor with nearest
+        // sampling into a cached render target, then blit with linear filtering at the seams.
+        // Skip the render-target pass on subsequent identical frames so static UI costs zero FBO swaps.
+        if (sharpSlot >= 0 && SDL_RenderTargetSupported(R))
+        {
+            int tw = 0, th = 0;
+            SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+            const int k = std::clamp((int)std::ceil(std::max((float)dst.w / std::max(1, tw), (float)dst.h / std::max(1, th))), 1, 8);
+            if ((int)Sharp.size() <= sharpSlot) Sharp.resize(sharpSlot + 1);
+            Tex& x = Sharp[sharpSlot];
+            if (!x.t || x.w != tw * k || x.h != th * k)
+            {
+                if (x.t) SDL_DestroyTexture(x.t);
+                x.t = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, tw * k, th * k);
+                x.w = tw * k;
+                x.h = th * k;
+                x.hasSig = false;
+                x.hasScale = false;
+                x.hasBlend = false;
+            }
+            if (x.t)
+            {
+                SDL_BlendMode mode = SDL_BLENDMODE_BLEND;
+                SDL_GetTextureBlendMode(tex, &mode);
+                if (!(isCacheHit && canCacheSharp && pieceSig != 0 && x.hasSig && x.sig == pieceSig))
+                {
+                    SDL_Texture* was = SDL_GetRenderTarget(R);
+                    if (SDL_SetRenderTarget(R, x.t) == 0)
+                    {
+                        SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
+                        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+                        SDL_RenderCopy(R, tex, nullptr, nullptr);
+                        SDL_SetTextureBlendMode(tex, mode);
+                        SDL_SetRenderTarget(R, was);
+                        x.hasSig = canCacheSharp && pieceSig != 0;
+                        x.sig = pieceSig;
+                        if (!x.hasScale || x.scale != SDL_ScaleModeLinear)
+                        {
+                            SDL_SetTextureScaleMode(x.t, SDL_ScaleModeLinear);
+                            x.scale = SDL_ScaleModeLinear;
+                            x.hasScale = true;
+                        }
+                        if (!x.hasBlend || x.blend != mode)
+                        {
+                            SDL_SetTextureBlendMode(x.t, mode);
+                            x.blend = mode;
+                            x.hasBlend = true;
+                        }
+                        tex = x.t;
+                    }
+                }
+                else
+                {
+                    if (!x.hasBlend || x.blend != mode)
+                    {
+                        SDL_SetTextureBlendMode(x.t, mode);
+                        x.blend = mode;
+                        x.hasBlend = true;
+                    }
+                    tex = x.t;
+                }
+            }
+        }
         // (A mirrored piece, as MergedCompose draws it: the message box's closing edge in
         // the battle strip was drawn the wrong way round here, a dark line beside the text.)
         if (el.flipX || el.flipY)
@@ -328,6 +397,7 @@ private:
         mix((uint64_t)el.sh << 32 | (uint64_t)el.alpha << 24 | (uint64_t)el.drop << 16 | (plain ? 1u : 0u) | (nearest ? 2u : 0u));
         for (uint32_t k : el.keys) mix(k);
         mix((uint64_t)el.keyTolerance << 32 | (uint32_t)el.keyRing);
+        mix((uint64_t)(uint32_t)el.keyGrey);
         mix((uint64_t)el.cutX << 32 | (uint32_t)el.cutY);
         mix((uint64_t)el.dropSpriteCorner << 32 | (uint32_t)el.holeCount);
         for (int i = 0; i < el.holeCount; i++)
@@ -788,6 +858,7 @@ private:
     SDL_Renderer* R;
     SDL_BlendMode Premultiplied;
     std::vector<Tex> Slots;
+    std::vector<Tex> Sharp; // (each slot's piece blown up for MergedSharp)
     std::vector<bool> CachedPremul; // (each slot's last blend mode, for a texture not uploaded again)
     Tex WideTex, EdgeTex[2], EdgeInTex[2], FillTex[2], CoverTex[2], NarrowTex[2], WeatherTex[2];
     uint32_t Fill[16 * 192];

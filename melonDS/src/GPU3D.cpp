@@ -1670,10 +1670,17 @@ void GPU3D::BoxTest(const u32* params) noexcept
     // off by the clipping as ever: it only costs the geometry engine a little more work.
     if (Wide.Owner == this && Wide.ViewWidth > 256)
     {
+        // ZOOM OUT: as many times wider and taller again.
+        const s64 zoom = (s64)((Wide.Zoom > 1 ? Wide.Zoom : 1) * 4096.0f + 0.5f);
+        const s64 view = (s64)std::max(256.0f, Wide.ViewWidth);
         for (int i = 0; i < 8; i++)
         {
-            cube[i].Position[0] = (s32)((s64)cube[i].Position[0] * 256 * 9 / ((s64)Wide.ViewWidth * 10));
-            cube[i].Position[1] = (s32)((s64)cube[i].Position[1] * 9 / 10);
+            // LOOK AROUND: moved as the picture is, before the tenth's margin.
+            const s64 w = cube[i].Position[3];
+            const s64 lx = Wide.Zoom > 1 ? (s64)(Wide.LookX * 4096.0f) : 0;
+            const s64 ly = Wide.Zoom > 1 ? (s64)(Wide.LookY * 4096.0f) : 0;
+            cube[i].Position[0] = (s32)(((s64)cube[i].Position[0] * 256 * 4096 / (view * zoom) - w * lx / 4096) * 9 / 10);
+            cube[i].Position[1] = (s32)(((s64)cube[i].Position[1] * 4096 / zoom - w * ly / 4096) * 9 / 10);
         }
     }
 

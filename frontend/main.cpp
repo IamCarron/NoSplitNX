@@ -55,6 +55,10 @@
 #include "host.h"
 #include "layout.h"
 #include "ui.h"
+#include "ds_zoom.h" // ZOOM AND LOOK AROUND on the DS overworld
+#include "sm_buttons.h" // BATTLE BUTTONS: SUN AND MOON
+#include "sm_buttons_art.h" // BATTLE BUTTONS: SUN AND MOON's words
+#include "gen5strip.h" // Gen 5 battle buttons on the message box (BATTLE BUTTONS: STRIP)
 #include "merged.h"
 #include "audiostretch.h"
 #include "fast_forward_button.h"
@@ -355,6 +359,9 @@ static int KeyFromName(const std::string& n)
 
 // Script lines: "<first frame> <last frame> KEY [KEY...]" or "<first> <last> touch <x> <y>"
 static std::vector<int> g_touchOnlyFuncs; // functions of screens played only by touch (see their lookup)
+static std::vector<int> g_touchLargeFuncs; // of those, the ones shown with the touch screen large (MERGED and HYBRID)
+static int g_contestDressFunc = -1; // Diamond, Pearl, Platinum: the contests' dressing up (VisualCompetition_Main)
+static int g_musicalDressFunc = -1; // Black and White: the Musical's dressing up (MUSICAL_DRESSUP_SYS_Main)
 
 static std::vector<ScriptEvent> LoadScript(const std::string& path)
 {
@@ -1620,10 +1627,11 @@ struct Settings
     bool wideGpu = false;
 #endif
     bool ds3dGpu = true;         // with it, the DS-resolution 3D picture too
+    bool zoom = true, zoomText = true; // ZOOM AND LOOK AROUND, AUTO ZOOM IN (ds_zoom.h)
     // Black and Black 2: how a battle's buttons are shown beside the wide view (BATTLE BUTTONS):
-    // 0 CORNER, the touch screen's panel in the lower right corner; 1 STRIP (Black only; CORNER
-    // for Black 2), the buttons large in the message box's band; 2 PANEL, the touch screen's
-    // panel as tall as the message box (Bw1Layouts::BUTTONS_*).
+    // 0 CORNER, the touch screen's panel in the lower right corner; 1 STRIP, rounded buttons in
+    // the message box's band; 2 PANEL, the touch screen's panel as tall as the message box;
+    // 3 CLASSIC, the earlier strip; 4 SUN AND MOON (Bw1Layouts::BUTTONS_*).
     int battleButtons = 1;
     // The PC all-games program: the window's size when it last closed (0: 1280x720, a wide view).
     int windowW = 0, windowH = 0;
@@ -1704,7 +1712,9 @@ struct Settings
             else if (k == "update_sha") updateSha = v;
             else if (k == "update_time") updateTime = v;
             else if (k == "last_game") lastGame = v;
-            else if (k == "battle_buttons") battleButtons = v == "corner" ? 0 : v == "panel" ? 2 : 1;
+            else if (k == "zoom") zoom = v != "0";
+            else if (k == "zoom_text") zoomText = v != "0";
+            else if (k == "battle_buttons") battleButtons = v == "corner" ? 0 : v == "panel" ? 2 : v == "classic" ? 3 : v == "sunmoon" ? 4 : 1;
             else if (k == "window")
             {
                 const size_t x = v.find('x');
@@ -1747,7 +1757,10 @@ struct Settings
         if (!listBackground.empty()) f << "list_background=" << listBackground << "\n";
         if (!listLang.empty()) f << "list_lang=" << listLang << "\n";
         f << "start_button=" << (startMenu ? "menu" : "ds") << "\n";
-        f << "battle_buttons=" << (battleButtons == 0 ? "corner" : battleButtons == 2 ? "panel" : "strip") << "\n";
+        f << "zoom=" << (zoom ? 1 : 0) << "\n";
+        f << "zoom_text=" << (zoomText ? 1 : 0) << "\n";
+        static const char* const battleButtonNames[] = { "corner", "strip", "panel", "classic", "sunmoon" };
+        f << "battle_buttons=" << battleButtonNames[std::clamp(battleButtons, 0, 4)] << "\n";
         controls.Save(f);
         f << "both_versions=" << (bothVersions ? 1 : 0) << "\n";
         f << "ra=" << (ra.on ? 1 : 0) << "\n";
@@ -1830,7 +1843,7 @@ static bool ReadSnapshot(NDS& nds, const std::string& path, uint32_t* frame, boo
     Savestate st(blob.data() + 4, (u32)blob.size() - 4, false);
     if (st.Error) return false;
     if (touched) *touched = true;
-    if (!nds.DoSavestate(&st)) return false;
+    if (!nds.DoSavestate(&st) || st.Error) return false;
     if (frame) memcpy(frame, blob.data(), 4);
     rc_reset();
     return true;
@@ -1920,17 +1933,15 @@ int main(int argc, char** argv)
     {
         // If the save file exists and is non-empty on disk, refusing to start is safer than
         // booting with an empty buffer that would overwrite it on the first in-game save.
-        FILE* sf = fopen(opt.save.c_str(), "rb");
-        if (sf)
+        std::error_code ec;
+        const auto sz = std::filesystem::file_size(std::filesystem::u8path(opt.save), ec);
+        if (!ec && sz > 0)
         {
-            fseek(sf, 0, SEEK_END);
-            long sz = ftell(sf);
-            fclose(sf);
-            if (sz > 0)
-            {
-                fprintf(stderr, "cannot read save file (%ld bytes): %s\n", sz, opt.save.c_str());
-                return 1;
-            }
+            char msg[1024];
+            snprintf(msg, sizeof msg, "The save %s (%ju bytes) cannot be read, so the game was not started: a new game would write over it. Check the file's permissions.", opt.save.c_str(), (uintmax_t)sz);
+            fprintf(stderr, "%s\n", msg);
+            if (!opt.headless && !opt.testRun) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Save could not be read", msg, nullptr);
+            return 1;
         }
     }
     fprintf(stderr, "ROM %s: %zu bytes; save %s: %zu bytes\n", opt.rom.c_str(), rom.size(), opt.save.c_str(), sav.size());
@@ -2562,6 +2573,7 @@ int main(int argc, char** argv)
     // The button chosen in a battle strip (see the input handling before the frame runs).
     int battleSel = 0;
     bool battleFightOnly = false; // the command panel has FIGHT alone (gen4BattleInput)
+    bool battleMega = false;      // HG-Engine's Mega Evolution button beside the moves
     // Per application, the overlay that holds its code when no other application's code is
     // there (-1 otherwise), and per section the frames on which it has run since it started
     // running (see where it is counted).
@@ -2640,6 +2652,7 @@ int main(int argc, char** argv)
     bool appBottomNow = false;
     bool athlonNow = false;   // a Pokeathlon course or its Pokemon chooser is running
     bool touchOnlyNow = false; // a touch-only game (the Ruins of Alph puzzle) is running
+    bool touchLargeNow = false; // one shown with its touch screen large (g_touchLargeFuncs)
     // The command strip's own cursor: d-pad presses seen by the frontend this frame, and the
     // selection they have moved it to (reset whenever the ROM's published selection changes).
     std::string stripNav; int stripSel = 0, stripPubSel = -1, stripPubMenu = 0;
@@ -2742,13 +2755,24 @@ int main(int argc, char** argv)
         // signature; Black and White: the Musical's dressing up (Nimbasa City, in the story) and
         // the signature. (HeartGold and SoulSilver's are applications: AutoFocus::touchOnlyApps.)
         g_touchOnlyFuncs.clear();
+        g_touchLargeFuncs.clear();
         for (const char* n : { "PoffinBerrySelection_RunPoffinCookingApp", "Mining_GameTask", "VisualCompetition_Main",
                                "CapsuleMenu_Main", "SignatureApp_Main", "MUSICAL_DRESSUP_SYS_Main",
-                               "TRCARD_SYS_StateWaitEditProc" })
+                               "TRCARD_SYS_StateWaitEditProc", "TrainerCard_Main" })
         {
             const int f = funcWatch.Find(n);
             if (f >= 0) g_touchOnlyFuncs.push_back(f);
+            bw2Names.push_back(n);
         }
+        // Shown with the touch screen large: Poffin cooking (pot side view on top) and
+        // Musical dressing up (curtain + one line of text).
+        for (const char* n : { "PoffinBerrySelection_RunPoffinCookingApp", "MUSICAL_DRESSUP_SYS_Main" })
+        {
+            const int f = funcWatch.Find(n);
+            if (f >= 0) g_touchLargeFuncs.push_back(f);
+        }
+        g_contestDressFunc = funcWatch.Find("VisualCompetition_Main");
+        g_musicalDressFunc = funcWatch.Find("MUSICAL_DRESSUP_SYS_Main");
         // (Platinum has functions with Black 2's names, StartMenu_Main and CARD_WaitBackupAsync
         // among them: Black 2's layouts must not pick them up.)
         if (pt.on) bw2 = Bw2Funcs();
@@ -2760,6 +2784,7 @@ int main(int argc, char** argv)
                 if (fseek(rf, 0x0C, SEEK_SET) != 0 || fread(code, 1, 4, rf) != 4) code[0] = 0;
                 fclose(rf);
             }
+            bw2map.tall = cfg.zoom;
             bw2map.Init(code, funcWatch, bw2Names, *nds, cfg.wide && cfg.wideMap && !AchievementsOn);
             // OTHER VERSION POKEMON (exclusives.h): Black, White, Black 2 and White 2.
             if (!opt.lockstep)
@@ -2775,6 +2800,18 @@ int main(int argc, char** argv)
     }
     Scene lastKnownBw2;
     uint32_t lastKnownBw2Frame = 0;
+    // The top screen darkened or whitened (master brightness, or a brightness effect on its 3D
+    // layer): the wide arena would show at full brightness through any hole cut in it.
+    auto topScreenFaded = [&]() {
+        const auto& topGpu = topUnitOf() == 0 ? nds->GPU.GPU2D_A : nds->GPU.GPU2D_B;
+        const int brightMode = (topGpu.MasterBrightness >> 14) & 3;
+        return ((brightMode == 1 || brightMode == 2) && (topGpu.MasterBrightness & 0x1F) != 0)
+            || ((topGpu.BlendCnt & 1) && ((topGpu.BlendCnt >> 6) & 3) >= 2 && topGpu.EVY != 0);
+    };
+    Element bw2BoxesTop = {};
+    std::vector<Element> bw2Boxes;
+    uint32_t bw2BoxesFrame = 0;
+    int bw2ChoiceMissing = 0; // frames a battle's choice has not had its bars in their places
     auto weatherParticles = [&]() {
         for (int f : bw2.weatherObj)
             if (funcWatch.Ran(f, 4)) return true;
@@ -2806,8 +2843,18 @@ int main(int argc, char** argv)
                                   red(128, 60) && !orange(40, 160) && !blue(128, 166) && !blue(40, 166);
         const bool cmd = pt.dp ? (dpShown && ptPanel == 1) || battleFightOnly
                                : (red(128, 60) && orange(40, 160) && blue(128, 166) && ptPanel != 4) || battleFightOnly;
+        // HG-Engine's Mega Evolution button in the CANCEL bar's right end (y 152-191): a blue
+        // or glowing white/pale-blue face (no dark red beside it at x 175).
+        auto megaFace = [&](int x, int y) {
+            int r, g, bl;
+            rgb(x, y, r, g, bl);
+            return blue(x, y) || (bl > 230 && g > 190 && r > 100);
+        };
+        const bool megaButton = !pt.on && blue(40, 166) && blue(128, 166) && !megaFace(175, 166) &&
+                                megaFace(186, 166) && megaFace(238, 166);
         const bool moves = pt.dp ? dpShown && ptPanel == 3
-                                 : !cmd && ptPanel != 4 && blue(40, 166) && blue(128, 166) && blue(216, 166);
+                                 : !cmd && ptPanel != 4 && blue(40, 166) && blue(128, 166) && (blue(216, 166) || megaButton);
+        battleMega = moves && megaButton;
         const bool idle = AutoFocus::Blank(screens[1].pixels) || (!blue(128, 166) && !red(128, 60));
         battleUnknown = (cmd || moves || idle) ? 0 : battleUnknown + 1;
         // (Another of Platinum's panels, known for what it is: the touch screen shown at once.)
@@ -2828,19 +2875,21 @@ int main(int argc, char** argv)
             // player's HP box which the wide battle moves to the right edge and which ends
             // at y 139) in two halves: the message box ("What will X do?") in the left half,
             // the buttons in the right half, so that the player's Pokemon and the message
-            // stay in sight. The box is its left part (the text ends by x 146 with the
-            // longest name) closed with a mirrored copy of its left edge; the buttons keep
-            // the touch screen's arrangement: FIGHT above BAG, RUN and POKeMON; the four
-            // moves two by two.
+            // stay in sight. The box is closed with a mirrored copy of its left edge; the
+            // buttons keep the touch screen's arrangement: FIGHT above BAG, RUN and POKeMON;
+            // the four moves two by two.
             const float bandY = 144, bandH = 48, viewL = 128 - viewWidth / 2, viewR = 128 + viewWidth / 2;
-            // A narrow view (4:3, 3:2: under 300 wide) has no room for the message beside the
-            // buttons: the buttons take the whole band, the message (the question they answer)
-            // left out. Both Pokemon and both HP boxes stay in sight.
-            const bool narrow = viewWidth < 300;
-            // ("¿Qué debería hacer ...?" and "Was soll ... tun?" run ~30 px wider than "What will ... do?".)
             const bool translated = BaseGameCode(gameCode) != gameCode;
-            const int boxW = narrow ? 0 : std::min(translated ? 186 : 156, (int)(viewWidth * (translated ? 0.56f : 0.5f))), edgeW = 6;
-            const float panelX = viewL + (narrow ? 0 : boxW + edgeW), panelY = bandY, panelR = viewR, panelB = bandY + bandH;
+            // BATTLE BUTTONS: SUN AND MOON: the command buttons in Sun and Moon's proportions (1025
+            // wide to 375 high) at the band's right end, the message box in the rest of it.
+            const bool sunMoon = cmd && SmButtons::S().on;
+            const float smWant = (bandH - 6) * 1025.0f / 375;
+            const int smRest = std::max(translated ? 186 : 150, (int)(viewWidth - smWant - 18));
+            const bool narrow = sunMoon ? viewWidth - smRest - 18 < 80 : viewWidth < 300;
+            const int edgeW = narrow ? 0 : 10, half = (int)(viewWidth / 2) - edgeW;
+            const int boxW = narrow ? 0 : sunMoon ? std::min(246, smRest)
+                : std::min(246, translated ? std::max(half, std::min(240, (int)(viewWidth * 0.6f) - edgeW)) : half);
+            const float panelX = viewL + boxW + edgeW, panelY = bandY, panelR = viewR, panelB = bandY + bandH;
             const float panelW = panelR - panelX, panelH = panelB - panelY, pad = 3, gap = 4;
             sc.items.push_back(FillRect(panelX, panelY, (int)std::ceil(panelW) + 1, (int)panelH, 0x202020));
             if (!narrow)
@@ -2853,21 +2902,13 @@ int main(int argc, char** argv)
             // Each button's outline is drawn around the item listed here for it (in the order
             // of battleSel).
             std::vector<size_t> outlined;
-            // The buttons fill the half: FIGHT, BAG and RUN from its left (after the message
-            // box) and POKeMON to the right edge of the view, the chosen one's outline on it;
-            // the moves the same width.
             const float innerX = panelX + pad, innerW = panelW - pad - 16 / 8.0f;
             const float rowH = (panelH - 2 * pad - gap) / 2, rowY = panelY + pad, row2Y = rowY + rowH + gap;
-            // A button cut from the touch screen (sx, sy, sw x sh) drawn dw wide and rowH
-            // high: its label (lx0..lx1, everything that is not plain) stays as it is, and
-            // the plain columns tileX..tileX+tileW (the button is one colour across there)
-            // are repeated on both sides of it to fill the width. A dark rectangle under it
-            // carries its outline.
             struct Cut { int sx, sy, sw, sh, lx0, lx1, tileX, tileW; };
+            bool narrowToFit = false;
+            bool centreLabel = false;
             auto button = [&](const Cut& c, float dx, float dy, float dw, uint8_t drop) {
                 const float scl = rowH / c.sh;
-                // (Sized exactly, not to whole base pixels, so that the edges of buttons
-                // above one another line up.)
                 Element backing = FillRect(dx, dy, 1000, (int)std::lround(1000 * rowH / dw), 0x101218);
                 backing.scale = dw / 1000;
                 outlined.push_back(sc.items.size());
@@ -2876,20 +2917,16 @@ int main(int argc, char** argv)
                     put(sx, c.sy, sw, c.sh, x, dy, scl);
                     sc.items.back().drop = drop;
                 };
-                if (dw <= c.sw * scl + 0.5f)
+                if (!centreLabel && dw <= c.sw * scl + 0.5f)
                 {
                     piece(c.sx, c.sw, dx + (dw - c.sw * scl) / 2);
+                    if (narrowToFit && dw < c.sw * scl)
+                    {
+                        sc.items.back().dx = dx;
+                        sc.items.back().stretchX = dw / (c.sw * scl);
+                    }
                     return;
                 }
-                // The plain columns are one colour. Widening those pixels themselves stretched any
-                // single pixel that was not (a shade at the edge of the column, one pixel of the
-                // picture beside it) into a line, and the bit of that line the label did not
-                // cover showed as a dark dot on the red FIGHT button, just left of its icon.
-                // The same columns in Platinum, SoulSilver and HeartGold. One flat colour fills
-                // the button instead; the ends and the label are drawn over it.
-                // (Worked out row by row: the buttons are lighter at the top and darker in a
-                // band at the bottom, which the ends and the label keep, so one colour for all
-                // of it left dark streaks beside them. Rows of the same colour are one fill.)
                 auto rowColour = [&](int y) {
                     uint32_t flat = 0;
                     int bestN = 0;
@@ -2903,6 +2940,31 @@ int main(int argc, char** argv)
                     }
                     return flat;
                 };
+                // Measure the actual label width so wider localized labels ("BOLSA", "HUIR",
+                // "LUCHAR") never get split across the widened button.
+                int lx0 = c.lx0, lx1 = c.lx1;
+                {
+                    uint32_t flatRow[64];
+                    const int rows = std::min(c.sh, 64);
+                    for (int y = 0; y < rows; y++) flatRow[y] = rowColour(c.sy + y);
+                    auto plain = [&](int x) {
+                        for (int y = 0; y < rows; y++)
+                            if ((b[(c.sy + y) * 256 + x] & 0xFFFFFF) != flatRow[y]) return false;
+                        return true;
+                    };
+                    const int end = c.sx + c.sw;
+                    int a = c.tileX + c.tileW;
+                    while (a < end && plain(a)) a++;
+                    int r = end - 1;
+                    while (r > a && !plain(r)) r--;
+                    int e = r;
+                    while (e > a && plain(e)) e--;
+                    if (a < end && r > a && e >= a && e < r)
+                    {
+                        lx0 = std::min(lx0, a);
+                        lx1 = std::max(lx1, e + 1);
+                    }
+                }
                 for (int y0 = c.sy; y0 < c.sy + c.sh;)
                 {
                     const uint32_t col = rowColour(y0);
@@ -2915,40 +2977,60 @@ int main(int argc, char** argv)
                     sc.items.push_back(body);
                     y0 = y1;
                 }
-                piece(c.sx, c.lx0 - c.sx, dx);
-                piece(c.lx1, c.sx + c.sw - c.lx1, dx + dw - (c.sx + c.sw - c.lx1) * scl);
-                piece(c.lx0, c.lx1 - c.lx0, dx + (dw - (c.lx1 - c.lx0) * scl) / 2);
+                if (!centreLabel)
+                {
+                    piece(c.sx, lx0 - c.sx, dx);
+                    piece(lx1, c.sx + c.sw - lx1, dx + dw - (c.sx + c.sw - lx1) * scl);
+                }
+                piece(lx0, lx1 - lx0, dx + (dw - (lx1 - lx0) * scl) / 2);
             };
-            if (cmd)
+            if (cmd && SmButtons::S().on)
             {
-                // FIGHT above BAG and RUN, as wide as the two; the party beside it, above
-                // POKeMON. Each button is the coloured inside of the touch screen's button
-                // with its label, cut to the same height (the buttons are one colour across,
-                // apart from the label).
-                static const Cut cuts[4] = { { 30, 67, 196, 34, 86, 146, 33, 4 }, { 6, 152, 66, 34, 30, 51, 9, 4 },
+                static const int hgTouch[SmButtons::COUNT][4] = { { 30, 40, 196, 90 }, { 182, 151, 68, 34 }, { 6, 152, 66, 34 }, { 94, 158, 68, 34 } };
+                static const int ptTouch[SmButtons::COUNT][4] = { { 39, 40, 178, 90 }, { 188, 154, 56, 33 }, { 12, 154, 56, 33 }, { 100, 162, 56, 30 } };
+                const float bandRoom = 2 * rowH + gap, smWide = std::min(innerW, bandRoom * 1025.0f / 375), smH = smWide * 375 / 1025;
+                SmButtons::Draw(sc, innerX + innerW - smWide, rowY + (bandRoom - smH) / 2, smWide, smH, pt.on ? ptTouch : hgTouch, battleFightOnly);
+            }
+            else if (cmd)
+            {
+                static const Cut cuts[4] = { { 30, 60, 196, 34, 80, 147, 33, 4 }, { 6, 152, 66, 34, 30, 51, 9, 4 },
                                              { 182, 151, 68, 34, 192, 241, 185, 4 }, { 94, 158, 68, 34, 118, 139, 97, 4 } };
-                // (Platinum's buttons are shaded towards their edges: their flat insides only. The
-                // label is all of it but the plain columns at each end, as "BOLSA" and "HUIR" in
-                // Spanish Diamond are wider than "BAG" and "RUN" and were split across the button.)
                 static const Cut ptCuts[4] = { { 39, 64, 178, 34, 54, 202, 50, 4 }, { 12, 154, 56, 33, 18, 62, 14, 4 },
                                                { 188, 154, 56, 33, 192, 240, 188, 4 }, { 100, 162, 56, 30, 106, 150, 102, 4 } };
                 const Cut* cut = pt.on ? ptCuts : cuts;
                 const float cellW = (innerW - 2 * gap) / 3;
-                button(cut[0], innerX, rowY, 2 * cellW + gap, 0);                           // FIGHT
+                Cut fight = cut[0];
+                if (!pt.on)
+                {
+                    int x0 = 256, x1 = -1, y0 = 192, y1 = -1;
+                    for (int y = 48; y < 121; y++)
+                    {
+                        const uint32_t face = b[y * 256 + 40] & 0xFFFFFF;
+                        for (int x = 41; x < 216; x++)
+                            if ((b[y * 256 + x] & 0xFFFFFF) != face)
+                            {
+                                x0 = std::min(x0, x);
+                                x1 = std::max(x1, x);
+                                y0 = std::min(y0, y);
+                                y1 = std::max(y1, y);
+                            }
+                    }
+                    if (x1 >= x0 && x1 - x0 < 140 && y1 - y0 < fight.sh - 2)
+                    {
+                        fight.lx0 = x0 - 2;
+                        fight.lx1 = x1 + 3;
+                        fight.sy = std::clamp((y0 + y1 + 1) / 2 - fight.sh / 2, 45, 124 - fight.sh);
+                    }
+                    centreLabel = true;
+                }
+                button(fight, innerX, rowY, 2 * cellW + gap, 0);                            // FIGHT
+                centreLabel = false;
                 if (!battleFightOnly)
                 {
                     button(cut[1], innerX, row2Y, cellW, 0);                                    // BAG
                     button(cut[2], innerX + 2 * (cellW + gap), row2Y, innerW - 2 * (cellW + gap), 0); // POKeMON
                     button(cut[3], innerX + cellW + gap, row2Y, cellW, 0);                      // RUN
                 }
-                // The party: the balls on the touch screen's top row (a ball for each
-                // Pokemon, a grey dot for an empty place; sprites, taken without their
-                // background), three over three with room between them. Each is cut on its
-                // own, 19 pixels apart from x 3 (both games; cutting three at a time put the
-                // second three a pixel off and clipped their tops; the outer pixel all round is
-                // left out, part of the outline anyway), and drawn without its dark
-                // outline (0x383030 in Platinum, 0x414141 in SoulSilver), which showed as a
-                // grey ring on the panel: the panel shows through it instead.
                 const float partyX = innerX + 2 * (cellW + gap), partyW = innerW - 2 * (cellW + gap);
                 const uint8_t drop = LAYER_BG0 | LAYER_BG1 | LAYER_BG2 | LAYER_BG3 | LAYER_BACKDROP;
                 const float ball = 17, ballGapX = 4, ballGapY = 4; // (source pixels)
@@ -2965,19 +3047,45 @@ int main(int argc, char** argv)
             }
             else if (moves)
             {
-                // The four moves two by two, each its button's rows 9-46 of 54 (name, type
-                // and PP, between the frame's rounded corners), widened with the plain
-                // columns just inside its sides. There is no room for the CANCEL bar; B
-                // cancels.
-                const float cellW = (innerW - gap) / 2;
+                const float natural = 126 * rowH / 38;
+                const float megaW = battleMega ? std::clamp(innerW - 2 * natural - 3 * gap, 26.0f, 40.0f) : 0;
+                const float movesW = battleMega ? innerW - megaW - gap : innerW;
+                const float cellW = (movesW - gap) / 2;
                 static const int slotX[4] = { 1, 129, 1, 129 }, slotY[4] = { 25, 25, 89, 89 };
+                narrowToFit = battleMega;
                 for (int i = 0; i < 4; i++)
                 {
-                    // (Platinum's: the button inside its outline, its pale middle kept, the dark
-                    // band just inside its sides repeated.)
                     const Cut c = pt.on ? Cut{ slotX[i] + 2, slotY[i] + 10, 122, 40, slotX[i] + 14, slotX[i] + 112, slotX[i] + 5, 4 }
                                         : Cut{ slotX[i], slotY[i] + 9, 126, 38, slotX[i] + 15, slotX[i] + 109, slotX[i] + 12, 3 };
-                    button(c, innerX + (i & 1) * (cellW + gap), (i >> 1) ? row2Y : rowY, (i & 1) ? innerW - cellW - gap : cellW, LAYER_BG2);
+                    button(c, innerX + (i & 1) * (cellW + gap), (i >> 1) ? row2Y : rowY, (i & 1) ? movesW - cellW - gap : cellW, LAYER_BG2);
+                }
+                narrowToFit = false;
+                if (battleMega)
+                {
+                    const float mx = innerX + movesW + gap, mw = innerX + innerW - mx, my = rowY, mh = 2 * rowH + gap;
+                    Element backing = FillRect(mx, my, 1000, (int)std::lround(1000 * mh / mw), 0x101218);
+                    backing.scale = mw / 1000;
+                    outlined.push_back(sc.items.size());
+                    sc.items.push_back(backing);
+                    const int top = 157, bottom = 192, colX = 185;
+                    const float k = mh / (bottom - top);
+                    for (int y0 = top; y0 < bottom;)
+                    {
+                        const uint32_t col = b[y0 * 256 + colX] & 0xFFFFFF;
+                        int y1 = y0 + 1;
+                        while (y1 < bottom && (b[y1 * 256 + colX] & 0xFFFFFF) == col) y1++;
+                        const float t = (y0 - top) * k, end = y1 < bottom ? (y1 - top) * k + 0.5f : mh;
+                        Element body = FillRect(mx, my + t, 1000, (int)std::lround(1000 * (end - t) / mw), col);
+                        body.scale = mw / 1000;
+                        sc.items.push_back(body);
+                        y0 = y1;
+                    }
+                    Element touch = { 1, 181, 157, 62, 35, mx, my, mh / 35, 0, 0, false };
+                    touch.stretchX = mw / 62 / touch.scale;
+                    sc.items.push_back(touch);
+                    const float s = std::min({ (mw - 6) / 22, (mh - 6) / 22, 1.5f });
+                    put(202, 162, 22, 22, mx + (mw - 22 * s) / 2, my + (mh - 22 * s) / 2, s);
+                    sc.items.back().drop = LAYER_BG0 | LAYER_BG1 | LAYER_BG2 | LAYER_BG3 | LAYER_BACKDROP;
                 }
             }
             // The chosen button is outlined in white and the others are shaded, so that the
@@ -3244,6 +3352,33 @@ int main(int argc, char** argv)
             return lastKnownBw2;
         else if (pt.on && ptApp())
             ; // Platinum's other screens (ptApp, above)
+        else if (pt.on && funcWatch.Ran(pt.field, 16) && !(nds->PowerControl9 & (1 << 15)))
+        {
+            // The Underground: the game swaps the screens there, the world on the touch screen
+            // and the radar on the top one (x 55-200, y 4-141). Widen the world and inset the radar.
+            const float left = 128 - viewWidth / 2, gap = 4;
+            sc.name = "underground";
+            sc.items = { FullScreen(1) };
+            sc.wide = worldWide;
+            {
+                Element& world = sc.items[0];
+                world.holeCount = 1;
+                const int icon[4] = { 232, 0, 256, 20 };
+                std::copy(icon, icon + 4, world.holes[0]);
+                Element ic = Crop(1, 232, 0, 24, 20);
+                ic.dx = 232;
+                ic.dy = 0;
+                ic.drop = LAYER_3D | LAYER_BACKDROP;
+                ic.crisp = true;
+                sc.items.push_back(ic);
+            }
+            Element map = Crop(0, 55, 4, 146, 138);
+            map.scale = 0.5f;
+            map.dx = std::max(left + gap, -146 * map.scale / 2);
+            map.dy = gap;
+            sc.items.push_back(map);
+            sc.bgColor = 0xAE695D;
+        }
         else if (pt.on && funcWatch.Ran(pt.field, 16))
         {
             // The overworld, the X menu and anything else over it on the top screen, the
@@ -3273,12 +3408,37 @@ int main(int argc, char** argv)
             }
         }
         else if (funcWatch.Ran(bw2.battle, 2) && (funcWatch.Ran(bw2.battleList, 2) || funcWatch.Ran(bw2.battleBag, 2)))
+        {
             // The party (after POKEMON, or to send out the next one after fainting) or the Bag:
-            // a whole touch-screen page, shown as it is.
+            // keep the battle on screen across single-colour fade frames rather than flashing black.
             only("battle-list", 1);
+            if (!bw1.on && screens && Gen5Strip::OneColour(screens[1]))
+            {
+                sc.items = { FullScreen(0) };
+                sc.wide = worldWide;
+                if (funcWatch.CurrentFrame() - bw2BoxesFrame < 600 && !topScreenFaded())
+                    Gen5Strip::KeepBoxes(sc, bw2BoxesTop, bw2Boxes, 1);
+            }
+        }
         else if (funcWatch.Ran(bw2.battle, 2) && (funcWatch.Ran(bw2.battleChoice, 4) ||
             funcWatch.Ran(bw2.battleYesNo, 4) || funcWatch.Ran(bw2.battleYesNoPoll, 1)))
+        {
             sc = BattleChoiceScene(viewWidth);
+            sc.wide = worldWide;
+            if (!bw1.on && screens)
+            {
+                if (funcWatch.CurrentFrame() - bw2BoxesFrame < 600 && !topScreenFaded())
+                    Gen5Strip::KeepBoxes(sc, bw2BoxesTop, bw2Boxes, 1);
+                if (cfg.battleButtons == 1 || cfg.battleButtons == 4)
+                {
+                    const Scene cut = sc;
+                    if (Gen5Strip::ChoiceBars(sc, (wideView ? 128 + viewWidth / 2 : 256.0f) - 2, screens, 147, 42))
+                        bw2ChoiceMissing = 0;
+                    else if (++bw2ChoiceMissing > 30)
+                        sc = cut;
+                }
+            }
+        }
         else if (funcWatch.Ran(bw2.battle, 2))
         {
             // The battle is drawn in 3D on the top screen, so the widescreen renderer shows
@@ -3322,8 +3482,8 @@ int main(int argc, char** argv)
                 kind = enemyH > 0 && enemyH <= 32 && mineH > 0 && mineH <= 34 ? 1 : 2;
             }
             // (The compositor leaves the boxes where they are in any frame without the wide arena.)
-            // The player's box is lifted this much, to clear the corner panel's frame.
-            constexpr int BattleBoxLift = 4;
+            // The player's box is lifted higher when STRIP / SUNMOON draws party balls under it.
+            const int BattleBoxLift = !bw1.on && (cfg.battleButtons == 1 || cfg.battleButtons == 4) ? 8 : 4;
             // How much of a part of the top screen is 2D, in tenths: where the HP boxes are, some
             // of it; none when the boxes are not shown (the screen going black into an evolution,
             // where the wide arena can still show the last picture through the holes); nearly all
@@ -3362,11 +3522,7 @@ int main(int argc, char** argv)
                 && !(funcWatch.Ran(bw2.ballBarTask, 3) || funcWatch.LastFrame(bw2.ballBarCreate) > funcWatch.LastFrame(bw2.ballBarDelete));
             // ... or the top screen darkened or whitened (master brightness): the holes would show
             // the wide arena at full brightness through it.
-            const auto& topGpu = topUnitOf() == 0 ? nds->GPU.GPU2D_A : nds->GPU.GPU2D_B;
-            const int brightMode = (topGpu.MasterBrightness >> 14) & 3;
-            const bool fading = ((brightMode == 1 || brightMode == 2) && (topGpu.MasterBrightness & 0x1F) != 0)
-                // (or a brightness effect on the 3D layer, as the frame drawing reads it too)
-                || ((topGpu.BlendCnt & 1) && ((topGpu.BlendCnt >> 6) & 3) >= 2 && topGpu.EVY != 0);
+            const bool fading = topScreenFaded();
             if (wideView && (kind == 1 || kind == 2) && !fading && boxesShown)
             {
                 // A single battle: the enemy's box covers x 4-109, y 30-51 of the top screen, the
@@ -3413,49 +3569,79 @@ int main(int argc, char** argv)
                 if (mine2D < 1 && !levelUp) m.sw = m.sh = 0;
                 sc.items.push_back(m);
             }
+            bw2BoxesTop = sc.items[0];
+            bw2Boxes.clear();
+            for (const Element& e : sc.items)
+                if (e.wideOnly) bw2Boxes.push_back(e);
+            bw2BoxesFrame = funcWatch.CurrentFrame();
             const bool moves = funcWatch.Ran(bw2.battleMove, 1), command = !moves && funcWatch.Ran(bw2.battleCommand, 1);
             // Choosing the target of a move in a double, triple or rotation battle: the foes'
             // panels above, the player's side below (touch screen rows 22-131).
             const bool target = !moves && !command && funcWatch.Ran(bw2.battleTarget, 1);
-            // The touch screen's buttons, as BATTLE BUTTONS in the pause menu says: CORNER or
-            // PANEL (Black's are drawn differently: frontend/bw1.h changes the corner panel made
-            // here into its own, STRIP among them; Black 2 has no STRIP, which left out the party's
-            // balls and did not look good). A battle with two or three Pokemon on each side has
-            // as many HP boxes down the right, the lowest one ending at row 145, which the corner
-            // panel would cover: it always has the panel, in the message box's band below them.
-            int style = bw1.on || !wideView || !screens ? 0 : cfg.battleButtons;
-            if (wideView && screens && !bw1.on && kind == 2) style = 2;
-            float promptRight = viewLeft + 4.0f;
-            float minBtnW = 96.0f, idealBtnW = 112.0f, maxBtnW = 120.0f;
-            const int btnStyle = (style == 2) ? 2 : 0;
-            Gen5BattleButtonBounds(btnStyle, moves, target, 110, minBtnW, idealBtnW, maxBtnW);
-            float targetBtnW = idealBtnW;
-            if (!bw1.on && wideView && screens && (moves || command || target))
+            int style = bw1.on || !screens ? 0 : cfg.battleButtons;
+            if (style == 3) style = 0; // CLASSIC falls back to CORNER for BW2
+            if (style == 4) style = 1; // SUN AND MOON uses Gen5Strip::Black2
+            const bool strip = style == 1 && (funcWatch.Ran(bw2.battleMove, 4) ||
+                funcWatch.Ran(bw2.battleCommand, 4) || funcWatch.Ran(bw2.battleTarget, 4));
+            if (!wideView && style != 1) style = 0;
+            if (wideView && screens && !bw1.on && kind == 2 && style == 0) style = 2;
+            if (strip)
             {
-                AdaptGen5BattlePrompt(sc, viewWidth, screens, minBtnW, idealBtnW, maxBtnW,
-                    promptRight, targetBtnW);
+                Gen5Strip::PartyPlaces party;
+                const Element* piece[2] = {};
+                for (const Element& e : sc.items)
+                    if (e.wideOnly && !piece[1]) (piece[0] ? piece[1] : piece[0]) = &e;
+                if (piece[1] && sc.items[0].holeCount == 2)
+                {
+                    const bool one = piece[0]->sy == 26;
+                    if (piece[0]->sw > 0)
+                    {
+                        party.foeRight = piece[0]->dx + (one ? 109 : 120);
+                        party.foeTop = piece[0]->dy + (one ? 27 : 63);
+                    }
+                    if (piece[1]->sw > 0 && one && piece[1]->sy == 106)
+                    {
+                        party.mineRight = piece[1]->dx + piece[1]->sw - 3;
+                        party.mineTop = piece[1]->dy + 33;
+                    }
+                }
+                Gen5Strip::Black2(sc, wideView ? viewRight : 256, screens, moves || target || !command, party);
             }
-            const float availBtnW = std::max(84.0f,
-                std::min(wideView ? maxBtnW : 128.0f, viewRight - 2.0f - (promptRight + 5.0f)));
-            if ((moves || command || target) && style == 2)
+            else if (style == 1) {} // (STRIP between two menus: nothing)
+            else
             {
-                // PANEL: the corner panel's piece as tall as the message box (rows 147-189),
-                // against the view's right edge, shrunk if needed so translated prompts never overlap.
-                Element c = moves ? Crop(1, 0, 30, 256, 98) : target ? Crop(1, 0, 22, 256, 110) : Crop(1, 0, 78, 256, 114);
-                c.scale = std::min(44.0f / c.sh, availBtnW / c.sw);
-                c.dx = viewRight - 2 - c.sw * c.scale;
-                c.dy = 190 - c.sh * c.scale;
-                c.border = true;
-                c.borderRadius = 3.0f;
-                c.borderColor = 0x2A2E38;
-                sc.items.push_back(c);
+                float promptRight = viewLeft + 4.0f;
+                float minBtnW = 96.0f, idealBtnW = 112.0f, maxBtnW = 120.0f;
+                const int btnStyle = (style == 2) ? 2 : 0;
+                Gen5BattleButtonBounds(btnStyle, moves, target, 110, minBtnW, idealBtnW, maxBtnW);
+                float targetBtnW = idealBtnW;
+                if (!bw1.on && wideView && screens && (moves || command || target))
+                {
+                    AdaptGen5BattlePrompt(sc, viewWidth, screens, minBtnW, idealBtnW, maxBtnW,
+                        promptRight, targetBtnW);
+                }
+                const float availBtnW = std::max(84.0f,
+                    std::min(wideView ? maxBtnW : 128.0f, viewRight - 2.0f - (promptRight + 5.0f)));
+                if ((moves || command || target) && style == 2)
+                {
+                    // PANEL: the corner panel's piece as tall as the message box (rows 147-189),
+                    // against the view's right edge, shrunk if needed so translated prompts never overlap.
+                    Element c = moves ? Crop(1, 0, 30, 256, 98) : target ? Crop(1, 0, 22, 256, 110) : Crop(1, 0, 78, 256, 114);
+                    c.scale = std::min(44.0f / c.sh, availBtnW / c.sw);
+                    c.dx = viewRight - 2 - c.sw * c.scale;
+                    c.dy = 190 - c.sh * c.scale;
+                    c.border = true;
+                    c.borderRadius = 3.0f;
+                    c.borderColor = 0x2A2E38;
+                    sc.items.push_back(c);
+                }
+                else if (moves)
+                    cornerPanel(Crop(1, 0, 30, 256, 98), wideView ? std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f) : 0.5f);
+                else if (command)
+                    cornerPanel(Crop(1, 0, 78, 256, 114), wideView ? std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f) : 0.44f);
+                else if (target)
+                    cornerPanel(Crop(1, 0, 22, 256, 110), wideView ? std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f) : 0.45f);
             }
-            else if (moves)
-                cornerPanel(Crop(1, 0, 30, 256, 98), std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f)); // the four moves, two by two
-            else if (command)
-                cornerPanel(Crop(1, 0, 78, 256, 114), std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f)); // FIGHT above BAG, RUN and POKEMON
-            else if (target)
-                cornerPanel(Crop(1, 0, 22, 256, 110), std::min(maxBtnW / 256.0f, (availBtnW - 4.0f) / 256.0f)); // the targets
         }
         else if (funcWatch.Ran(bw2.save, 8) || (funcWatch.Ran(bw2.saveWrite, 8) && !strcmp(lastKnownBw2.name, "save")))
         {
@@ -3624,6 +3810,73 @@ int main(int argc, char** argv)
         }
         else
         {
+            // Contests' dressing up (Diamond, Pearl, Platinum): theme along the top right over the
+            // touch screen and countdown heart large at the left while the theme box is white.
+            if (wideView && screens && screens[0].pixels && g_contestDressFunc >= 0 && funcWatch.Ran(g_contestDressFunc, 2) &&
+                !AutoFocus::Blank(screens[1].pixels))
+            {
+                auto lum = [&](int x, int y) {
+                    const uint32_t c = screens[0].pixels[y * 256 + x];
+                    return (((c >> 16) & 0xFF) + ((c >> 8) & 0xFF) + (c & 0xFF)) / 3;
+                };
+                if (lum(60, 12) > 235 && lum(120, 12) > 235 && lum(200, 12) > 235 && lum(4, 12) < 90)
+                {
+                    const float left = 128 - viewWidth / 2, right = 128 + viewWidth / 2, gap = 4;
+                    const float ts = 192.0f / (192.0f + 26.0f * 256.0f / 250.0f);
+                    const float tw = 256 * ts, themeScale = tw / 250;
+                    Element theme = Crop(0, 2, 2, 250, 26);
+                    theme.scale = themeScale;
+                    theme.dx = right - tw;
+                    theme.dy = 0;
+                    Element touch = Crop(1, 0, 0, 256, 192);
+                    touch.scale = ts;
+                    touch.dx = right - tw;
+                    touch.dy = 26 * themeScale;
+                    Element heart = Crop(0, 56, 30, 144, 74);
+                    const float room = right - tw - left - 2 * gap;
+                    heart.scale = std::min({ 1.25f, room / 144, 192.0f / 74 });
+                    heart.dx = left + gap + (room - 144 * heart.scale) / 2;
+                    heart.dy = (192 - 74 * heart.scale) / 2;
+                    sc.name = "contest-dressing";
+                    sc.items = { heart, theme, touch };
+                    sc.bgScreen = 0;
+                    sc.bgX = 60;
+                    sc.bgY = 40;
+                    lastKnownBw2 = sc;
+                    lastKnownBw2Frame = funcWatch.CurrentFrame();
+                    return sc;
+                }
+            }
+            // Black and White's Musical dressing up: message box (y 146-191) over the touch screen.
+            if (wideView && screens && g_musicalDressFunc >= 0 && funcWatch.Ran(g_musicalDressFunc, 2) &&
+                !AutoFocus::Blank(screens[1].pixels))
+            {
+                const float ts = 192.0f / (192.0f + 46.0f);
+                const float tw = 256 * ts;
+                Element box = Crop(0, 0, 146, 256, 46);
+                box.scale = ts;
+                box.dx = 128 - tw / 2;
+                box.dy = 0;
+                Element touch = Crop(1, 0, 0, 256, 192);
+                touch.scale = ts;
+                touch.dx = 128 - tw / 2;
+                touch.dy = 46 * ts;
+                sc.name = "musical-dressing";
+                sc.items = { box, touch };
+                sc.bgScreen = 0;
+                sc.bgX = 8;
+                sc.bgY = 100;
+                lastKnownBw2 = sc;
+                lastKnownBw2Frame = funcWatch.CurrentFrame();
+                return sc;
+            }
+            if (touchLargeNow && screens && !AutoFocus::Blank(screens[1].pixels))
+            {
+                sc = TouchLargeScene(viewWidth, "touch-large");
+                lastKnownBw2 = sc;
+                lastKnownBw2Frame = funcWatch.CurrentFrame();
+                return sc;
+            }
             // Both screens one colour (a fade to black or white between two screens): render
             // cleanly as a uniform fade instead of holding stale synthetic panels, borders or
             // solid fill rects across blank transition frames.
@@ -3814,12 +4067,43 @@ int main(int argc, char** argv)
             // the save: it was a black box over the world for a few frames.)
             if (screens && screens[1].pixels && AutoFocus::Blank(screens[1].pixels)) return;
             // On a wide view the panel stands at the right edge, mostly beside the overworld.
+            // Cut inside its frame (x 5-162, y 0-185) on a dark-green backing so the rounded
+            // lower corners square off cleanly with centred X-MENU header.
+            const uint32_t* tb = screens && screens[1].pixels ? screens[1].pixels : nullptr;
+            const uint32_t edge = tb ? (tb[100 * 256 + 5] & 0xFFFFFF) : 0x188241;
+            const uint32_t frame = tb ? (tb[100 * 256 + 3] & 0xFFFFFF) : 0x494949;
+            const int px0 = 5, pw = 158, ph = 186;
             const float menuScale = viewWidth >= 300 ? 0.8f : 0.75f;
-            const float menuX = viewWidth >= 300 ? 128 + viewWidth / 2 - 161 * menuScale - 2 : 131;
-            sc.items.push_back({ 1, 4, 0, 161, 192, menuX, (192 - 192 * menuScale) / 2, menuScale, 0, 255, false });
-            sc.items.back().border = !AutoFocus::Blank(screens[1].pixels);
-            sc.items.back().borderRadius = 3.0f;
-            sc.items.back().borderColor = 0x2A2E38;
+            const float menuX = viewWidth >= 300 ? 128 + viewWidth / 2 - pw * menuScale - 2 : 256 - pw * menuScale - 4;
+            const float menuY = (192 - ph * menuScale) / 2;
+            Element back{ -1, 0, 0, pw, ph, menuX, menuY, menuScale, 0, 255, false };
+            back.keys[0] = edge;
+            back.border = true;
+            sc.items.push_back(back);
+            Element panel{ 1, px0, 0, pw, ph, menuX, menuY, menuScale, 0, 255, false };
+            panel.keys[0] = frame;
+            panel.keyRing = 2;
+            sc.items.push_back(panel);
+            if (!tb) return;
+            bool bar = true;
+            for (int x = px0; x < px0 + pw && bar; x++) bar = (tb[x] & 0xFFFFFF) == edge && (tb[15 * 256 + x] & 0xFFFFFF) == edge;
+            int x0 = 256, x1 = -1, y0 = 192, y1 = -1;
+            for (int y = 1; y < 15 && bar; y++)
+                for (int x = px0; x < px0 + pw; x++)
+                    if ((tb[y * 256 + x] & 0xFFFFFF) != edge)
+                    {
+                        x0 = std::min(x0, x); x1 = std::max(x1, x);
+                        y0 = std::min(y0, y); y1 = std::max(y1, y);
+                    }
+            if (!bar || x1 < x0 || x1 - x0 > pw - 20) return;
+            x0--; x1++; y0--; y1++;
+            const float shift = px0 + pw / 2.0f - (x0 + x1 + 1) / 2.0f;
+            if (std::fabs(shift) < 1) return;
+            Element cover{ -1, 0, 0, x1 - x0 + 1, y1 - y0 + 1, menuX + (x0 - px0) * menuScale, menuY + y0 * menuScale, menuScale, 0, 255, false };
+            cover.keys[0] = edge;
+            sc.items.push_back(cover);
+            sc.items.push_back({ 1, x0, y0, x1 - x0 + 1, y1 - y0 + 1, menuX + (x0 - px0 + shift) * menuScale, menuY + y0 * menuScale,
+                menuScale, 0, 255, false });
         };
 
         // The safety net below must not flash up for the few frames in which the field map is
@@ -4422,6 +4706,9 @@ int main(int argc, char** argv)
         else if (appActive("GearPhone"))
             // The clock and call text from the other screen above the contact list.
             sc = Stack("phone", { Crop(0, 0, 16, 256, 58), Crop(1, 0, 0, 256, 192) }, false, viewWidth);
+        else if (appActive("TrainerCard"))
+            // The Trainer Card: the Badge Case (top screen) beside the card.
+            sc = Stack("trainer-card", { Crop(0, 0, 0, 256, 192), Crop(1, 0, 0, 256, 192) }, true, viewWidth);
         else if (appActive("ChooseStarter"))
         {
             // The Pokemon preview and the professor's text, with the Poke Balls from the
@@ -4840,7 +5127,7 @@ int main(int argc, char** argv)
     // (PAGE_KEYS, controls.h). Items a platform does not have are left out of its pages.
     enum
     {
-        M_RESUME, M_LAYOUT, M_LARGE, M_FPS60, M_FULLSCREEN, M_SMOOTH, M_WIDE, M_WIDEMAP, M_BATTLEBUTTONS,
+        M_RESUME, M_LAYOUT, M_LARGE, M_FPS60, M_FULLSCREEN, M_SMOOTH, M_WIDE, M_WIDEMAP, M_BATTLEBUTTONS, M_ZOOM, M_ZOOM_TEXT,
         M_WIDELINES, M_AUTODETAIL, M_WIDEGPU, M_GPU3D, M_SHOWFPS, M_BUTTONS, M_PADTOUCH, M_EMULATION,
         M_CONTROLS, M_STARTBTN, M_FAST, M_FASTBTN, M_FFLOWRES, M_SWITCH_FF, M_SAVESTATE, M_LOADSTATE, M_RESET, M_QUIT,
         M_SETTINGS, M_DISPLAY, M_LANGUAGE, M_SOUND, M_GRAPHICS, M_CONTROLMENU, M_BACK, M_CHEATS, M_NOTHING,
@@ -4980,6 +5267,15 @@ int main(int argc, char** argv)
             add(M_FPS60, "60 FPS", onOff(cfg.fps60));
             add(M_WIDE, "WIDESCREEN WORLD", onOff(cfg.wide));
             add(M_SMOOTH, "SMOOTH SCALING", onOff(cfg.smooth));
+            {
+                static const char* const btnNames[] = { "CORNER", "STRIP", "PANEL", "CLASSIC", "SUN AND MOON" };
+                const bool gen4Own = pt.on || !funcWatchOn;
+                const char* btnVal = gen4Own ? (cfg.battleButtons == 4 ? "SUN AND MOON" : "STANDARD")
+                                             : btnNames[std::clamp(cfg.battleButtons, 0, 4)];
+                add(M_BATTLEBUTTONS, "BATTLE BUTTONS", btnVal);
+            }
+            add(M_ZOOM, "ZOOM AND LOOK AROUND", onOff(cfg.zoom));
+            if (cfg.zoom) add(M_ZOOM_TEXT, "AUTO ZOOM IN", onOff(cfg.zoomText));
             add(M_SHOWFPS, "FPS COUNTER", onOff(cfg.showFps));
 #ifdef __SWITCH__
             add(M_SWITCH_FF, "FAST FORWARD (EXPERIMENTAL)", onOff(cfg.switchFastForward));
@@ -5302,6 +5598,9 @@ int main(int argc, char** argv)
     bool ctrlStart = false, touchStart = false, prevCtrlStart = false; // see cfg.startMenu
     bool swallowMenuButtons = false; // keeps the buttons that closed the menu from reaching the game
     uint32_t kbKeysHeld = 0;         // DS buttons held on the keyboard this frame
+    DsZoom dsZoom;
+    bool dsZoomCycle = false, dsZoomWalking = false, dsZoomLooking = false;
+    float dsZoomSX = 0, dsZoomSY = 0;
     const double frameTime = 1.0 / 59.8261;
     uint64_t perfFreq = opt.headless ? 1 : SDL_GetPerformanceFrequency();
     uint64_t nextTick = opt.headless ? 0 : SDL_GetPerformanceCounter();
@@ -5355,7 +5654,7 @@ int main(int argc, char** argv)
         SDL_Rect rects[2] {};
         const u32* top = nullptr;
         const u32* bot = nullptr;
-        ScreenImage screens[6] {}; // (2 to 5: g_dexCover and g_dexPages)
+        ScreenImage screens[7] {}; // (2 to 5: g_dexCover and g_dexPages; 6: SmButtons words)
         Scene scene;
         WideImage wide;
         bool battleRender = false; // the widened battle picture is still to be made (BattleRender)
@@ -6190,10 +6489,24 @@ int main(int argc, char** argv)
                 if (!swallowMenuButtons) keys |= kbKeysHeld;
                 // (The touch cursor's keys, unless CONTROLS gave one of them to something.)
                 auto keyFree = [&](int s) { return kb[s] && cfg.controls.ActionOfKey(s) < 0; };
-                if (keyFree(SDL_SCANCODE_J)) curDX -= 1;
-                if (keyFree(SDL_SCANCODE_L)) curDX += 1;
-                if (keyFree(SDL_SCANCODE_I)) curDY -= 1;
-                if (keyFree(SDL_SCANCODE_K)) curDY += 1;
+                static bool zoomKeyWas = false;
+                const bool zoomKey = keyFree(SDL_SCANCODE_C);
+                if (zoomKey && !zoomKeyWas) dsZoomCycle = true;
+                zoomKeyWas = zoomKey;
+                if (dsZoomLooking)
+                {
+                    if (keyFree(SDL_SCANCODE_J)) dsZoomSX = -1;
+                    if (keyFree(SDL_SCANCODE_L)) dsZoomSX = 1;
+                    if (keyFree(SDL_SCANCODE_I)) dsZoomSY = -1;
+                    if (keyFree(SDL_SCANCODE_K)) dsZoomSY = 1;
+                }
+                else
+                {
+                    if (keyFree(SDL_SCANCODE_J)) curDX -= 1;
+                    if (keyFree(SDL_SCANCODE_L)) curDX += 1;
+                    if (keyFree(SDL_SCANCODE_I)) curDY -= 1;
+                    if (keyFree(SDL_SCANCODE_K)) curDY += 1;
+                }
                 if (keyFree(SDL_SCANCODE_SPACE)) curPress = true;
                 if (kb[cfg.controls.Key(Controls::FAST)]) kbFast = true;
             }
@@ -6707,10 +7020,16 @@ int main(int argc, char** argv)
                 cfg.aspect = (cfg.aspect + (dir < 0 ? 4 : 1)) % 5;
                 break;
             case M_BATTLEBUTTONS:
-                if (pt.on) break; // (Platinum's buttons stand beside the message box, as SoulSilver's.)
-                if (funcWatchOn && bw1.on) cfg.battleButtons = (cfg.battleButtons + (dir < 0 ? 2 : 1)) % 3;
-                else if (funcWatchOn) cfg.battleButtons = cfg.battleButtons == 2 ? 0 : 2; // CORNER, PANEL
+                if (pt.on || !funcWatchOn) cfg.battleButtons = cfg.battleButtons == 4 ? 1 : 4;
+                else cfg.battleButtons = (cfg.battleButtons + (dir < 0 ? 4 : 1)) % 5; // CORNER, STRIP, PANEL, CLASSIC, SUN AND MOON
                 bw1.battleButtons = cfg.battleButtons;
+                break;
+            case M_ZOOM:
+                cfg.zoom = !cfg.zoom;
+                if (!cfg.zoom) dsZoom.Reset();
+                break;
+            case M_ZOOM_TEXT:
+                cfg.zoomText = !cfg.zoomText;
                 break;
             case M_FPS60:
                 cfg.fps60 = !cfg.fps60;
@@ -6901,6 +7220,8 @@ int main(int argc, char** argv)
         bool paused = menu.open;
         speed = 1;
         ffRefreshes = 1;
+        SmButtons::S().clock = frame;
+        SmButtons::S().on = cfg.battleButtons == 4;
         if (!paused && !swallowMenuButtons)
         {
             if (saveEdge) saveQuick();
@@ -6918,6 +7239,15 @@ int main(int argc, char** argv)
             const bool padTouchNow = cfg.padTouch || athlonNow || touchOnlyNow;
             // (SWAP SCREENS given a button of its own in CONTROLS works without the touch cursor.)
             if (!padTouchNow && cfg.controls.pad[Controls::SWAP] >= 0 && pressed(PAD_RS)) focus.manualFlip = !focus.manualFlip;
+            // (ZOOM: a click of the right stick steps it, the right stick looks around; not while the
+            // stick is the touch cursor, nor when the click is SWAP SCREENS.)
+            if (!padTouchNow && cfg.controls.pad[Controls::SWAP] < 0 && pressed(PAD_RS)) dsZoomCycle = true;
+            if (!padTouchNow)
+            {
+                if (fabsf(ps.rx) > fabsf(dsZoomSX)) dsZoomSX = ps.rx;
+                if (fabsf(ps.ry) > fabsf(dsZoomSY)) dsZoomSY = ps.ry;
+            }
+            dsZoomWalking = fabsf(ps.lx) > 0.3f || fabsf(ps.ly) > 0.3f || ps.btn[PAD_UP] || ps.btn[PAD_DOWN] || ps.btn[PAD_LEFT] || ps.btn[PAD_RIGHT];
             if (padTouchNow)
             {
                 if (pressed(PAD_RS)) focus.manualFlip = !focus.manualFlip;
@@ -6988,9 +7318,22 @@ int main(int argc, char** argv)
             ffHiddenMs = 0;
         }
 #endif
-        // A direction just pressed in a menu list runs at normal speed for a brief moment (120ms)
-        // so that a quick tap moves the cursor one item (shops, Bag, party).
-        // In the overworld, battles, and field exploration, fast forward continues at full speed.
+        // A direction just pressed outside uninterrupted overworld walking runs at normal speed
+        // for a brief moment (120ms) so a quick tap in a menu, dialogue or battle lands cleanly.
+        auto overworldDialogueOpen = [&]() {
+            if (strcmp(scene.name, "top") != 0) return false;
+            const auto& r2d = static_cast<const GPU2D::SoftRenderer&>(nds->GPU.GetRenderer2D());
+            const uint8_t* tf = r2d.LayerFlags[topUnitOf()];
+            if (!tf) return false;
+            int bgHits = 0;
+            for (int y : { 154, 172 })
+                for (int x = 32; x <= 224; x += 24)
+                {
+                    const uint8_t c = LayerClass(tf[y * 256 + x]);
+                    if (c == LAYER_BG0 || c == LAYER_BG1 || c == LAYER_BG2 || c == LAYER_BG3) bgHits++;
+                }
+            return bgHits >= 15;
+        };
         {
             constexpr uint32_t dirMask = (1u << KEY_RIGHT) | (1u << KEY_LEFT) | (1u << KEY_UP) | (1u << KEY_DOWN);
             static uint32_t prevDirs = 0, dirSince = 0;
@@ -6999,8 +7342,13 @@ int main(int argc, char** argv)
             const uint32_t now = opt.headless ? (uint32_t)(frame * 50 / 3) : SDL_GetTicks();
             if (dirs & ~prevDirs) dirSince = now;
             prevDirs = dirs;
-            const bool isMenu = funcWatchOn && (funcWatch.Ran(bw2.fieldMenu, 8) || funcWatch.Ran(bw2.bag, 8) || funcWatch.Ran(bw2.party, 8));
-            if (speed > 1 && dirs && !fastLock && isMenu && now - dirSince < 120) speed = 1;
+            const bool isMenu = funcWatchOn
+                ? (funcWatch.Ran(bw2.fieldMenu, 8) || funcWatch.Ran(bw2.bag, 8) || funcWatch.Ran(bw2.party, 8) ||
+                   funcWatch.Ran(pt.startMenu, 8) || funcWatch.Ran(pt.bag, 8) || funcWatch.Ran(pt.party, 8))
+                : (!fieldActive() || appBottomNow || probeActive(probeStartMenu) ||
+                   std::any_of(std::begin(probeChoice), std::end(probeChoice), probeActive));
+            const bool freeWalk = !isMenu && !strcmp(scene.name, "top") && !overworldDialogueOpen();
+            if (speed > 1 && dirs && !fastLock && !freeWalk && now - dirSince < 120) speed = 1;
             if (speed == 1) ffRefreshes = 1;
         }
         prevPad = ps;
@@ -7213,6 +7561,35 @@ int main(int argc, char** argv)
                 (fieldActive() || menuReturn > 0 || scene.edgeFill || (singleView() && singleFieldFrame && rc_current_frame() - singleFieldFrame < 20)));
             melonDS::Wide.Owner = wantWide ? &nds->GPU.GPU3D : nullptr;
             melonDS::Wide.ViewWidth = view.width;
+            static const float testZoom = getenv("SSR_TEST_ZOOM") ? std::max(1.0f, (float)atof(getenv("SSR_TEST_ZOOM"))) : 1.0f;
+            {
+                const bool onField = wantWide && (funcWatchOn
+                    ? scene.wide && (!pt.on || funcWatch.Ran(pt.field, 16)) && !funcWatch.Ran(bw2.battle, 2) && !funcWatch.Ran(pt.battle, 2)
+                    : (fieldActive() && strcmp(scene.name, "start-menu") != 0));
+                const bool inOverworldTop = onField && (!strcmp(scene.name, "top") || !strcmp(scene.name, "underground"));
+                const bool close = !onField || !cfg.zoom || !inOverworldTop || (cfg.zoomText && overworldDialogueOpen());
+                if (dsZoomCycle && !paused)
+                {
+                    if (!cfg.zoom) say("ZOOM AND LOOK AROUND IS OFF (GRAPHICS)");
+                    else if (!onField) say("ZOOM WORKS ON THE OVERWORLD");
+                    else
+                    {
+                        const int l = dsZoom.Cycle();
+                        fprintf(stderr, "[zoom] step %d at frame %u\n", l, (unsigned)frame);
+                        char t[32];
+                        snprintf(t, sizeof t, "ZOOM %gX", dsZoom.Factor(l));
+                        say(t);
+                    }
+                }
+                dsZoomCycle = false;
+                const uint32_t dirKeys = (1u << KEY_RIGHT) | (1u << KEY_LEFT) | (1u << KEY_UP) | (1u << KEY_DOWN);
+                if (!paused) dsZoom.Update(close, dsZoomSX, dsZoomSY, dsZoomWalking || (keys & dirKeys) != 0, 1.0f / 60);
+                dsZoomSX = dsZoomSY = 0;
+                dsZoomLooking = onField && !close && dsZoom.level > 0;
+                melonDS::Wide.Zoom = testZoom > 1 ? (onField ? testZoom : 1.0f) : dsZoom.zoom;
+                melonDS::Wide.LookX = dsZoom.lookX;
+                melonDS::Wide.LookY = dsZoom.lookY;
+            }
             // (Only the Black games' views need polygons continued to the edges: see WideState.)
             melonDS::Wide.ExtendEdges = funcWatchOn && !pt.on;
             melonDS::Wide.Width = ww;
@@ -7269,7 +7646,8 @@ int main(int argc, char** argv)
             // (The 3D is always engine A's.)
             const u32 dispA = nds->GPU.GPU2D_A.DispCnt;
             const bool show3D = ((dispA >> 16) & 3) == 1 && (dispA & (1 << 8)) && (dispA & (1 << 3));
-            const auto& wideUnit = topUnitOf() == 0 ? nds->GPU.GPU2D_A : nds->GPU.GPU2D_B;
+            // 3D is always engine A, including when Sinnoh Underground swaps the LCD screens.
+            const auto& wideUnit = nds->GPU.GPU2D_A;
             // (But while the screen is wholly white or black, the picture is kept: the fade below
             // covers it entirely, and the sides then match. SoulSilver turns the 3D layer off
             // while a cave's map loads behind the white of its warp, which showed black bars.)
@@ -7371,6 +7749,39 @@ int main(int argc, char** argv)
             }
         }
 
+        // BATTLE BUTTONS: SUN AND MOON's command buttons (sm_buttons.h), in any DS game: arrows
+        // move the white outline and A presses the game's own button.
+        {
+            static uint32_t prevSmKeys = 0;
+            static bool smWasShown = false;
+            static int smTouch = 0, smX = 0, smY = 0;
+            SmButtons::State& sm = SmButtons::S();
+            if (!paused && merged && SmButtons::Shown())
+            {
+                if (!smWasShown) { prevSmKeys = keys; sm.sel = SmButtons::FIGHT; smWasShown = true; }
+                const uint32_t edge = keys & ~prevSmKeys;
+                prevSmKeys = keys;
+                const int keyOf[4] = { KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN };
+                for (int k = 0; k < 4; k++)
+                    if (edge & (1u << keyOf[k])) sm.sel = SmButtons::Move(sm.sel, k);
+                if (edge & (1u << KEY_A))
+                {
+                    smTouch = 4;
+                    smX = sm.touch[sm.sel][0];
+                    smY = sm.touch[sm.sel][1];
+                }
+                keys &= ~((1u << KEY_LEFT) | (1u << KEY_RIGHT) | (1u << KEY_UP) | (1u << KEY_DOWN) | (1u << KEY_A));
+            }
+            else if (!SmButtons::Shown())
+                smWasShown = false;
+            if (!paused && smTouch > 0)
+            {
+                touching = true;
+                touchX = smX;
+                touchY = smY;
+                smTouch--;
+            }
+        }
         // Battle buttons (the panel in the lower right; the single-screen build's strip): the
         // arrows move the outline and A presses the chosen button by touching it on the touch
         // screen. The game's own cursor is not used (its red corners would show on the
@@ -7379,7 +7790,8 @@ int main(int argc, char** argv)
             static std::string stripKind;
             static uint32_t prevStripKeys = 0;
             static int stripTouch = 0, stripTouchX = 0, stripTouchY = 0;
-            const bool cmd = merged && !strcmp(scene.name, "battle-cmd"), moves = merged && !strcmp(scene.name, "battle-moves");
+            // (SUN AND MOON's command buttons have their own keys, above.)
+            const bool cmd = merged && !strcmp(scene.name, "battle-cmd") && !SmButtons::Shown(), moves = merged && !strcmp(scene.name, "battle-moves");
             if (!paused && (cmd || moves))
             {
                 // The move list starts on the move chosen last in this battle, as the game's own
@@ -7405,6 +7817,8 @@ int main(int argc, char** argv)
                 const u32* screenImagesPrev = nds->GPU.Framebuffer[nds->GPU.FrontBuffer][1].get();
                 auto usable = [&](int i) {
                     if (cmd) return !battleFightOnly || i == 0;
+                    // (4: HG-Engine's Mega Evolution button, beside the moves when it is shown.)
+                    if (i == 4) return battleMega && !singleView();
                     // One pixel at the name's centre can fall between two letters (a move whose
                     // name has a gap there could not be chosen): look across the name instead.
                     for (int y = movY[i] - 16; y <= movY[i] - 12; y++)
@@ -7434,11 +7848,26 @@ int main(int argc, char** argv)
                         { 1, 2, 0, 3 }, { 1, 3, 0, 1 }, { 3, 2, 0, 2 }, { 1, 2, 0, 3 } };
                     static const int8_t movTo[4][4] = { { 0, 1, 0, 2 }, { 0, 1, 1, 3 }, { 2, 3, 0, 2 }, { 2, 3, 1, 3 } };
                     const int keyOf[4] = { KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN };
+                    // The Mega Evolution button is right of both rows of moves: right from
+                    // either row reaches it, and left goes back to the row it came from.
+                    static int megaRow = 0;
                     for (int k = 0; k < 4; k++)
                         if (edge & (1 << keyOf[k]))
                         {
+                            if (moves && battleSel == 4)
+                            {
+                                if (keyOf[k] != KEY_LEFT) continue;
+                                for (int to : { 2 * megaRow + 1, 2 * megaRow, 3 - 2 * megaRow, 2 - 2 * megaRow })
+                                    if (usable(to)) { battleSel = to; break; }
+                                continue;
+                            }
                             const int to = (cmd ? cmdTo : movTo)[battleSel][k];
-                            if (usable(to)) battleSel = to;
+                            if (moves && keyOf[k] == KEY_RIGHT && usable(4) && ((battleSel & 1) || !usable(to)))
+                            {
+                                megaRow = battleSel >> 1;
+                                battleSel = 4;
+                            }
+                            else if (usable(to)) battleSel = to;
                         }
                 }
                 if (cmd)
@@ -7451,14 +7880,26 @@ int main(int argc, char** argv)
                 if (opt.logSections && edge) fprintf(stderr, "[strip] frame %u: keys %03x, chosen %d\n", frame, edge, battleSel);
                 if (edge & (1 << KEY_A))
                 {
-                    stripTouch = 4;
                     // The chosen button is the one outlined: battleSel, except on the command
                     // strip of the single-screen build, which has its own cursor (stripSel).
                     // (Taking stripSel for the panel too pressed FIGHT whatever was chosen.)
                     const int pick = cmd && singleView() ? stripSel : battleSel;
-                    if (moves) lastMove = battleSel;
-                    stripTouchX = cmd ? cmdX[pick] : movX[pick];
-                    stripTouchY = cmd ? cmdY[pick] : movY[pick];
+                    if (moves && pick == 4)
+                    {
+                        if (usable(4))
+                        {
+                            stripTouch = 4;
+                            stripTouchX = 212;
+                            stripTouchY = 172;
+                        }
+                    }
+                    else
+                    {
+                        stripTouch = 4;
+                        if (moves) lastMove = battleSel;
+                        stripTouchX = cmd ? cmdX[pick] : movX[pick];
+                        stripTouchY = cmd ? cmdY[pick] : movY[pick];
+                    }
                 }
                 // B in the move list touches CANCEL. Given to the game as a key, the first
                 // press only brought up its own cursor. On the command row it does nothing.
@@ -7505,6 +7946,45 @@ int main(int argc, char** argv)
                     for (int x = 0; x < SHOES_BORDER; x++)
                         shoesPix[y * SHOES_W + SHOES_SRC_W + x] =
                             tb[(SHOES_Y + y) * 256 + SHOES_X + (SHOES_BORDER - 1 - x)] | 0xFF000000u;
+                }
+                // Centre the shoes horizontally between the rims and strip outer background corners.
+                {
+                    const std::vector<uint32_t> src = shoesPix;
+                    int x0 = SHOES_W, x1 = -1;
+                    for (int y = 2; y < SHOES_H - 2; y++)
+                        for (int x = 8; x < SHOES_W - 5; x++)
+                            if (src[y * SHOES_W + x] != src[y * SHOES_W + 8]) { x0 = std::min(x0, x); x1 = std::max(x1, x); }
+                    const int dx = x1 >= x0 ? (int)std::lround(37.5 - (x0 + x1) / 2.0) : 0;
+                    if (dx)
+                        for (int y = 2; y < SHOES_H - 2; y++)
+                        {
+                            const uint32_t face = src[y * SHOES_W + 8];
+                            for (int x = x0; x <= x1; x++) shoesPix[y * SHOES_W + x] = face;
+                            for (int x = x0; x <= x1; x++)
+                                if (src[y * SHOES_W + x] != face && x + dx >= 5 && x + dx <= 70) shoesPix[y * SHOES_W + x + dx] = src[y * SHOES_W + x];
+                        }
+                }
+                {
+                    const uint32_t outline = shoesPix[(SHOES_H / 2) * SHOES_W + 2];
+                    std::vector<int> open, cleared;
+                    auto reach = [&](int x, int y) {
+                        uint32_t& p = shoesPix[y * SHOES_W + x];
+                        if (p != outline && (p >> 24)) { p &= 0x00FFFFFFu; open.push_back(y * SHOES_W + x); cleared.push_back(y * SHOES_W + x); }
+                    };
+                    for (int x = 0; x < SHOES_W; x++) { reach(x, 0); reach(x, SHOES_H - 1); }
+                    for (int y = 0; y < SHOES_H; y++) { reach(0, y); reach(SHOES_W - 1, y); }
+                    while (!open.empty() && cleared.size() <= 300)
+                    {
+                        const int i = open.back();
+                        open.pop_back();
+                        const int x = i % SHOES_W, y = i / SHOES_W;
+                        if (x > 0) reach(x - 1, y);
+                        if (x + 1 < SHOES_W) reach(x + 1, y);
+                        if (y > 0) reach(x, y - 1);
+                        if (y + 1 < SHOES_H) reach(x, y + 1);
+                    }
+                    if (cleared.size() > 300)
+                        for (int i : cleared) shoesPix[i] |= 0xFF000000u;
                 }
                 if (!shoesSeen) fprintf(stderr, "[shoes] frame %u: the Running Shoes button seen\n", frame);
                 shoesSeen = true;
@@ -7934,13 +8414,15 @@ int main(int argc, char** argv)
         // The two screens with their per-pixel layer flags, for the merged view.
         auto& renderer2d = static_cast<GPU2D::SoftRenderer&>(nds->GPU.GetRenderer2D());
         const int topUnit = topUnitOf();
-        ScreenImage screenImages[6] = {
+        SmButtonsArt::Ensure(UiLang::lang);
+        ScreenImage screenImages[7] = {
             { top, renderer2d.LayerFlags[topUnit], renderer2d.EdgeColour[topUnit], renderer2d.EdgeBlend[topUnit], renderer2d.EdgeFlat[topUnit] },
             { bot, renderer2d.LayerFlags[1 - topUnit], renderer2d.EdgeColour[1 - topUnit], renderer2d.EdgeBlend[1 - topUnit], renderer2d.EdgeFlat[1 - topUnit] },
             { g_dexCover[0], nullptr },
             { g_dexCover[1], nullptr },
             { g_dexPages[0], nullptr },
             { g_dexPages[1], nullptr },
+            { SmButtonsArt::Pixels(), nullptr },
         };
         bool appBottom = sectionActive("OVY_40"); // Vs. Recorder: its controls and menus are on the touch screen
         for (const RcApp* app : focus.bottomApps)
@@ -7957,6 +8439,10 @@ int main(int argc, char** argv)
             for (int f : g_touchOnlyFuncs)
                 if (funcWatch.Ran(f, 2)) touchOnly = true;
             touchOnlyNow = touchOnly;
+            bool touchLarge = false;
+            for (int f : g_touchLargeFuncs)
+                if (funcWatch.Ran(f, 2)) touchLarge = true;
+            touchLargeNow = touchLarge;
             // The stick touch cursor came on for the course or the puzzle (the setting is off): say
             // how it is used, where there is no touch screen to tap instead.
             static bool prevAthlon = false;
@@ -8001,6 +8487,7 @@ int main(int argc, char** argv)
             fieldHeldBySave = writing && fieldActive();
             Scene picked = funcWatchOn ? pickSceneBw2(view.width, screenImages)
                                        : pickScene(frame < cursorShownUntil, view.width, screenImages);
+            bw1.topFaded = bw1.on && topScreenFaded();
             if (funcWatchOn) bw1.Adjust(picked, view.width, screenImages); // Pokemon Black and White
             // A whole screen shown alone whose sides are one colour, not black (a fade to white:
             // the starter chosen, whiting out and its message on white) fills the view with that
@@ -8476,10 +8963,13 @@ int main(int argc, char** argv)
         std::string shoesLabel;
         if (showShoes)
         {
-            const Element& panel = scene.items.back();
+            const Element* pp = &scene.items.back();
+            for (const Element& e : scene.items)
+                if (e.screen == 1 && e.sw * e.sh > pp->sw * pp->sh) pp = &e;
+            const Element& panel = *pp;
             const float sc = panel.scale;
             const float w = SHOES_W * sc, h = SHOES_H * sc;
-            const float x = panel.dx - w - 6, y = panel.dy + 192 * sc - h - 14;
+            const float x = panel.dx - w - 6, y = panel.dy + panel.sh * sc - h - 14;
             shoesRect[0] = x; shoesRect[1] = y; shoesRect[2] = w; shoesRect[3] = h;
             shoesOx = (int)(view.originX + x * view.unit);
             shoesOy = (int)(view.originY + y * view.unit);
@@ -8568,6 +9058,9 @@ int main(int argc, char** argv)
                 if (selId == M_FAST && !cfg.switchFastForward) menuHint = "ENABLE IN SETTINGS -> GRAPHICS FIRST";
 #endif
                 if (selId == M_SETTINGS) menuHint = "AUDIO, VIDEO AND SYSTEM OPTIONS";
+                if (selId == M_BATTLEBUTTONS) menuHint = (pt.on || !funcWatchOn) ? "STANDARD OR SUN AND MOON STYLE" : "BATTLE BUTTONS STYLE IN GEN 5";
+                if (selId == M_ZOOM) menuHint = "RIGHT STICK CLICK OR C TO ZOOM OUT";
+                if (selId == M_ZOOM_TEXT) menuHint = "ZOOMS BACK IN FOR OVERWORLD DIALOGUE";
                 if (selId == M_VOLUME) menuHint = "SOUND AND MUSIC: LEFT / RIGHT";
                 if (selId == M_ASPECT) menuHint = "NARROWER THAN THE SCREEN: BARS AT THE SIDES";
                 if (selId == M_FFMUTE) menuHint = "OFF: SILENT WHILE FAST FORWARDING";
@@ -8753,7 +9246,8 @@ int main(int argc, char** argv)
                         for (int px = 0; px < shoesOw; px++)
                         {
                             const int sx = std::min(SHOES_W - 1, px * SHOES_W / std::max(1, shoesOw));
-                            canvas.Fill(shoesOx + px, shoesOy + py, 1, 1, shoesPix[sy * SHOES_W + sx]);
+                            const uint32_t c = shoesPix[sy * SHOES_W + sx];
+                            if (c >> 24) canvas.Fill(shoesOx + px, shoesOy + py, 1, 1, c);
                         }
                     }
                     const int tw = Canvas::TextWidth(shoesLabel, shoesTsc);
@@ -8920,7 +9414,7 @@ int main(int argc, char** argv)
             job.rects[1] = rects[1];
             job.top = top;
             job.bot = bot;
-            for (int s = 0; s < 6; s++) job.screens[s] = screenImages[s];
+            for (int s = 0; s < 7; s++) job.screens[s] = screenImages[s];
             job.scene = scene;
             job.wide = wideImage;
             job.battleRender = battleRenderLater;

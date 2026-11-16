@@ -53,6 +53,9 @@ struct Element
     uint32_t keys[4] = { 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
     // If set, colours within this distance per channel of keys[0] are not drawn either.
     int keyTolerance = 0;
+    // If set, dark greys are not drawn either: greys (colours whose three channels lie within 28
+    // of one another, black too) no brighter than this. Used for Gen 5 rounded battle labels.
+    int keyGrey = 0;
     // If set, the keys only apply within this many source pixels of the piece's edge (to
     // trim the rim of a rounded button without touching the same colour inside it).
     int keyRing = 0;
@@ -126,6 +129,7 @@ struct Scene
     // Colour behind the pieces: black, or sampled from this pixel of a screen so the
     // parts of the view no piece covers continue that screen's background.
     int bgScreen = -1, bgX = 0, bgY = 0;
+    uint32_t bgColor = 0; // or this colour (0xRRGGBB, 0: none) when no screen pixel is given
     // The first piece is the top screen showing the 3D world: when a widescreen image of
     // that world is available it fills the view, and only the 2D parts of the piece (text
     // boxes and the like) are drawn over it.
@@ -420,9 +424,35 @@ inline bool MergedEdgeTiled(const ScreenImage& top, int y, int side)
 // Find whole opaque background bands with a non-repeating edge, once per scene.
 // Suppressing just their patterned rows leaves the window's flat horizontal strokes
 // sticking out into the world. A genuinely tiled banner and a solid fade still extend.
+// Window on the top screen whose frame runs 1..3 columns in from a side, with 3D/backdrop
+// outside it (HeartGold/SoulSilver overworld text boxes and area signs): keep the border
+// inside the screen instead of stretching its frame stroke to the view edges.
+inline void MergedPrepareInsetWindows(Scene& scene, const ScreenImage& top)
+{
+    if (!scene.wide || !top.flags) return;
+    auto inset = [&](int y, int side) {
+        const int x = side ? 255 : 0, dir = side ? -1 : 1;
+        const uint8_t outer = LayerClass(top.flags[y * 256 + x]);
+        if (outer != LAYER_3D && outer != LAYER_BACKDROP) return false;
+        for (int k = 1; k <= 3; k++)
+            if (LayerClass(top.flags[y * 256 + x + dir * k]) & 0x0F) return true;
+        return false;
+    };
+    for (int side = 0; side < 2; ++side)
+        for (int y = 0; y < 192;)
+        {
+            if (!inset(y, side)) { ++y; continue; }
+            const int first = y;
+            while (y < 192 && inset(y, side)) ++y;
+            if (y - first >= 8 && y - first <= 100) std::fill(scene.edgeWindow[side] + first, scene.edgeWindow[side] + y, 1);
+        }
+}
+
 inline void MergedPrepareEdgeWindows(Scene& scene, const ScreenImage* screens)
 {
     for (auto& side : scene.edgeWindow) std::fill(std::begin(side), std::end(side), 0);
+    if (!scene.smartEdges && !scene.items.empty() && scene.items[0].screen >= 0 && screens[scene.items[0].screen].pixels)
+        MergedPrepareInsetWindows(scene, screens[scene.items[0].screen]);
     if (!scene.smartEdges || scene.items.empty() || scene.items[0].screen < 0) return;
     const ScreenImage& top = screens[scene.items[0].screen];
     if (!top.flags || !top.pixels || !top.edgeBlend || !top.edgeFlat) return;
@@ -1000,6 +1030,33 @@ inline bool AdaptGen5BattlePrompt(Scene& sc, float viewWidth, const ScreenImage*
         fixedButtonsWidth, outPromptRight, usedButtons);
 }
 
+// A screen played on the touch screen: the touch screen at full height on its right, the
+// top screen smaller beside it (or alone on a 4:3 view).
+inline Scene TouchLargeScene(float viewWidth, const char* name)
+{
+    const float left = 128 - viewWidth / 2, right = 128 + viewWidth / 2, gap = 4;
+    Scene sc;
+    sc.name = name;
+    Element touch = Crop(1, 0, 0, 256, 192);
+    touch.scale = 1;
+    touch.dx = right - 256;
+    touch.dy = 0;
+    touch.crisp = true;
+    const float topScale = std::min(1.0f, (right - 256 - left - 2 * gap) / 256);
+    if (topScale >= 0.25f)
+    {
+        Element topEl = Crop(0, 0, 0, 256, 192);
+        topEl.scale = topScale;
+        topEl.dx = left + gap + (right - 256 - left - 2 * gap - 256 * topScale) / 2;
+        topEl.dy = (192 - 192 * topScale) / 2;
+        sc.items.push_back(topEl);
+    }
+    else
+        touch.dx = 0;
+    sc.items.push_back(touch);
+    return sc;
+}
+
 inline Scene Stack(const char* name, std::vector<Element> crops, bool horizontal, float viewWidth)
 {
     float w = 0, h = 0;
@@ -1170,10 +1227,32 @@ inline bool SmartOverlay(const ScreenImage screens[2], int screen, int cutX, int
 inline bool MergedKeyed(const Element& el, uint32_t rgb)
 {
     if (rgb == el.keys[0] || rgb == el.keys[1] || rgb == el.keys[2] || rgb == el.keys[3]) return true;
+    if (el.keyGrey)
+    {
+        const int r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
+        const int top = std::max({ r, g, b });
+        if (top <= el.keyGrey && top - std::min({ r, g, b }) <= 28) return true;
+    }
     if (!el.keyTolerance) return false;
     int t = el.keyTolerance, k = (int)el.keys[0];
     return std::abs((int)((rgb >> 16) & 0xFF) - ((k >> 16) & 0xFF)) <= t &&
         std::abs((int)((rgb >> 8) & 0xFF) - ((k >> 8) & 0xFF)) <= t && std::abs((int)(rgb & 0xFF) - (k & 0xFF)) <= t;
+}
+
+// Whether a piece is drawn with nearest-pixel sampling. With SMOOTH SCALING off, all are;
+// with it on, crisp pieces only stay nearest at whole-number scales so uneven scales soften.
+inline bool MergedNearest(const Element& el, float scale, bool smooth)
+{
+    if (!smooth) return true;
+    return el.crisp && std::fabs(scale - std::round(scale)) < 0.01f;
+}
+
+// Sharp pixels at an uneven scale (#69, e.g. 720p Switch handheld): expand by an integer
+// factor and filter down so every pixel has the same size and only pixel seams blend.
+inline bool MergedSharp(float scaleX, float scaleY)
+{
+    auto uneven = [](float s) { return s > 1.0f && std::fabs(s - std::round(s)) >= 0.01f; };
+    return uneven(scaleX) || uneven(scaleY);
 }
 
 // With `smooth` off every piece is drawn with nearest-pixel sampling (hard edges, and fast);
@@ -1306,6 +1385,7 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
 {
     uint32_t bg = 0xFF000000;
     if (scene.bgScreen >= 0) bg |= screens[scene.bgScreen].pixels[scene.bgY * 256 + scene.bgX] & 0xFFFFFF;
+    else if (scene.bgColor) bg |= scene.bgColor & 0xFFFFFF;
     const bool useWide = scene.wide && !scene.narrow && wide && wide->pixels && wide->w > 0 && wide->h > 0;
     out.resize((size_t)outW * outH);
     const MergedView v = MergedMakeView(outW, outH);
@@ -1332,7 +1412,7 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
         Element el;
         float s, sx; // scale down and across
         int x0, y0, w, h, xa, xb, border;
-        bool nearest;
+        bool nearest, sharp = false;
         std::vector<int> col;
     };
     std::vector<Piece> pieces;
@@ -1358,7 +1438,9 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
             p.border = (int)(v.unit * (p.el.borderWidth ? p.el.borderWidth : 6) / 8.0f + 0.5f);
             if (p.border < 1) p.border = 1;
         }
-        p.nearest = p.el.crisp || !smooth;
+        p.nearest = MergedNearest(p.el, p.s, smooth);
+        p.sharp = p.nearest && MergedSharp(p.sx, p.s);
+        if (p.sharp) p.nearest = false;
         p.xa = p.x0 < 0 ? -p.x0 : 0;
         p.xb = p.x0 + p.w > outW ? outW - p.x0 : p.w;
         if (p.nearest && p.xb > p.xa)
@@ -1582,7 +1664,7 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
                 const int xa = p.xa, xb = p.xb;
                 if (xb <= xa) continue;
                 const int* col = p.col.data();
-                const bool keyed = el.keys[0] != 0xFFFFFFFF;
+                const bool keyed = el.keys[0] != 0xFFFFFFFF || el.keyGrey;
                 const bool spriteKey = el.dropSpriteCorner > 0 && src.flags;
                 const bool plain = !(el.drop && src.flags) && !keyed && !spriteKey && el.alpha == 255 && el.cutX >= 256 && !el.holeCount;
                 for (int oy = oya; oy < oyb; oy++)
@@ -1637,6 +1719,7 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
                 if (fy < 0) fy = 0;
                 int iy = (int)fy;
                 float wy = fy - iy;
+                if (p.sharp) wy = std::clamp((wy - 0.5f) * s + 0.5f, 0.0f, 1.0f);
                 int iy1 = iy + 1 < el.sh ? iy + 1 : iy;
                 for (int x = 0; x < w; x++)
                 {
@@ -1646,6 +1729,7 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
                     if (fx < 0) fx = 0;
                     int ix = (int)fx;
                     float wx = fx - ix;
+                    if (p.sharp) wx = std::clamp((wx - 0.5f) * sX + 0.5f, 0.0f, 1.0f);
                     int ix1 = ix + 1 < el.sw ? ix + 1 : ix;
 
                     float acc[3] = { 0, 0, 0 }, cover = 0;

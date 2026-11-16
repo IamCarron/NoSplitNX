@@ -28,6 +28,7 @@ class Bw2Map
 {
 public:
     bool on = false;
+    bool tall = false; // ZOOM AND LOOK AROUND: windows three chunks deep too (set by the frontend)
 
     // Whether this game is one of the versions below (whether WIDE MAP LOADING applies).
     bool Supported() const { return V != nullptr; }
@@ -62,7 +63,7 @@ public:
             names.push_back("GFLAppInit");
             watch.AddOnEnter(app, &Bw2Map::AppInit, this);
         }
-        watch.AddOnEnter(heap, &Bw2Map::Entered, this);
+        watch.AddOnEnter(heap, &Bw2Map::EnteredSizing, this);
         watch.AddOnEnter(setup, &Bw2Map::Entered, this);
         on = true;
         fprintf(stderr, "[bw2map] wider map windows on\n");
@@ -130,6 +131,7 @@ private:
     void Write32(uint32_t a, uint32_t v) { memcpy(Ram(a), &v, 4); }
 
     static void Entered(void* user) { static_cast<Bw2Map*>(user)->Patch(); }
+    static void EnteredSizing(void* user) { static_cast<Bw2Map*>(user)->Patch(true); }
     static void AppInit(void* user) { static_cast<Bw2Map*>(user)->Arena(); }
 
     // With 8 MB, as the game starts (GFLAppInit, before it makes its heaps from the main
@@ -149,7 +151,9 @@ private:
         fprintf(stderr, "[bw2map] 8 MB: the game's heap 0x%x bytes at 0x%x\n", V->heapUser + HeapUserExtra, ArenaStart);
     }
 
-    void Patch()
+    // `sizing`: called as the overworld's memory is sized (GetFieldmapZoneHeapSize), the one moment a deeper
+    // window may be made: the memory is sized from it there. At the map's setup the table is only widened.
+    void Patch(bool sizing = false)
     {
         // (The table is in the field overlay: its first entry, as the game has it, or already
         // changed, says it is there.)
@@ -166,9 +170,16 @@ private:
             const uint32_t buffer = Read32(e + OffBuffer), heap = Read32(e + OffHeap);
             if (log && !logged)
                 fprintf(stderr, "[bw2map] %2u: %ux%u chunks of 0x%x, heap 0x%x\n", i, dx, dz, buffer, heap);
-            if (dx != 2 || dz > 3 || buffer > 0x20000 || heap > 0x200000) continue;
-            Write16(e + OffDiameterX, 3);
-            Write32(e + OffHeap, heap + dz * (buffer + ChunkOverhead));
+            if (dz > 3 || buffer > 0x20000 || heap > 0x200000) continue;
+            // Three chunks wide; with ZOOM AND LOOK AROUND (`tall`) three deep as well, so that a zoomed-out view
+            // and one looking up or down still finds land. The heap grows by the chunks added.
+            const uint16_t nx = dx == 2 ? 3 : dx, nz = tall && sizing && dz == 2 && nx == 3 ? 3 : dz;
+            if (nx == dx && nz == dz) continue;
+            if (dx != 2 && dx != 3) continue;
+            Write16(e + OffDiameterX, nx);
+            Write16(e + OffDiameterZ, nz);
+            Write32(e + OffHeap, heap + (uint32_t)(nx * nz - dx * dz) * (buffer + ChunkOverhead));
+            if (log) fprintf(stderr, "[bw2map] %2u: now %ux%u (%s)\n", i, nx, nz, sizing ? "sizing" : "setup");
         }
         logged = true;
     }

@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -41,6 +42,7 @@ std::atomic<bool> g_cheats{false};
 std::atomic<bool> g_loggingIn{false}, g_loading{false};
 std::string g_gameLine;          // what GameLine says (main thread)
 std::string g_loginError;
+bool g_loginClock = false; // the login failed on the server's certificate or the clock
 
 std::mutex g_msgMutex;
 std::deque<std::string> g_messages;
@@ -253,11 +255,21 @@ void LoadGame()
     rc_client_begin_load_game(g_client, g_hash.c_str(), GameLoaded, nullptr);
 }
 
+// The device's clock is plainly wrong (a year before this program or far after it).
+bool ClockLooksWrong()
+{
+    const time_t now = time(nullptr);
+    const struct tm* t = gmtime(&now);
+    const int year = t ? t->tm_year + 1900 : 0;
+    return year < 2026 || year > 2040;
+}
+
 void RC_CCONV LoggedIn(int result, const char* error, rc_client_t*, void*)
 {
     g_loggingIn = false;
     if (result == RC_OK)
     {
+        g_loginClock = false;
         const rc_client_user_t* u = rc_client_get_user_info(g_client);
         if (u && g_account)
         {
@@ -270,8 +282,15 @@ void RC_CCONV LoggedIn(int result, const char* error, rc_client_t*, void*)
         LoadGame();
         return;
     }
+    // The server's certificate not taken, or the secure connection refused: most often the
+    // device's clock is wrong (a Switch set years ahead makes every certificate look out of date).
+    const bool credentials = result == RC_INVALID_CREDENTIALS || result == RC_EXPIRED_TOKEN;
+    g_loginClock = !credentials && ((error && (strstr(error, "certificate") || strstr(error, "SSL"))) || ClockLooksWrong());
     g_loginError = result == RC_INVALID_CREDENTIALS ? "WRONG USER NAME OR PASSWORD"
-                 : result == RC_EXPIRED_TOKEN ? "LOGIN EXPIRED: LOG IN AGAIN" : Shown(error, 30);
+                 : result == RC_EXPIRED_TOKEN ? "LOGIN EXPIRED: LOG IN AGAIN"
+                 : g_loginClock ? "COULD NOT CHECK THE SERVER: IS THIS DEVICE'S DATE AND TIME RIGHT?"
+                 : Shown(error, 30);
+    if (g_loginClock) fprintf(stderr, "[achievements] login failed, the clock may be wrong: %s\n", error ? error : "");
     if (g_loginError.empty()) g_loginError = "ERROR " + std::to_string(result);
     // (A token the server no longer takes: logged out, to log in again with the password.)
     if ((result == RC_INVALID_CREDENTIALS || result == RC_EXPIRED_TOKEN) && g_account)
@@ -526,7 +545,7 @@ std::string AccountLine()
     if (g_loggingIn) return "LOGGING IN...";
     if (const rc_client_user_t* u = rc_client_get_user_info(g_client))
         return Shown(u->display_name ? u->display_name : u->username, 18);
-    if (!g_loginError.empty()) return "LOGIN FAILED";
+    if (!g_loginError.empty()) return g_loginClock ? "CHECK THE CLOCK" : "LOGIN FAILED";
     if (g_account && !g_account->token.empty()) return Shown(g_account->user.c_str(), 18);
     return "NOT LOGGED IN";
 }

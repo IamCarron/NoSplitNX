@@ -2112,7 +2112,7 @@ index 1204741..1165a22 100644
      {
          LastStripPolygon = NULL;
          DispCnt |= (1<<13);
-@@ -1589,6 +1658,25 @@ void GPU3D::BoxTest(const u32* params) noexcept
+@@ -1589,6 +1658,32 @@ void GPU3D::BoxTest(const u32* params) noexcept
          cube[i].Position[3] = ((s64)x*ClipMatrix[3] + (s64)y*ClipMatrix[7] + (s64)z*ClipMatrix[11] + (s64)0x1000*ClipMatrix[15]) >> 12;
      }
  
@@ -2128,17 +2128,24 @@ index 1204741..1165a22 100644
 +    // off by the clipping as ever: it only costs the geometry engine a little more work.
 +    if (Wide.Owner == this && Wide.ViewWidth > 256)
 +    {
++        // ZOOM OUT: as many times wider and taller again.
++        const s64 zoom = (s64)((Wide.Zoom > 1 ? Wide.Zoom : 1) * 4096.0f + 0.5f);
++        const s64 view = (s64)std::max(256.0f, Wide.ViewWidth);
 +        for (int i = 0; i < 8; i++)
 +        {
-+            cube[i].Position[0] = (s32)((s64)cube[i].Position[0] * 256 * 9 / ((s64)Wide.ViewWidth * 10));
-+            cube[i].Position[1] = (s32)((s64)cube[i].Position[1] * 9 / 10);
++            // LOOK AROUND: moved as the picture is, before the tenth's margin.
++            const s64 w = cube[i].Position[3];
++            const s64 lx = Wide.Zoom > 1 ? (s64)(Wide.LookX * 4096.0f) : 0;
++            const s64 ly = Wide.Zoom > 1 ? (s64)(Wide.LookY * 4096.0f) : 0;
++            cube[i].Position[0] = (s32)(((s64)cube[i].Position[0] * 256 * 4096 / (view * zoom) - w * lx / 4096) * 9 / 10);
++            cube[i].Position[1] = (s32)(((s64)cube[i].Position[1] * 4096 / zoom - w * ly / 4096) * 9 / 10);
 +        }
 +    }
 +
      // front face (-Z)
      face[0] = cube[0]; face[1] = cube[1]; face[2] = cube[2]; face[3] = cube[3];
      res = ClipPolygon<false>(*this, face, 4, 0);
-@@ -1764,6 +1852,13 @@ void GPU3D::ExecuteCommand() noexcept
+@@ -1764,6 +1859,13 @@ void GPU3D::ExecuteCommand() noexcept
      {
          // fast path for command which only have a single parameter
  
@@ -2152,7 +2159,7 @@ index 1204741..1165a22 100644
          /*printf("[GXS:%08X] 0x%02X,  0x%08X", GXStat, entry.Command, entry.Param);*/
  
          switch (entry.Command)
-@@ -2116,6 +2211,9 @@ void GPU3D::ExecuteCommand() noexcept
+@@ -2116,6 +2218,9 @@ void GPU3D::ExecuteCommand() noexcept
      }
      else
      {
@@ -2162,7 +2169,7 @@ index 1204741..1165a22 100644
          ExecParams[ExecParamCount] = entry.Param;
          ExecParamCount++;
  
-@@ -2375,6 +2473,7 @@ void GPU3D::FinishWork(s32 cycles) noexcept
+@@ -2375,6 +2480,7 @@ void GPU3D::FinishWork(s32 cycles) noexcept
  
  void GPU3D::Run() noexcept
  {
@@ -2170,7 +2177,7 @@ index 1204741..1165a22 100644
      if (!GeometryEnabled || FlushRequest ||
          (CmdPIPE.IsEmpty() && !(GXStat & (1<<27))))
      {
-@@ -2456,12 +2555,70 @@ bool YSort(Polygon* a, Polygon* b)
+@@ -2456,12 +2562,70 @@ bool YSort(Polygon* a, Polygon* b)
      return a->SortKey < b->SortKey;
  }
  
@@ -2241,7 +2248,7 @@ index 1204741..1165a22 100644
              if (FlushRequest)
              {
                  if (NumPolygons)
-@@ -2487,6 +2644,71 @@ void GPU3D::VBlank() noexcept
+@@ -2487,6 +2651,71 @@ void GPU3D::VBlank() noexcept
  
                  RenderNumPolygons = NumPolygons;
                  RenderFrameIdentical = false;
@@ -2313,7 +2320,7 @@ index 1204741..1165a22 100644
              }
              else
              {
-@@ -2499,6 +2721,13 @@ void GPU3D::VBlank() noexcept
+@@ -2499,6 +2728,13 @@ void GPU3D::VBlank() noexcept
                      && memcmp(RenderEdgeTable, EdgeTable, 8*2) == 0
                      && memcmp(RenderFogDensityTable + 1, FogDensityTable, 32) == 0
                      && memcmp(RenderToonTable, ToonTable, 32*2) == 0;
@@ -2327,7 +2334,7 @@ index 1204741..1165a22 100644
              }
  
              RenderDispCnt = DispCnt;
-@@ -2535,7 +2764,63 @@ void GPU3D::VBlank() noexcept
+@@ -2535,7 +2771,63 @@ void GPU3D::VBlank() noexcept
  
  void GPU3D::VCount215(GPU& gpu) noexcept
  {

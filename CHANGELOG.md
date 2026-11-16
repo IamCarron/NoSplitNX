@@ -4,6 +4,14 @@
 ## Unreleased
 
 
+## v1.1.0 — Overworld Zoom, Sun & Moon Battle Buttons & Visual Polish
+
+- **Overworld Zoom & Look Around (DS)**: added configurable camera zoom steps (`1x`, `1.5x`, `2x` on Right Stick click or `C`) and smooth camera panning (Right Stick or `I`/`J`/`K`/`L`), with **Zoom and Look Around** and **Auto Zoom In** toggles in **Settings -> Graphics** so dialogues, menus and battles automatically bring the view back close.
+- **Battle button styles & Gen 5 battle polish**: added rounded Gen 5 command/move strips and the **Sun and Moon** battle button style (with localised button labels) across both Gen 4 and Gen 5 under **Battle Buttons**, kept battle HP boxes anchored across move-choice and Bag/Party fades, added HG-Engine Mega Evolution button support, and preserved edge-to-edge prompt/button co-sizing on **Corner**, **Panel** and **Classic** styles.
+- **Sharp scaling, HG/SS, Sinnoh Underground & minigames**: added crisp uneven-scale sharp bilinear filtering when **Smooth Scaling** is off to eliminate 720p Switch handheld pixel shimmer, widened Sinnoh Underground exploration with an inset radar map, fixed HeartGold and SoulSilver straight overworld dialogue windows, centred `FIGHT`, Running Shoes and the X menu heading, added Trainer Card badges in widescreen, kept catching `YES`/`NO` buttons beside caught Pokémon, fixed trainer Poké Ball stretching, cleaned Black 2 / White 2 title-menu edges, and adapted Poffin cooking, Contest dressing up and Pokémon Musical dressing up scenes.
+- **Input, fast forward & stability**: kept fast forward uninterrupted while walking in DS overworlds, prevented menu-closing buttons from passing through to the game, added clear corrupt-state, unreadable-save and RetroAchievements device-clock checks (`CHECK THE CLOCK`), and enlarged Gen 5 overworld depth-chunk headroom when zoom is active.
+
+
 ## v1.0.0 — Switch Horizon Performance, Edge-to-Edge Battle Tray & Clean Map Transitions
 
 - **Horizon OS / Nintendo Switch performance optimisations**: split the corner FPS/fast-forward pill into a small cached HUD texture and cached pause menus, toasts and cursors by content signature so unchanged frames skip CPU glass/shadow rasterisation and `3.7 MB` GPU uploads; removed a duplicate full-screen render clear, reused scanline redraw buffers, replaced per-pixel square roots in the touch cursor, skipped redundant `49,152`-pixel signature scans on animating widescreen frames, specialised opaque layer masking in the GPU compositor, and stepped adaptive Deko3D resolution cleanly across integer 16:9 tiers (`720p`/`576p`/`540p`/`432p`/`360p`) under compositor or CPU pressure.

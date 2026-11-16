@@ -20,6 +20,12 @@ struct WideState
     GPU3D* Owner = nullptr;   // the console whose scene is drawn wide; nullptr turns it off
     int Width = 0, Height = 0; // size to draw at, set by the frontend
     float ViewWidth = 256;    // width of the view in DS pixels (256 = no extra width)
+    // ZOOM OUT: the world drawn this many times smaller each way, so the same picture shows more
+    // of it above and below as well as at the sides. 1 = none.
+    float Zoom = 1;
+    // LOOK AROUND: the view moved this far right and up, in halves of the (zoomed) picture: 0.5 = a quarter of
+    // the picture. Only while zoomed out.
+    float LookX = 0, LookY = 0;
     // Polygons ending a little short of the view's edge are continued to it (GPU3D_Wide.cpp,
     // ExtendToEdges): for Black and White's skies and lookouts. Off for SoulSilver, HeartGold
     // and Platinum, whose overhead views have none and where it only stretched trees and opened

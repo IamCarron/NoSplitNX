@@ -477,6 +477,12 @@ struct WideAccess
         }
     }
 
+    // ZOOM OUT: the vertical clip coordinate is multiplied by YNum / 4096 as the horizontal one is by
+    // xnum / xden (set by OnFlushPolygons before any replay; 4096 = no zoom).
+    static inline s64 YNum = 4096;
+    // LOOK AROUND: the view's offset in 4096ths of half the picture (WideState::LookX/LookY), set with YNum.
+    static inline s64 LookXq = 0, LookYq = 0;
+
     // Submits the recorded frame again into the given buffers. With `interpolate`, every
     // vertex is first moved halfway back towards where the same polygon was in the
     // previous frame; `matched` then counts the polygons found in both frames. The
@@ -625,7 +631,17 @@ struct WideAccess
                 }
                 else
                     for (int i = 0; i < nverts; i++)
+                    {
                         g.TempVertexBuffer[i].Position[0] = (s32)((s64)g.TempVertexBuffer[i].Position[0] * xnum / xden);
+                        if (YNum != 4096)
+                            g.TempVertexBuffer[i].Position[1] = (s32)((s64)g.TempVertexBuffer[i].Position[1] * YNum / 4096);
+                        if (LookXq || LookYq)
+                        {
+                            const s64 w = g.TempVertexBuffer[i].Position[3];
+                            g.TempVertexBuffer[i].Position[0] = (s32)(g.TempVertexBuffer[i].Position[0] - w * LookXq / 4096);
+                            g.TempVertexBuffer[i].Position[1] = (s32)(g.TempVertexBuffer[i].Position[1] - w * LookYq / 4096);
+                        }
+                    }
             }
 
             g.PolygonMode = cur.PolygonMode;
@@ -881,7 +897,11 @@ struct WideAccess
             }
         }
         float view = Wide.ViewWidth < 256 ? 256 : Wide.ViewWidth;
-        const s64 xden = 4096, xnum = (s64)(4096.0f * 256.0f / view + 0.5f);
+        const float zoom = Wide.Zoom > 1 ? Wide.Zoom : 1;
+        const s64 xden = 4096, xnum = (s64)(4096.0f * 256.0f / (view * zoom) + 0.5f);
+        YNum = (s64)(4096.0f / zoom + 0.5f);
+        LookXq = zoom > 1 ? (s64)(Wide.LookX * 4096.0f) : 0;
+        LookYq = zoom > 1 ? (s64)(Wide.LookY * 4096.0f) : 0;
         Dirty = true;
         if (allowHelper && ListsOnHelper())
         {
