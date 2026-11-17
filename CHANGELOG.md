@@ -3,6 +3,9 @@
 
 ## Unreleased
 
+
+## v1.2.4 — New App Icon & README
+
 - **New app icon and README**: a new NoSplitNX icon in the Homebrew Menu (two DS screens becoming one widescreen picture between Joy-Con colours), and a README rewritten around what NoSplitNX is today.
 
 
