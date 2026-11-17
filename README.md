@@ -1,152 +1,154 @@
 # NoSplitNX
 
-**The single-screen widescreen Pokémon experience, exclusively crafted for Nintendo Switch: one screen, widescreen, 60 fps at 720p.** No more squinting at two tiny stacked DS screens.
+**Every DS and GBA Pokémon game in one Nintendo Switch homebrew: one screen, widescreen, 60 fps at 720p.** No more squinting at two stacked DS screens.
 
-> **Notice:** NoSplitNX is a dedicated Nintendo Switch fork of [mamesj/pokemon-fulldex](https://github.com/mamesj/pokemon-fulldex), based on [ClickingMaster/ssrecomp](https://github.com/ClickingMaster/ssrecomp) and [melonDS](https://melonds.kuribo64.net), streamlined and optimized exclusively for a unified single-screen experience on Nintendo Switch hardware.
+NoSplitNX is a Switch-only program with a console-style game list, a built-in DS core and a built-in GBA player. It handles clean games, regional versions and ROM hacks, and has HOME Menu icons, cover downloads, cheats and RetroAchievements. You bring your own ROMs; the download contains no game code or assets.
 
-## Downloads
+| Download | Install |
+|---|---|
+| [**nosplitnx-switch.zip**](../../releases/latest) (latest release) | [Quick setup](#quick-setup) |
 
-| Where you play | Download | Installation Guide |
-|---|---|---|
-| **Nintendo Switch** (Homebrew) | [nosplitnx-switch.zip](../../releases/latest) | [Switch Guide](#on-the-nintendo-switch) |
-
-**All seven DS games in one program:** Pokémon Black 2, White 2, Black, White, SoulSilver, HeartGold, and Platinum (plus experimental Diamond and Pearl).  
-**The GBA classics too:** Pokémon Emerald, FireRed, LeafGreen, and Ultra Violet ([see below](#the-gba-games)).
-
-One program for your Switch: launch it and pick your game from the list. The download contains no copyrighted game ROMs or assets: you bring your own clean ROMs, and NoSplitNX loads what it needs directly from them.
-
-## What is it?
-
-A homebrew program for your Nintendo Switch running the melonDS emulator core (built in: there is nothing else to install), plus a custom engine layer that tracks the game state (which screen, which menu, which battle) and dynamically rearranges the DS display into one proper 16:9 widescreen picture.
-
-It is **not a native PC/console port**; it is the original game presented the way it should look on a modern widescreen display.
-
-## Why not just play it in a standard emulator?
-
-| | Standard melonDS | NoSplitNX (Nintendo Switch) |
-|---|---|---|
-| **Screens** | Two 256×192 DS screens, stacked or side by side with large borders | **One unified 16:9 widescreen display**, the touch screen's controls tucked beside the action |
-| **3D World** | 4:3 at original DS resolution | **16:9 widescreen**, skies and scenery carried all the way to the edges, hardware-accelerated by the Switch GPU (deko3D) |
-| **Frame rate** | The game's native 30 fps 3D | **60 fps**, with smooth in-between frame interpolation |
-| **Performance** | Generic emulation overhead | **Switch-optimised**: lazy 3D pass skipping during fast-forward and 2D menus (`3x–6x` speeds), zero-copy deko3D buffers, and a console-native interface scaled for Switch Lite 5.5" displays |
+![NoSplitNX game list on the Nintendo Switch](docs/screenshots/switch-launcher.png)
 
 ---
 
-## On the Nintendo Switch
+## What you can play
 
-![NoSplitNX Nintendo Switch Launcher: 3DS/DSi upper showcase screen, physical DS/GBA cartridge cards, and Switch Lite scaled typography](docs/screenshots/switch-launcher.png)
-
-| In-Game Pause Menu (Switch Lite 720p Scale) | Console Settings Page |
+| Console | Games |
 |---|---|
-| ![NoSplitNX In-Game Pause Menu](docs/screenshots/switch-pause-menu.png) | ![NoSplitNX Settings Page](docs/screenshots/switch-settings.png) |
+| **Nintendo DS** | Black 2, White 2, Black, White, SoulSilver, HeartGold, Platinum, plus Diamond and Pearl (experimental) |
+| **Game Boy Advance** | Emerald, FireRed, LeafGreen, Ultra Violet, Generation 3 Evolved |
+| **ROM hacks** | DS and GBA hacks of these games, as a patched ROM or as an `.ips`, `.ups`, `.bps` or `.xdelta` patch |
+| **Languages** | English, Spanish, French, German, Italian, Japanese and Korean versions ([details](#regional-versions)) |
 
-### Console-Native Interface & Switch Lite Handheld Scaling
+Each game is shown as **one 16:9 picture**. The touch screen's controls sit beside the action, the 3D world reaches the edges of the screen, and in-between frames bring it to 60 fps.
 
-- **Nintendo 3DS / DSi Upper Showcase Screen:** Displays the focused game with stereo speaker grilles, a 3D floating cartridge preview, platform and serial badges (`NTR-` / `AGB-`), a save status indicator (`Save Found` / `New Game`), and animated equalizer bars.
-- **Physical Molded Cartridge Cards:** 32×32 ROM banner icons are framed inside authentic DS and GBA cartridge shells complete with printed sticker borders, colour-coded console headers, gold PCB contact pins, and glowing corner selection brackets. Carousel cards dynamically expand when fewer games are installed so the 1280×720 screen never looks empty.
-- **Switch Lite 5.5" Handheld Legibility:** Enlarged native 720p typography across the launcher (`160×160` cartridge icons, `27px` card titles, `33px` showcase header), the `960px`-wide in-game pause menu (`33px` options, `51px` row height), and the `1080px`-wide settings panel (`27px` option titles, `19px` descriptions).
-- **Automatic System Language Detection:** Reads the console's language directly from Horizon OS (`libnx`) to present the launcher, settings, and pause menu in **English, Spanish, Italian, French, German, Japanese, or Korean** automatically.
-
-### Quick Setup
-
-1. **Download [`nosplitnx-switch.zip`](../../releases/latest)** and extract it to the root of your SD card. It creates `/switch/nosplitnx/` with an empty `roms` folder inside.
-2. **Copy your ROMs** into `/switch/nosplitnx/roms/` (clean, unpatched .nds and .gba files; any filenames).
-3. On your Switch (running Atmosphere CFW), **hold R while launching any installed game** to open the Homebrew Menu in Title Override mode with full RAM access (launching from the Album applet mode lacks memory and is not supported).
-4. Select **NoSplitNX** and choose your game.
-
-In the game list, the D-pad or left stick chooses a game, **A** plays, **Y** opens settings, and **+** exits back to the Homebrew Menu. It remembers and opens on the game you played last.
-
-### Controls
-
-**Saves:** each game keeps its save under its own name (`black2.sav`,
-`white2.sav`, `black.sav`, `white.sav`, `soulsilver.sav`, `heartgold.sav`,
-`platinum.sav`): in the `saves` folder of `/switch/nosplitnx/`. Saves an
-earlier version left beside the program are moved into `saves` the first time.
-To carry on from an emulator or a flash cart, copy your save in under that name.
-
-| Button | In Game | In Menu / Game List |
+| | Standard DS emulator | NoSplitNX |
 |---|---|---|
-| **D-pad / Left Stick** | Move character | Navigate games / settings |
-| **A / B** | DS A / B buttons | Confirm (**A**) / Back (**B**) |
-| **X / Y** | DS X / Y buttons | **Y**: Open Settings |
-| **L / R** | DS L / R shoulder buttons | Switch console tabs (ALL, DS, GBA) |
-| **ZR (Hold / Toggle)** | **Fast Forward** (configurable Hold or Toggle in Controls) | - |
-| **+ (Plus)** | Open Pause Menu | Exit to Homebrew Menu |
-| **- (Minus)** | DS SELECT button | - |
-| **Touchscreen** | Tap directly (Handheld mode) | Tap / swipe tabs, cards, and settings |
-| **Right Stick** | Move touch cursor (Docked / Controller, auto-enabled in touch-only mini-games like Ruins of Alph puzzle & Trainer Card signature) | - |
-| **ZL** | Touch / Click cursor at current position | - |
-| **R3 (Click Right Stick)**| Swap / show secondary bottom screen | - |
+| **Screens** | Two 256×192 screens with large borders | One widescreen picture, with the touch controls beside the action |
+| **3D world** | 4:3 at DS resolution | 16:9, drawn by the Switch's graphics chip |
+| **Frame rate** | 30 fps 3D | 60 fps with in-between frames |
+| **Interface** | A PC menu with a controller bolted on | Built for the Switch: controller, touch and Switch Lite text sizes |
 
-*(You can remap any button under **CONTROLS > KEYS AND BUTTONS** in the settings or pause menu).*
+---
 
-### sys-clk (Recommended Overclock)
+## Quick setup
 
-For a solid 60 fps in all 3D towns and battles, configuring [`sys-clk`](https://github.com/retronx-team/sys-clk) is recommended:
+1. **Download [`nosplitnx-switch.zip`](../../releases/latest)** and extract it to the root of your SD card. This creates `/switch/nosplitnx/` with an empty `roms` folder in it.
+2. **Copy your ROMs** (`.nds`, `.gba`, any file names) into `/switch/nosplitnx/roms/`. Put ROM hack patches in the same place: NoSplitNX finds the matching clean ROM and applies the patch for you.
+3. On a Switch running Atmosphère, **hold R while starting any installed game** to open the Homebrew Menu with full memory (Album mode doesn't have enough memory and isn't supported).
+4. Start **NoSplitNX** and pick a game.
 
-| Hardware | Handheld Profile | Docked Profile |
+On later starts NoSplitNX opens on the game you played last.
+
+---
+
+## The game list
+
+| In-game pause menu | Settings |
+|---|---|
+| ![NoSplitNX pause menu](docs/screenshots/switch-pause-menu.png) | ![NoSplitNX settings](docs/screenshots/switch-settings.png) |
+
+- **Game showcase and cartridges:** the selected game appears in a 3DS-style showcase with its cartridge, serial, and whether a save exists. Games are shown as DS and GBA cartridge cards, with **ALL**, **DS** and **GBA** tabs.
+- **Music from your own ROM:** when you select a game, the list plays its music, taken from the ROM you selected, with a sound visualiser. No audio ships with the program.
+- **Covers:** add your own art to `icons/` (named after the game code, e.g. `IREO.png`, or after the ROM file). You can also pick **Download Covers** in the game list settings to fetch the missing covers online (Wi-Fi needed). [More on covers](#covers).
+- **Your language:** menus follow the console's language (English, Spanish, Italian, French, German, Japanese or Korean). You can also choose a language under **Display → Language**, separate from the game's own language.
+- **Themes:** colour themes for the list and menus.
+- **Touch and controller:** every screen works by touch in handheld mode and by controller alone.
+
+### HOME Menu icons (forwarders)
+
+Start any game straight from the Switch HOME Menu, without a PC:
+
+1. In the game list, press **Y** to open **Settings**.
+2. Choose **HOME Menu Icons**.
+3. An icon with the game's cover is installed for each game in `roms/`, ROM hacks included (sigpatches required). GBA games without a cover get a cartridge-style icon instead.
+
+### Covers
+
+**Download Covers** looks up box art for every game that doesn't have a cover yet, then saves it in `icons/`:
+
+- **Clean games:** from the free Libretro Thumbnails collection. No account needed.
+- **ROM hacks:** from [SteamGridDB](https://www.steamgriddb.com), if you add your free API key. Put the key in `/switch/nosplitnx/sgdb_api_key.txt`, or add `sgdb_api_key=YOURKEY` to `settings.cfg`.
+
+---
+
+## Controls
+
+| Button | In game | In menus / game list |
 |---|---|---|
-| **CPU** | 1581 MHz (or 1785 MHz for maximum headroom) | 1785 MHz |
-| **GPU** | 460 MHz (official handheld maximum) | 768 MHz |
-| **Memory (RAM)** | 1600 MHz | 1600 MHz |
+| **D-pad / Left Stick** | Move | Navigate |
+| **A / B** | DS A / B | Confirm / Back |
+| **X / Y** | DS X / Y | **Y**: Settings |
+| **L / R** | DS L / R | Switch tabs (ALL, DS, GBA) |
+| **ZR** | Fast forward (hold or toggle, set in Controls) | – |
+| **+** | Pause menu | Exit to the Homebrew Menu |
+| **−** | DS Select | – |
+| **Touchscreen** | Tap the game directly (handheld) | Tap and swipe |
+| **Right Stick** | Move the touch cursor (docked); in DS overworlds, look around when zoom is on | – |
+| **ZL** | Tap at the cursor | – |
+| **R3** | Swap / show the second screen, or zoom the overworld | – |
 
-Without sys-clk, the console runs at standard stock clocks and may drop frames in complex 3D scenes.
+Every button can be remapped under **Controls → Keys and Buttons**. In GBA games, **+** opens the pause menu and **+** and **−** together press GBA Start.
 
-### HOME Menu Icons (Forwarders)
+---
 
-Start each game directly from your Switch HOME Menu with full box art, without needing a PC or keys:
-1. In the NoSplitNX game list, press **Y** to enter **SETTINGS**.
-2. Select **HOME MENU ICONS**.
-3. It generates forwarders directly on your console for every game found in your `roms/` folder (requires standard sigpatches).
+## Features in the games
+
+- **Overworld zoom and look around (DS):** zoom steps of 1×, 1.5× and 2×, plus panning with the Right Stick. The view zooms back in for dialogue, menus and battles if **Auto Zoom In** is on.
+- **Battle button styles:** the games' own Gen 5 buttons (**Strip**, the default) with Poké Ball party bars, plus **Sun and Moon**, **Corner**, **Panel** and **Classic**. HG-Engine's Mega Evolution button is supported in HeartGold and SoulSilver hacks.
+- **Fast forward:** hold or toggle ZR.
+- **Save backups:** a `backups` folder keeps dated copies of your saves, made at start-up and every 30 minutes of play. You can restore them from the pause menu.
+- **Cheats:** see [Cheats](#cheats).
+- **RetroAchievements:** see [RetroAchievements](#retroachievements).
 
 ---
 
 ## Use your own save
 
-Carry on from your existing save: from another emulator, flash cart, or cartridge dump (Checkpoint, JKSM, GodMode9). Copy your `.sav` into `/switch/nosplitnx/`:
+Saves live in `/switch/nosplitnx/saves/`. To carry on from another emulator, a flash cart or a cartridge dump (Checkpoint, JKSM, GodMode9), copy your `.sav` there under the game's name:
 
 | Game | Save file name |
 |---|---|
 | Black 2 / White 2 | `black2.sav` / `white2.sav` |
 | Black / White | `black.sav` / `white.sav` |
-| SoulSilver / HeartGold | `soulsilver.sav` / `heartgold.sav` (Spanish: `heartgold-es.sav`, Italian: `heartgold-it.sav`) |
-| Platinum | `platinum.sav` (Spanish: `platinum-es.sav`, French: `platinum-fr.sav`) |
+| SoulSilver / HeartGold | `soulsilver.sav` / `heartgold.sav` |
+| Platinum | `platinum.sav` |
 | Emerald / FireRed / LeafGreen | `emerald.sav` / `firered.sav` / `leafgreen.sav` |
 
-- **Save formats:** Standard `.sav` files work directly. If you have a DraStic or DeSmuME `.dsv`, or an Action Replay `.duc`, use [`tools/bw2/convert_save.py`](tools/bw2/convert_save.py).
-- **Automated backups:** A `backups` folder beside your saves keeps dated copies automatically (created at startup and every 30 minutes of play), with one-click restore from the pause menu.
+- Other language versions get their own names (e.g. `heartgold-es.sav`, `platinum-fr.sav`), and ROM hacks get saves of their own, so they never overwrite the clean game's.
+- DraStic/DeSmuME `.dsv` and Action Replay `.duc` files can be converted with [`tools/bw2/convert_save.py`](tools/bw2/convert_save.py).
 
 ---
 
-## Regional support - beta
+## Regional versions
 
-**Regional DS support is integrated across 42 exact ROM versions.** Bring your own clean dump; supported language profiles validate their fingerprint before loading.
+42 exact DS ROM versions are recognised. Each one is checked before it loads.
 
-| Language | Games with added profiles |
+| Language | Games |
 |---|---|
 | French, German, Italian, Spanish, Japanese, Korean | Black, White, Black 2, White 2, SoulSilver, HeartGold, Platinum |
 | Experimental | Diamond: English, Spanish, German, Italian. Pearl: English, French, Spanish, German, Korean |
 
-Regional games use distinct save names (e.g. `heartgold-es.sav`, `white-es.sav`).  
-**DISPLAY > LANGUAGE** in Settings allows selecting AUTO, English, Spanish, Italian, French, German, Japanese, or Korean menus independently of the ROM language.
+GBA widescreen patches cover the English, French, German, Spanish, Italian and Japanese versions.
 
 ---
 
 ## Cheats
 
-Action Replay codes, turned on and off directly as you play via **CHEATS** in the pause menu:
-- **Built-in Popular Cheats:** Every DS game includes 15 built-in codes (Walk through walls, Max money, Rare Candies, Master Balls, Wild shinies, Always catch, Infinite HP/PP, Double EXP, No encounters, Fast hatching, All badges/TMs, Full Pokédex).
-- **Cheat Database:** Supports `usrcheat.dat` (e.g. DeadSkullzJr's database). Place `usrcheat.dat` into `/switch/nosplitnx/cheats/`.
-- **Custom Codes:** Create a text file named after the game code (e.g. `IREO.txt` for Black 2, `IPGE.txt` for SoulSilver) in `/switch/nosplitnx/cheats/`.
+Action Replay codes, turned on and off from **Cheats** in the pause menu:
+
+- **Built in:** 15 popular codes for every DS game (walk through walls, max money, Rare Candies, Master Balls, wild shinies, always catch, infinite HP/PP, double EXP, no encounters, fast hatching, all badges/TMs, full Pokédex).
+- **Cheat database:** put a `usrcheat.dat` (e.g. DeadSkullzJr's) in `/switch/nosplitnx/cheats/`.
+- **Your own codes:** a text file named after the game code (e.g. `IREO.txt` for Black 2) in the same folder.
 
 ---
 
 ## RetroAchievements
 
-Earn [RetroAchievements](https://retroachievements.org) on your Switch:
-1. Open the pause menu (**+**) or Settings.
-2. Select **RETROACHIEVEMENTS**, toggle it ON, and log in with your account.
-3. Unlocks pop up as you play whenever Wi-Fi is connected. Save states and fast-forward remain enabled in casual mode.
+1. Open **RetroAchievements** from the pause menu (**+**) or Settings, turn it on and log in.
+2. With Wi-Fi on, an achievement card slides in at every unlock, and a **Game Mastered** banner appears when you complete a set. Choose **Modern** or **Classic** under **RetroAchievements → Unlock Banner**.
+3. Save states and fast forward stay available (casual mode).
 
 ---
 
@@ -156,11 +158,11 @@ Earn [RetroAchievements](https://retroachievements.org) on your Switch:
 
 | | |
 |---|---|
-| ![Black 2: Black Kyurem against a wild Crustle, with the game's FIGHT, BAG, RUN and POKÉMON panel beside the battle](docs/screenshots/black2-black-kyurem-battle.jpg) | ![White 2: White Kyurem against a wild Tropius, with the FIGHT panel beside the battle](docs/screenshots/white2-white-kyurem-battle.jpg) |
-| ![Black 2: the view from Aspertia's lookout, sky and mountains carried to the edges](docs/screenshots/black2-aspertia-lookout.jpg) | ![Black 2: Castelia City's pier](docs/screenshots/black2-castelia-pier.jpg) |
+| ![Black 2: Black Kyurem against a wild Crustle, with FIGHT, BAG, RUN and POKÉMON beside the battle](docs/screenshots/black2-black-kyurem-battle.jpg) | ![White 2: White Kyurem against a wild Tropius](docs/screenshots/white2-white-kyurem-battle.jpg) |
+| ![Black 2: the view from Aspertia's lookout](docs/screenshots/black2-aspertia-lookout.jpg) | ![Black 2: Castelia City's pier](docs/screenshots/black2-castelia-pier.jpg) |
 
-- **No version exclusives:** Turn on `OTHER VERSION POKEMON` in the pause menu to find version-exclusive wild encounters on either version.
-- **What you get:** Single, double, triple, and rotation battles with HP boxes at the widescreen borders and touch buttons beside them; all bag, party, and menu screens laid out for one screen; wide map loading loaded around you so scenery never pops out.
+- Single, double, triple and rotation battles, with HP boxes at the edges and the battle buttons beside them. The bag, party and menus are laid out for one screen.
+- **Other Version Pokémon** in the pause menu lets you find either version's exclusives in the wild.
 
 ### Pokémon SoulSilver and HeartGold
 
@@ -168,72 +170,71 @@ Earn [RetroAchievements](https://retroachievements.org) on your Switch:
 
 | | |
 |---|---|
-| ![HeartGold: Totodile against a wild Pidgey on Route 29, with FIGHT, BAG, RUN, POKÉMON and the party beside the battle](docs/screenshots/heartgold-totodile-battle.jpg) | ![SoulSilver: Lugia following you along Route 7](docs/screenshots/soulsilver-lugia-following.jpg) |
+| ![HeartGold: Totodile against a wild Pidgey on Route 29](docs/screenshots/heartgold-totodile-battle.jpg) | ![SoulSilver: Lugia following you along Route 7](docs/screenshots/soulsilver-lugia-following.jpg) |
 
-- Johto and Kanto in seamless widescreen, with your partner Pokémon walking behind you.
-- Single-screen bag, Pokédex, and party layouts, with battles featuring quick touchscreen buttons beside the combatants.
+- Johto and Kanto in widescreen, with your partner Pokémon walking behind you. The bag, Pokédex and party fit one screen.
+- Battle Yes/No questions appear as buttons beside the message box.
 
 ### Pokémon Black and White
 
 | | |
 |---|---|
-| ![Black: Reshiram against a wild Mantyke, with the game's FIGHT, BAG, RUN and POKÉMON panel beside the battle](docs/screenshots/black-reshiram-battle.jpg) | ![White: Zekrom in battle, with the FIGHT panel beside it](docs/screenshots/white-zekrom-battle.jpg) |
-| ![Black: a double battle, Reshiram and Excadrill against a wild Pelipper and Mantyke, the HP boxes down the edges](docs/screenshots/black-reshiram-double.jpg) | ![Black: Nimbasa City in widescreen](docs/screenshots/black-nimbasa.jpg) |
+| ![Black: Reshiram against a wild Mantyke](docs/screenshots/black-reshiram-battle.jpg) | ![White: Zekrom in battle](docs/screenshots/white-zekrom-battle.jpg) |
+| ![Black: a double battle with the HP boxes down the edges](docs/screenshots/black-reshiram-double.jpg) | ![Black: Nimbasa City in widescreen](docs/screenshots/black-nimbasa.jpg) |
 
-- Unova's first adventure adapted with Black 2's widescreen engine: battles, menus, Bag, and Pokédex adapted for a single 16:9 display.
-
-### Pokémon Platinum
+### Pokémon Platinum, Diamond and Pearl
 
 | | |
 |---|---|
-| ![Platinum: Infernape against a wild Machoke, with FIGHT, BAG, RUN and POKÉMON beside the battle](docs/screenshots/platinum-infernape-battle.jpg) | ![Platinum: Snowpoint City in the snow, in widescreen](docs/screenshots/platinum-snowpoint.jpg) |
+| ![Platinum: Infernape against a wild Machoke](docs/screenshots/platinum-infernape-battle.jpg) | ![Platinum: Snowpoint City in widescreen](docs/screenshots/platinum-snowpoint.jpg) |
+| ![Diamond: Giratina against Elite Four Aaron's Dustox](docs/screenshots/diamond-giratina-battle.jpg) | ![Diamond: the Pokémon League](docs/screenshots/diamond-pokemon-league.jpg) |
 
-- Sinnoh in widescreen: snow and rain reaching the borders, battle commands at the edge, and quick screen swap for Pokétch apps.
-
-### Pokémon Diamond and Pearl
-
-| | |
-|---|---|
-| ![Diamond: Giratina against Elite Four Aaron's Dustox, with its moves beside the battle](docs/screenshots/diamond-giratina-battle.jpg) | ![Diamond: the Pokémon League, in widescreen](docs/screenshots/diamond-pokemon-league.jpg) |
-
-- Platinum's widescreen layouts adapted to Diamond & Pearl. Experimental support for English, Spanish, French, German, Italian, and Korean versions.
+- Sinnoh in widescreen, with snow and rain reaching the edges. The Underground is wider and gets a small radar map, and the Pokétch is a quick screen swap away. Diamond and Pearl use Platinum's layouts (experimental).
 
 ### The GBA games
 
-![Emerald: a wild Rayquaza appears at the top of Sky Pillar and Salamence is sent out, in widescreen](docs/screenshots/gba-emerald-rayquaza-battle.gif)
+![Emerald: a wild Rayquaza appears at the top of Sky Pillar](docs/screenshots/gba-emerald-rayquaza-battle.gif)
 
-- **Pokémon Emerald, FireRed, LeafGreen, and Ultra Violet** running on an embedded widescreen mGBA core.
-- Wide overworld viewpoints, extended combat backgrounds, weather extending across the screen, and unified DS controller shortcut mappings.
+- Emerald, FireRed, LeafGreen, Ultra Violet and Generation 3 Evolved, on a built-in widescreen GBA player: wider overworlds, extended battle backgrounds, and weather across the whole screen.
+- **GBA ROM hacks** play too, with saves of their own. A hack without its own widescreen patch uses one made for a similar game when its code still matches; otherwise it plays at the GBA's normal size.
+- The pause menu matches the game list's look and language.
 
 ---
 
-## Under the hood
+## Recommended: sys-clk
 
-- **Hardware Acceleration:** The 3D world is drawn directly by the Switch Tegra X1 GPU using Nintendo Switch deko3D.
-- **Fast Execution:** melonDS FAST JIT runs ARM9 instructions with minimal overhead.
-- **NoSplitNX Optimisations:**
-  - Automatically skips hidden 2D/3D rendering passes during `3x–6x` fast-forward and 2D menus (`rc_3d_render_skip`, `WideGpuDSLazy`), plus real-time downsampled fast-forward audio playback without popping.
-  - Pre-allocated 720p `deko3D` render targets and block-linear copy paths for crash-free resolution transitions.
-  - Guaranteed network socket/cURL and ARM64 JIT memory cleanup (`userAppExit` / `SsrJitRelease`) when returning to the Homebrew Menu.
-  - Portable handheld mode detection clamping resolution to 720p native and scaling UI typography for 5.5" Switch Lite screens.
+For a steady 60 fps in 3D towns and battles, set up [sys-clk](https://github.com/retronx-team/sys-clk):
+
+| | Handheld | Docked |
+|---|---|---|
+| **CPU** | 1581 MHz (1785 MHz for more headroom) | 1785 MHz |
+| **GPU** | 460 MHz | 768 MHz |
+| **Memory** | 1600 MHz | 1600 MHz |
+
+NoSplitNX never changes the clocks itself. At stock clocks, busy 3D scenes may drop frames.
+
+---
+
+## How it works
+
+NoSplitNX runs the [melonDS](https://melonds.kuribo64.net) DS core (with its JIT) and a widescreen [mGBA](https://mgba.io) player. On top of these, a layer follows what the game is showing (overworld, battle, bag, menu) and rearranges both DS screens into one widescreen picture. The widescreen 3D is drawn by the Switch's graphics chip, and in-between frames are added for 60 fps. Builds are made by GitHub Actions with devkitPro.
+
+Developers: see [AGENTS.md](AGENTS.md) for the code layout, building and testing.
 
 ---
 
 ## Credits and licence
 
-NoSplitNX is a dedicated Nintendo Switch fork based on:
-- [mamesj/pokemon-fulldex](https://github.com/mamesj/pokemon-fulldex) for multi-game unification, regional mappings, and layouts.
-- [ClickingMaster/ssrecomp](https://github.com/ClickingMaster/ssrecomp) for the original single-screen static recompiler concept.
-- [melonDS](https://melonds.kuribo64.net) for the Nintendo DS emulation core and JIT.
-- [mGBA](https://mgba.io) and Pokémon GBA Widescreen for Game Boy Advance emulation.
-- [sphaira](https://github.com/ITotalJustice/sphaira) for Nintendo Switch forwarder generation.
-- DeadSkullzJr and libretro-database for cheat code databases.
+NoSplitNX started as a Switch fork of [mamesj/pokemon-fulldex](https://github.com/mamesj/pokemon-fulldex) and still uses its work. Thanks to:
 
-Licensed under **GPL-3.0-or-later** (see [LICENSE](LICENSE)).  
-*Not affiliated with or endorsed by Nintendo, Game Freak, or The Pokémon Company. Pokémon is a registered trademark of its respective owners.*
+- [mamesj/pokemon-fulldex](https://github.com/mamesj/pokemon-fulldex): the multi-game base, regional mappings and layouts.
+- [ClickingMaster/ssrecomp](https://github.com/ClickingMaster/ssrecomp): the original single-screen SoulSilver project.
+- [melonDS](https://melonds.kuribo64.net): DS emulation.
+- [mGBA](https://mgba.io) and Pokémon GBA Widescreen: GBA emulation and widescreen patches.
+- [sphaira](https://github.com/ITotalJustice/sphaira): HOME Menu forwarder generation.
+- DeadSkullzJr and libretro-database: cheat databases. Libretro Thumbnails and SteamGridDB: cover art.
 
----
+Licensed under **GPL-3.0-or-later** (see [LICENSE](LICENSE)).
+*Not affiliated with or endorsed by Nintendo, Game Freak or The Pokémon Company. Pokémon is a trademark of its respective owners.*
 
-Made with ♥ by [IamCarron](https://github.com/IamCarron)
-
-Built with the help of AI.
+Made with ♥ by [IamCarron](https://github.com/IamCarron). Built with the help of AI.

@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+- **New app icon and README**: a new NoSplitNX icon in the Homebrew Menu (two DS screens becoming one widescreen picture between Joy-Con colours), and a README rewritten around what NoSplitNX is today.
+
 
 ## v1.2.3 — HG/SS Battles, GBA Fixes, Achievements Banner & Online Covers
 

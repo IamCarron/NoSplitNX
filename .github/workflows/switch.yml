@@ -40,7 +40,15 @@ jobs:
       - name: Install host prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build git python3
+          sudo apt-get install -y cmake ninja-build git python3 librsvg2-bin imagemagick fonts-dejavu-core
+
+      # The Homebrew Menu icon is drawn from tools/switch/icon.svg: render it to the 256x256 JPEG
+      # (no transparency in JPEG, so the background colour fills it) that build_game.sh packs.
+      - name: Render app icon from SVG
+        run: |
+          rsvg-convert -w 256 -h 256 -b '#0b1122' tools/switch/icon.svg -o "$RUNNER_TEMP/icon.png"
+          convert "$RUNNER_TEMP/icon.png" -background '#0b1122' -flatten -quality 95 tools/switch/icon.jpg
+          identify tools/switch/icon.jpg
 
       - name: Build all-in-one NoSplitNX (nosplitnx.nro)
         if: github.event_name == 'push' || github.event.inputs.target == 'all' || github.event.inputs.target == 'everything'
