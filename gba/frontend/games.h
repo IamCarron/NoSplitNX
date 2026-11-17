@@ -427,6 +427,49 @@ inline std::string KeyFromFile(const std::string& file)
     return k.empty() ? "game" : k;
 }
 
+inline uint32_t PatchColour(const char* name)
+{
+    if (!name) return 0xFF505A70;
+    if (!strncmp(name, "emerald", 7) || !strcmp(name, "inclement") || !strcmp(name, "monomyth")) return 0xFF2A6E50;
+    if (!strncmp(name, "leafgreen", 9)) return 0xFF3E7A34;
+    if (!strncmp(name, "sapphire", 8)) return 0xFF2A4A8A;
+    return 0xFF8A3A30;
+}
+
+inline void PatchStats(const std::vector<uint8_t>& rom, const WidePatch& patch, int& callCount, int& sameMatch)
+{
+    callCount = 0;
+    sameMatch = 0;
+    const char* s = patch.safety;
+    while (*s)
+    {
+        const char* end = strchr(s, '\n');
+        const std::string line(s, end ? end - s : strlen(s));
+        s = end ? end + 1 : s + line.size();
+        char kind[8] = {};
+        unsigned off = 0, size = 0, crc = 0;
+        const int got = sscanf(line.c_str(), "%7s %x %x %x", kind, &off, &size, &crc);
+        if (got < 3) continue;
+        if (!strcmp(kind, "call")) callCount++;
+        else if (!strcmp(kind, "same") && got >= 4 && (size_t)off + size <= rom.size() &&
+                 doCrc32(rom.data() + off, size) == crc)
+            sameMatch++;
+    }
+}
+
+inline bool SameFamily(const char* patchName, const char* codeBase)
+{
+    if (!patchName || !codeBase) return false;
+    if (!strncmp(codeBase, "firered", 7))
+        return !strncmp(patchName, "firered", 7) || !strcmp(patchName, "radicalred") || !strcmp(patchName, "unbound");
+    if (!strncmp(codeBase, "emerald", 7))
+        return !strncmp(patchName, "emerald", 7) || !strcmp(patchName, "inclement");
+    if (!strncmp(codeBase, "leafgreen", 9)) return !strncmp(patchName, "leafgreen", 9);
+    if (!strncmp(codeBase, "ruby", 4)) return !strncmp(patchName, "ruby", 4);
+    if (!strncmp(codeBase, "sapphire", 8)) return !strncmp(patchName, "sapphire", 8);
+    return !strcmp(patchName, codeBase);
+}
+
 // What a ROM (as it will be played) is: one of ours, a hack of one (widescreen if the patch
 // fits), or another game (played as it is).
 inline void Identify(Game& g, const std::vector<uint8_t>& rom)
@@ -454,15 +497,13 @@ inline void Identify(Game& g, const std::vector<uint8_t>& rom)
         if (PatchFits(rom, p, why))
         {
             g.patch = p.name;
-            g.colour = !strcmp(p.name, "emerald") || !strcmp(p.name, "emeraldlegacy") || !strcmp(p.name, "inclement") || !strcmp(p.name, "monomyth") ? 0xFF2A6E50 : !strncmp(p.name, "leafgreen", 9) ? 0xFF3E7A34
-                     : !strncmp(p.name, "sapphire", 8) ? 0xFF2A4A8A : 0xFF8A3A30;
+            g.colour = PatchColour(p.name);
             return;
         }
     const std::string code = Header(rom, 0xAC, 4);
+    const char* codeBase = PatchForCode(code);
     const WidePatch* p = PatchForVersion(code, rom.size() > 0xBC ? rom[0xBC] : 0);
-    if (!p)
-        g.why = PatchForCode(code) ? "NOT A VERSION WITH A WIDESCREEN PATCH" : "NOT ONE OF THE WIDESCREEN GAMES";
-    else
+    if (p)
     {
         PatchFits(rom, *p, why);
         g.why = why;
@@ -475,8 +516,37 @@ inline void Identify(Game& g, const std::vector<uint8_t>& rom)
         {
             g.patch = p->name;
             g.forced = true;
+            g.colour = PatchColour(p->name);
+            return;
         }
     }
+    // Custom-code hacks or hacks that relocated/filled the vanilla free block can still safely run
+    // any sibling widescreen patch whose call hooks and free space are completely intact.
+    const WidePatch* best = nullptr;
+    int bestScore = -1;
+    for (const WidePatch& wp : kWidePatches)
+    {
+        int calls = 0, same = 0;
+        PatchStats(rom, wp, calls, same);
+        if (calls < 10 || !PatchCantTry(rom, wp).empty()) continue;
+        const int score = (codeBase && SameFamily(wp.name, codeBase) ? 10000 : 0) + (p == &wp ? 500 : 0) + same * 10 + calls;
+        if (score > bestScore)
+        {
+            bestScore = score;
+            best = &wp;
+        }
+    }
+    if (best)
+    {
+        PatchFits(rom, *best, why);
+        g.why = why;
+        g.patch = best->name;
+        g.forced = true;
+        g.colour = PatchColour(best->name);
+        return;
+    }
+    if (!p)
+        g.why = codeBase ? "NOT A VERSION WITH A WIDESCREEN PATCH" : "NOT ONE OF THE WIDESCREEN GAMES";
 }
 
 // What the ROMs in the folder were found to be, kept in a file (saves/rom-list.txt): telling a
@@ -518,9 +588,9 @@ struct ScanCache
                 if (t == std::string::npos) break;
                 a = t + 1;
             }
-            // (An older list's lines: looked at again. 13 fields since #163: a hack using the
-            // widescreen patch's space is no longer listed as one to try widescreen on.)
-            if (f.size() != 13 || f[12] != "3") continue;
+            // (An older list's lines: looked at again. Version 4: fallback detection across
+            // alternate free spaces / custom codes.)
+            if (f.size() != 13 || f[12] != "4") continue;
             Game g;
             g.rom = f[1];
             g.ips = f[2];
@@ -574,7 +644,7 @@ struct ScanCache
             snprintf(colour, sizeof colour, "%08X", (unsigned)g.colour);
             out += clean(e.first) + "\t" + clean(g.rom) + "\t" + clean(g.ips) + "\t" + clean(g.fileName) + "\t" + clean(g.key) +
                    "\t" + clean(g.name) + "\t" + g.sha1 + "\t" + g.patch + "\t" + clean(g.why) + "\t" + colour + "\t" +
-                   (g.known ? "1" : "0") + "\t" + (g.forced ? "1" : "0") + "\t3\n";
+                   (g.known ? "1" : "0") + "\t" + (g.forced ? "1" : "0") + "\t4\n";
         }
         WriteFile(path, std::vector<uint8_t>(out.begin(), out.end()));
         changed = false;

@@ -33,7 +33,9 @@ inline std::string CodeOf(const std::string& key)
     };
     for (const auto& kv : kCodes)
         if (key == kv.key) return kv.code;
-    return "GBA-" + key;
+    std::string up = "GBA-";
+    for (char c : key) up += (char)toupper((unsigned char)c);
+    return up;
 }
 
 // Adds the GBA games in roms (saves in saves) to games; their pictures read once (artCache, by

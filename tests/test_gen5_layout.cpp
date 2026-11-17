@@ -364,10 +364,11 @@ int main()
         assert(std::fabs(z.zoom - 1.0f) < 0.01f && std::fabs(z.lookX) < 0.01f && std::fabs(z.lookY) < 0.01f);
     }
 
-    // Authentic BW1 + B2W2 battle strips mutually co-sized with AdaptGen5BattlePrompt.
+    // Unified STRIP (authentic BW1 + B2W2 commands, PartyRows Poke Balls, hexagonal moves + Shift/Back, and mutual AdaptGen5BattlePrompt co-sizing).
     {
         constexpr uint32_t darkTray = 0xFF1A2024u, crimson = 0xFF682428u, arena = 0xFF103020u;
         std::vector<uint32_t> promptTop(256 * 192, arena), bw1Touch(256 * 192, 0xFF282830u), bw2Touch(256 * 192, 0xFF202028u);
+        std::vector<uint8_t> bw1Flags(256 * 192, LAYER_BACKDROP), bw2Flags(256 * 192, LAYER_BACKDROP);
         for (int x = 0; x < 256; x++)
         {
             for (int y = 147; y < 150; y++) promptTop[y * 256 + x] = crimson;
@@ -376,16 +377,49 @@ int main()
         for (int y = 158; y < 174; y++)
             for (int x = 16; x < 185; x++)
                 promptTop[y * 256 + x] = white;
-        // BW1 magenta cursor around BAG + BW2 crimson cursor around RUN.
-        bw1Touch[146 * 256 + 6] = bw1Touch[182 * 256 + 74] = 0xFFFB0092u;
-        bw2Touch[154 * 256 + 94] = bw2Touch[188 * 256 + 162] = 0xFFC31028u;
 
-        const ScreenImage sBw1[2] = { { promptTop.data(), nullptr }, { bw1Touch.data(), nullptr } };
-        const ScreenImage sBw2[2] = { { promptTop.data(), nullptr }, { bw2Touch.data(), nullptr } };
-        const float viewW = 341.333f, viewRight = 128.0f + viewW / 2.0f;
+        auto setupCommandFlags = [](std::vector<uint8_t>& fl, int topBagY, int topRunY) {
+            std::fill(fl.begin(), fl.end(), LAYER_BACKDROP);
+            fl[170 * 256 + 39] = LAYER_BG0;
+            fl[180 * 256 + 127] = LAYER_BG0;
+            fl[170 * 256 + 216] = LAYER_BG0;
+            fl[topBagY * 256 + 39] = LAYER_BG0;
+            fl[topRunY * 256 + 127] = LAYER_BG0;
+            fl[topBagY * 256 + 216] = LAYER_BG0;
+        };
+        auto setupMoveFlags = [](std::vector<uint8_t>& fl) {
+            std::fill(fl.begin(), fl.end(), LAYER_BACKDROP);
+            for (int y : { 74, 120 })
+                for (int x : { 40, 216 })
+                    fl[y * 256 + x] = LAYER_BG1;
+            fl[175 * 256 + 39] = LAYER_BG0;
+            fl[150 * 256 + 39] = LAYER_BG0;
+            fl[175 * 256 + 216] = LAYER_BG0;
+        };
+
+        const ScreenImage sBw1[2] = { { promptTop.data(), nullptr }, { bw1Touch.data(), bw1Flags.data() } };
+        const ScreenImage sBw2[2] = { { promptTop.data(), nullptr }, { bw2Touch.data(), bw2Flags.data() } };
+        const float viewW = 341.333f, viewLeft = 128.0f - viewW / 2.0f, viewRight = 128.0f + viewW / 2.0f;
+        const Gen5Strip::PartyPlaces party{ viewLeft + 109.0f, 53.0f, viewRight - 3.0f, 131.0f };
 
         for (bool isMoves : { false, true })
         {
+            if (!isMoves)
+            {
+                setupCommandFlags(bw1Flags, 133, 149);
+                setupCommandFlags(bw2Flags, 146, 156);
+                // BW1 magenta cursor around BAG + BW2 crimson cursor around RUN.
+                std::fill(bw1Touch.begin(), bw1Touch.end(), 0xFF282830u);
+                std::fill(bw2Touch.begin(), bw2Touch.end(), 0xFF202028u);
+                bw1Touch[146 * 256 + 6] = bw1Touch[182 * 256 + 74] = 0xFFFB0092u;
+                bw2Touch[154 * 256 + 94] = bw2Touch[188 * 256 + 162] = 0xFFC31028u;
+            }
+            else
+            {
+                setupMoveFlags(bw1Flags);
+                setupMoveFlags(bw2Flags);
+            }
+
             Scene sc1;
             sc1.name = "battle";
             sc1.wide = true;
@@ -393,17 +427,8 @@ int main()
             float pr1 = 0.0f, btnW1 = 0.0f, minW = 0.0f, idealW = 0.0f, maxW = 0.0f;
             Gen5BattleButtonBounds(1, isMoves, false, 103, minW, idealW, maxW);
             assert(AdaptGen5BattlePrompt(sc1, viewW, sBw1, minW, idealW, maxW, pr1, btnW1));
-            Bw1Layouts::BattleStripClassic(sc1, viewRight, bw1Touch.data(), isMoves, pr1);
-            int bw1Crops = 0, bw1Mag = 0;
-            for (const Element& e : sc1.items)
-                if (e.screen == 1)
-                {
-                    bw1Crops++;
-                    assert(e.dx >= pr1 + 4.9f && e.dx + e.sw * e.scale <= viewRight + 0.01f);
-                    assert(e.dy >= 146.5f && e.dy + e.sh * e.scale <= 190.5f);
-                    if (e.border && e.borderColor == 0xFB0092u) bw1Mag++;
-                }
-            assert(bw1Crops == 4 && (isMoves || bw1Mag == 1));
+            const float avail1 = std::max(84.0f, viewRight - 2.0f - (pr1 + 5.0f));
+            Bw1Layouts::BattleStrip(sc1, viewRight, sBw1, isMoves, party, avail1, true);
 
             Scene sc2;
             sc2.name = "battle";
@@ -412,28 +437,82 @@ int main()
             float pr2 = 0.0f, btnW2 = 0.0f;
             Gen5BattleButtonBounds(1, isMoves, false, 110, minW, idealW, maxW);
             assert(AdaptGen5BattlePrompt(sc2, viewW, sBw2, minW, idealW, maxW, pr2, btnW2));
-            Gen5Strip::Black2Authentic(sc2, viewRight, sBw2[1], isMoves, pr2);
-            int bw2Crops = 0, bw2Crim = 0;
-            for (const Element& e : sc2.items)
+            const float avail2 = std::max(84.0f, viewRight - 2.0f - (pr2 + 5.0f));
+            Gen5Strip::Black2(sc2, viewRight, sBw2, isMoves, party, avail2, true);
+
+            for (const auto& pair : { std::make_pair(&sc1, pr1), std::make_pair(&sc2, pr2) })
             {
-                if (e.screen == 1 && e.alpha > 0)
+                const Scene& sc = *pair.first;
+                const float pr = pair.second;
+                int balls = 0, cmdPlates = 0, hexagons = 0, curBrackets = 0;
+                for (const Element& e : sc.items)
                 {
-                    bw2Crops++;
-                    assert(e.dx >= pr2 + 4.9f && e.dx + e.sw * e.scale <= viewRight + 0.01f);
-                    assert(e.dy >= 146.5f && e.dy + e.sh * e.scale <= 190.5f);
+                    if (e.screen == 1 && e.drop == (LAYER_BG0 | LAYER_BG1 | LAYER_BG2 | LAYER_BG3 | LAYER_BACKDROP)
+                        && (e.sw == 49 || e.sw == 50 || e.sw == 94))
+                        balls++;
+                    if (e.screen == 1 && e.alpha > 0 && e.dy >= 146.0f)
+                    {
+                        if (e.drop == LAYER_BACKDROP && e.sw == 256 && e.sh == 96) hexagons++;
+                        else if (e.drop == LAYER_BACKDROP || e.sw == 92 || e.sw == 148) cmdPlates++;
+                        assert(e.dx >= pr + 4.9f || e.sw == 16); // cursor brackets overhang slightly left
+                        assert(e.dx + e.sw * e.scale <= viewRight + 0.01f);
+                    }
+                    if (e.screen == 1 && e.drop == (LAYER_BG0 | LAYER_BG1 | LAYER_BG2 | LAYER_BG3 | LAYER_BACKDROP) && e.sw == 16)
+                        curBrackets++;
                 }
-                if (e.border && e.borderColor == 0xC31028u) bw2Crim++;
+                assert(balls == 2); // Both foe and player Poke Ball rows rendered
+                if (!isMoves)
+                {
+                    assert(cmdPlates == 4); // Authentic FIGHT! banner + BAG/RUN/POKEMON plates
+                    assert(curBrackets == 4);
+                }
+                else
+                    assert(hexagons == 1); // Moves + Shift + Back inside tray
             }
-            assert(bw2Crops == 4 && (isMoves || bw2Crim == 1));
             if (!isMoves)
             {
                 int tx = 0, ty = 0;
                 assert(MergedTouch(sc2, viewRight - 20.0f, 155.0f, tx, ty));
-                assert(tx >= 82 && tx < 174 && ty >= 54 && ty < 134);
+                assert(tx >= 100 && tx < 156 && ty >= 60 && ty < 120);
+            }
+            else
+            {
+                int tx = 0, ty = 0;
+                assert(MergedTouch(sc2, viewRight - 140.0f, 168.0f, tx, ty));
+                assert((tx >= 8 && tx < 68) || (tx >= 186 && tx < 246));
             }
         }
+
+        // Authentic FIGHT! with double/triple partner Pokemon icons + authentic B2W2 Below stripes + animation guard.
+        setupCommandFlags(bw2Flags, 146, 156);
+        for (int y = 109; y <= 125; y++)
+            for (int x : { 95, 111, 140, 156 }) bw2Flags[y * 256 + x] = 0x10;
+        Scene twoAuth;
+        Gen5Strip::Commands(twoAuth, sBw2[1], Gen5Strip::Black2Commands(), viewRight - 115.0f, 134.0f, 0.44f, true);
+        const Element* banner = nullptr;
+        const Element* partnerIcons = nullptr;
+        for (const Element& e : twoAuth.items)
+        {
+            if (e.screen == 1 && e.sx == 82 && e.sy == 74 && e.sw == 92) banner = &e;
+            if (e.screen == 1 && e.sx == 95 && e.sy == 109 && e.sw == 62) partnerIcons = &e;
+        }
+        assert(banner && partnerIcons && partnerIcons->dx > banner->dx + banner->sw * banner->scale);
+
+        Scene belowAuth;
+        const Gen5Strip::BelowButton* b[1] = { &Gen5Strip::Black2Shift() };
+        Gen5Strip::Below(belowAuth, sBw2[1], b, 1, 200.0f, 150.0f, 36.0f, 0.4f, 3.0f, 0xC31028, true);
+        int stripeBars = 0;
+        for (const Element& e : belowAuth.items)
+            if (e.screen < 0 && !e.border) stripeBars++;
+        assert(stripeBars == 3); // top metallic bevel + upper & lower B2W2 accent bars
+
+        std::fill(bw2Flags.begin(), bw2Flags.end(), LAYER_BACKDROP);
+        Scene midAnim;
+        midAnim.items = { FullScreen(0) };
+        Gen5Strip::Black2(midAnim, viewRight, sBw2, false, party, 113.0f, true);
+        assert(midAnim.items.size() == 1); // mid-animation Poke Ball skips premature buttons/balls
     }
 
     SDL_Quit();
-    puts("Gen 5 layouts: single-screen Bag, battle questions, Gen5Strip, authentic BW1/B2W2 strips, SmButtons, DsZoom and compositors passed.");
+    puts("Gen 5 layouts: single-screen Bag, battle questions, Gen5Strip, authentic STRIP + Poke Balls, SmButtons, DsZoom and compositors passed.");
 }

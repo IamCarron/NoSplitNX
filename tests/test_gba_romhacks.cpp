@@ -2,8 +2,10 @@
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
+#define SSR_GBA
 
 #include "games.h"
+#include "gba_games.h"
 #include "launcher.h"
 
 #include <cassert>
@@ -243,6 +245,84 @@ int main(int argc, char** argv)
     std::fill(c.px.begin(), c.px.end(), 0xFF000000u);
     Launcher::DrawCartridgeCase(c, 20, 20, 224, 224, Launcher::GBA, nullptr,
                                 "GBA-my-super-long-rom-hack-name-v2", "Pokemon Gaia V3.2", 2, true, true);
+
+    // 6. Custom-code / relocated-free-space hack widescreen fallback (Identify finds compatible sibling patch).
+    {
+        const WidePatch* rrPatch = gbaw::Games::FindPatch("radicalred");
+        assert(rrPatch != nullptr);
+        auto rrRom = MakeSyntheticGba(0x01000000, "SOULGOLDGBA", "SGLD", 0, 0x00);
+        // Populate call hooks and free space required by radicalred, leaving FireRed's vanilla 0x0F00000 occupied (0x00).
+        auto find2ForCrc = [](uint32_t targetCrc) -> uint16_t {
+            for (uint32_t v = 0; v < 65536; v++)
+            {
+                const uint8_t b[2] = { (uint8_t)(v & 0xFF), (uint8_t)(v >> 8) };
+                if (doCrc32(b, 2) == targetCrc) return (uint16_t)v;
+            }
+            std::abort();
+        };
+        std::map<uint32_t, uint16_t> crcCache;
+        const char* s = rrPatch->safety;
+        while (*s)
+        {
+            const char* end = strchr(s, '\n');
+            const std::string line(s, end ? end - s : strlen(s));
+            s = end ? end + 1 : s + line.size();
+            char kind[8] = {};
+            unsigned off = 0, sz = 0, crc = 0;
+            const int got = sscanf(line.c_str(), "%7s %x %x %x", kind, &off, &sz, &crc);
+            if (got < 3) continue;
+            if (!strcmp(kind, "free"))
+                for (unsigned i = 0; i < sz && off + i < rrRom.size(); i++) rrRom[off + i] = 0xFF;
+            else if (!strcmp(kind, "call") && got >= 4 && sz == 2 && (size_t)off + 2 <= rrRom.size())
+            {
+                if (crcCache.find(crc) == crcCache.end()) crcCache[crc] = find2ForCrc(crc);
+                const uint16_t val = crcCache[crc];
+                rrRom[off + 0] = (uint8_t)(val & 0xFF);
+                rrRom[off + 1] = (uint8_t)(val >> 8);
+            }
+        }
+        gbaw::Games::Game g;
+        g.fileName = "Pokemon_SoulGold_v1.2.1.gba";
+        gbaw::Games::Identify(g, rrRom);
+        assert(!g.patch.empty());
+        assert(g.forced);
+        assert(g.patch == "radicalred" || gbaw::Games::PatchCantTry(rrRom, *gbaw::Games::FindPatch(g.patch)).empty());
+    }
+
+    // 7. Uppercase GBA forwarder code, FindArt stem resolution on .ups/long extensions, and start_button -> gba_start sync.
+    {
+        assert(GbaGames::CodeOf("pokemon-soulgold-v1-2-1") == "GBA-POKEMON-SOULGOLD-V1-2-1");
+
+        // Minimal 1x1 red RGBA PNG generated cleanly via chunk CRCs? Wait: embed exact valid 1x1 PNG bytes.
+        static const unsigned char kPng1x1[] = {
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE,
+            0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54,
+            0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00,
+            0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB0,
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
+            0xAE, 0x42, 0x60, 0x82
+        };
+        const fs::path iconDir = root / "icons";
+        WriteBytes(iconDir / "Long_Name_Hack.png", std::vector<unsigned char>(kPng1x1, kPng1x1 + sizeof kPng1x1));
+        Launcher::Game artGame;
+        artGame.platform = Launcher::GBA;
+        artGame.rom = (roms / "Long_Name_Hack.xdelta").string();
+        artGame.folder = saves.string();
+        artGame.code = "GBA-LONG-NAME-HACK";
+        Launcher::FindArt(artGame, root.string());
+        assert(artGame.art.size() == (size_t)Launcher::Art * Launcher::Art);
+
+        const std::string hostCfg = (root / "settings.cfg").string();
+        Launcher::SetConfigValue(hostCfg, "start_button", "menu");
+        Launcher::SyncGbaSettings(hostCfg, root.string());
+        assert(Launcher::ConfigValue((root / "gba-settings.ini").string(), "gba_start") == "menu");
+        Launcher::SetConfigValue(hostCfg, "start_button", "ds");
+        Launcher::SyncGbaSettings(hostCfg, root.string());
+        assert(Launcher::ConfigValue((root / "gba-settings.ini").string(), "gba_start") == "start");
+    }
 
     std::puts("GBA ROM hacks test OK: unrestricted detection, UPS/BPS/IPS32 patching, PatchCantTry, Spanish patches, and card UI");
     return 0;

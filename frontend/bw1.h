@@ -275,9 +275,9 @@ public:
             // (Choosing a move's target, in a double, triple or rotation battle: the foes'
             // buttons above, the player's side below, touch screen rows 32-134.)
             const bool target = !moves && !command && Fw->Ran(targetMenu, 1);
-            // STRIP / CORNER / PANEL: keep mutual battle prompt co-sizing so localized text
-            // ("¿Qué debería hacer ...?") and the authentic DS buttons meet cleanly edge-to-edge.
-            if (buttons == BUTTONS_STRIP || buttons == BUTTONS_CORNER || buttons == BUTTONS_PANEL)
+            // CORNER / PANEL: keep mutual battle prompt co-sizing so localized text
+            // ("¿Qué debería hacer ...?") and the buttons never overlap on wide screens.
+            if (buttons == BUTTONS_CORNER || buttons == BUTTONS_PANEL)
             {
                 if (!wideView || !(moves || command || target)) return;
                 std::vector<Element> cornerKeep, keep;
@@ -287,17 +287,9 @@ public:
                     else keep.push_back(e);
                 }
                 sc.items = std::move(keep);
-                bool stripMoves = moves;
-                if (buttons == BUTTONS_STRIP && !target && screens[1].flags)
-                {
-                    // Wait out mid-animation Poke Ball frames so only finished authentic buttons show.
-                    bool readyMoves = false;
-                    if (!BlackButtonsReady(screens[1], readyMoves)) return;
-                    stripMoves = readyMoves;
-                }
                 float promptRight = viewLeft + 4.0f;
                 float minBtnW = 96.0f, idealBtnW = 112.0f, maxBtnW = 120.0f;
-                Gen5BattleButtonBounds(buttons, stripMoves, target, 103, minBtnW, idealBtnW, maxBtnW);
+                Gen5BattleButtonBounds(buttons, moves, target, 103, minBtnW, idealBtnW, maxBtnW);
                 float targetBtnW = idealBtnW;
                 AdaptGen5BattlePrompt(sc, viewWidth, screens, minBtnW, idealBtnW, maxBtnW,
                     promptRight, targetBtnW);
@@ -325,8 +317,6 @@ public:
                     }
                     for (const Element& e : cornerKeep) sc.items.push_back(e);
                 }
-                else if (buttons == BUTTONS_STRIP && !target)
-                    BattleStripClassic(sc, viewRight, screens[1].pixels, stripMoves, promptRight);
                 else
                 {
                     Element c = moves ? Crop(1, 0, 30, 256, 98) : target ? Crop(1, 0, 32, 256, 103)
@@ -341,8 +331,10 @@ public:
                 }
                 return;
             }
-            // Optional STANDARD / SUNMOON rounded strips (drawn on both wide and 4:3 views).
-            const bool strip = (buttons == BUTTONS_STANDARD || buttons == BUTTONS_SUNMOON) &&
+            // STRIP (authentic BW1 plates) / STANDARD (flat rounded) / SUNMOON: keeps party Poké
+            // Balls, clean hexagonal move/target cards, Shift/Rotation/Back buttons, mutual tray
+            // co-sizing, and 4-frame stability across transitions on both wide and 4:3 views.
+            const bool strip = (buttons == BUTTONS_STRIP || buttons == BUTTONS_STANDARD || buttons == BUTTONS_SUNMOON) &&
                 (Fw->Ran(moveMenu, 4) || Fw->Ran(commandMenu, 4) || Fw->Ran(targetMenu, 4));
             if (!strip) return;
             std::vector<Element> keep;
@@ -368,21 +360,19 @@ public:
             }
             float availRoom = -1.0f;
             bool gridArg = moves || target || !command;
-            if (wideView && (moves || command || target))
+            bool readyMoves = gridArg;
+            const bool ready = !screens[1].flags || BlackButtonsReady(screens[1], readyMoves);
+            if (wideView && (moves || command || target || ready))
             {
-                bool readyMoves = gridArg;
-                if (!screens[1].flags || BlackButtonsReady(screens[1], readyMoves))
-                {
-                    float promptRight = viewLeft + 4.0f;
-                    float minBtnW = 96.0f, idealBtnW = 112.0f, maxBtnW = 120.0f;
-                    Gen5BattleButtonBounds(1, readyMoves, target, 103, minBtnW, idealBtnW, maxBtnW);
-                    float targetBtnW = idealBtnW;
-                    AdaptGen5BattlePrompt(sc, viewWidth, screens, minBtnW, idealBtnW, maxBtnW,
-                        promptRight, targetBtnW);
-                    availRoom = std::max(84.0f, viewRight - 2.0f - (promptRight + 5.0f));
-                }
+                float promptRight = viewLeft + 4.0f;
+                float minBtnW = 92.5f, idealBtnW = 113.0f, maxBtnW = 115.5f;
+                Gen5BattleButtonBounds(1, readyMoves, target, 103, minBtnW, idealBtnW, maxBtnW);
+                float targetBtnW = idealBtnW;
+                AdaptGen5BattlePrompt(sc, viewWidth, screens, minBtnW, idealBtnW, maxBtnW,
+                    promptRight, targetBtnW);
+                availRoom = std::max(84.0f, viewRight - 2.0f - (promptRight + 5.0f));
             }
-            BattleStrip(sc, wideView ? viewRight : 256, screens, gridArg, party, availRoom);
+            BattleStrip(sc, wideView ? viewRight : 256, screens, gridArg, party, availRoom, buttons == BUTTONS_STRIP);
             return;
         }
         if (!strcmp(sc.name, "battle-list") && screens)
@@ -506,93 +496,9 @@ private:
         return many;
     }
 
-    // The battle's buttons (STRIP / SUNMOON / CLASSIC): in the lower right of the view, on the
+    // The battle's buttons (STRIP / STANDARD / SUNMOON): in the lower right of the view, on the
     // message box's band (rows 147-189) right of its text.
 public:
-    static void BattleStripClassic(Scene& sc, float viewRight, const uint32_t* px, bool moves, float promptRight = 150.0f)
-    {
-        struct Cell { int sx, sy, sw, sh; int hit[4]; float dx, dy, scale; }; // hit: the button's area
-        // Lined up with the message box (rows 147-189 of the top screen, a band across it):
-        // the buttons fill its rows, 2 pixels in, out to the view's right edge, on the tray.
-        // One scale for all the pieces of a menu.
-        const float boxTop = 147, boxBottom = 190, gap = 2, right = viewRight - 2;
-        const float top = boxTop + 2, bottom = boxBottom - 1, height = bottom - top;
-        const float availW = std::max(84.0f, right - (promptRight + 5.0f));
-        std::vector<Cell> cells;
-        float width;
-        if (!moves)
-        {
-            // Touch-screen pieces (x, y, w, h) and the buttons' areas (x0, y0, x1, y1): FIGHT's
-            // middle (its label) above BAG, RUN and POKEMON, scaled so it clears the framed prompt.
-            const float sc1 = std::min((height - gap) / (23 + 36), (availW - 2 * gap) / 204.0f);
-            const float cw = 68 * sc1, totalH = (23 + 36) * sc1 + gap;
-            width = 3 * cw + 2 * gap;
-            const float left = right - width, rowT = top + (height - totalH) / 2.0f, rowB = rowT + 23 * sc1 + gap;
-            cells.push_back({ 23, 77, 210, 23, { 16, 40, 240, 128 }, left, rowT, sc1 });                 // FIGHT
-            cells.push_back({ 6, 146, 68, 36, { 0, 128, 84, 192 }, left, rowB, sc1 });                   // BAG
-            cells.push_back({ 94, 152, 68, 36, { 84, 140, 172, 192 }, left + cw + gap, rowB, sc1 });     // RUN
-            cells.push_back({ 182, 146, 68, 36, { 172, 128, 256, 192 }, left + 2 * (cw + gap), rowB, sc1 }); // POKEMON
-        }
-        else
-        {
-            // Each move's name, type and PP (the middle of its button), two by two.
-            const float ms = std::min((height - gap) / (2 * 32), (availW - gap) / 256.0f), cw = 128 * ms;
-            width = 2 * cw + gap;
-            const float left = right - width;
-            for (int i = 0; i < 4; i++)
-            {
-                const int c = i & 1, r = i >> 1;
-                cells.push_back({ c * 128, 40 + r * 48, 128, 32, { c * 128, 30 + r * 50, c * 128 + 128, 80 + r * 50 },
-                    left + c * (cw + gap), r ? bottom - 32 * ms : top, ms });
-            }
-        }
-        (void)width;
-        // Which cell the cursor is on: its brackets' outline (the box around all magenta
-        // pixels). FIGHT is the whole upper part of the screen, so its brackets span most of
-        // it; the others are the button nearest the brackets' middle.
-        int x0 = 256, y0 = 192, x1 = -1, y1 = -1;
-        for (int y = 16; y < 192; y++)
-            for (int x = 0; x < 256; x++)
-                if ((px[y * 256 + x] & 0xFFFFFF) == 0xFB0092)
-                {
-                    x0 = std::min(x0, x); y0 = std::min(y0, y);
-                    x1 = std::max(x1, x); y1 = std::max(y1, y);
-                }
-        int best = -1;
-        if (x1 >= 0)
-        {
-            const float cx = (x0 + x1) / 2.0f, cy = (y0 + y1) / 2.0f;
-            if (!moves && y1 - y0 >= 90) best = 0;
-            else
-            {
-                float bestD = 1e9f;
-                for (size_t i = moves ? 0 : 1; i < cells.size(); i++)
-                {
-                    const int* h = cells[i].hit;
-                    const float dx = cx - (h[0] + h[2]) / 2.0f, dy = cy - (h[1] + h[3]) / 2.0f;
-                    if (dx * dx + dy * dy < bestD) { bestD = dx * dx + dy * dy; best = (int)i; }
-                }
-            }
-        }
-        // (No backing of its own: the buttons sit on the message box, seamless with it.)
-        for (size_t i = 0; i < cells.size(); i++)
-        {
-            const Cell& c = cells[i];
-            Element e = Crop(1, c.sx, c.sy, c.sw, c.sh);
-            e.dx = c.dx;
-            e.dy = c.dy;
-            e.scale = c.scale;
-            e.border = true;
-            e.borderRadius = 2;
-            if ((int)i == best)
-            {
-                e.borderColor = 0xFB0092;
-                e.borderWidth = 10;
-            }
-            sc.items.push_back(e);
-        }
-    }
-
     static bool BlackButtonsReady(const ScreenImage& touch, bool& gridOut)
     {
         const uint8_t* fl = touch.flags;
@@ -610,7 +516,7 @@ public:
     }
 
     static void BattleStrip(Scene& sc, float viewRight, const ScreenImage* screens, bool grid,
-        const Gen5Strip::PartyPlaces& party, float availRoom = -1.0f)
+        const Gen5Strip::PartyPlaces& party, float availRoom = -1.0f, bool authentic = true)
     {
         // Which menu the touch screen shows, by the layers at a few places: the command menu's
         // octagons (BG0: BAG, RUN, POKEMON) below the lens, inside which the backdrop shows; or
@@ -637,7 +543,7 @@ public:
         {
             const float s = std::clamp(room / 256, 0.36f, 0.44f);
             Gen5Strip::Commands(sc, screens[1], Gen5Strip::BlackCommands(), right - 256 * s,
-                147 + (42 - 96 * s) / 2 - 32 * s, s);
+                147 + (42 - 96 * s) / 2 - 32 * s, s, authentic);
             return;
         }
         const Gen5Strip::BelowButton* below[3];
@@ -660,7 +566,7 @@ public:
         Element hexagons = piece(0, 32, 256, 96, s, left, top);
         hexagons.drop = LAYER_BACKDROP;
         sc.items.push_back(hexagons);
-        Gen5Strip::Below(sc, screens[1], below, n, left + s, top + 34 * s, 92 * s, s, gap, 0xFB0092);
+        Gen5Strip::Below(sc, screens[1], below, n, left + s, top + 34 * s, 92 * s, s, gap, 0xFB0092, authentic);
     }
 
     // The X menu. Black's buttons are 123 x 41 on a light grid, two to a row, rows 48 apart

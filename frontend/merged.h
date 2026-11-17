@@ -845,11 +845,11 @@ inline void Gen5BattleButtonBounds(int style, bool moves, bool target, int targe
         maxW = 256.0f * (44.0f / sh);
         return;
     }
-    if (style == 1 && !target)
+    if (style == 1)
     {
-        minW = moves ? 126.0f : 114.0f;
-        idealW = moves ? 148.0f : 130.0f;
-        maxW = moves ? 154.0f : 135.4f;
+        minW = 92.5f;
+        idealW = (moves || target) ? 141.0f : 113.0f;
+        maxW = (moves || target) ? 196.0f : 115.5f;
         return;
     }
     minW = moves ? 112.0f : 102.0f;

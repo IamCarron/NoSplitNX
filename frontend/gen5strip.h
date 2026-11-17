@@ -152,30 +152,62 @@ struct RoundButton
     bool plain;              // the label drawn whole (the dark around it is the inside's colour)
 };
 
-// The rounded button b in the view's rectangle (x, y, w, h), its label at s * b.labelScale, shift
-// view pixels right of the middle. The label's left edge in the view.
-inline float Round(Scene& sc, const ScreenImage& touch, const RoundButton& b, float x, float y, float w, float h,
-    float s, float shift = 0)
+// Averages a 4 x 4 pixel patch on the touch screen so fill tones follow button press/dim animations.
+inline void SampleFillRGB(const uint32_t* px, const int pt[2], unsigned& r, unsigned& g, unsigned& bl)
 {
-    const uint32_t* px = touch.pixels;
-    const uint8_t* fl = touch.flags;
-    unsigned r = 0, g = 0, bl = 0;
+    r = g = bl = 0;
     for (int j = 0; j < 4; j++)
         for (int i = 0; i < 4; i++)
         {
-            const uint32_t c = px[(b.fill[1] + j) * 256 + b.fill[0] + i];
+            const uint32_t c = px[(pt[1] + j) * 256 + pt[0] + i];
             r += (c >> 16) & 0xFF;
             g += (c >> 8) & 0xFF;
             bl += c & 0xFF;
         }
-    r /= 16; g /= 16; bl /= 16;
-    Element e = FillRect(x, y, 1000, (int)std::lround(1000 * h / w), r << 16 | g << 8 | bl);
+    r /= 16;
+    g /= 16;
+    bl /= 16;
+}
+
+// A stretched FillRect across fractional view bounds (x, y, w, h).
+inline Element MakePlateRect(float x, float y, float w, float h, uint32_t rgb)
+{
+    Element e = FillRect(x, y, 1000, std::max(1, (int)std::lround(1000 * h / std::max(w, 0.01f))), rgb);
     e.scale = w / 1000;
+    return e;
+}
+
+// The rounded button b in the view's rectangle (x, y, w, h), its label at s * b.labelScale, shift
+// view pixels right of the middle. The label's left edge in the view.
+inline float Round(Scene& sc, const ScreenImage& touch, const RoundButton& b, float x, float y, float w, float h,
+    float s, float shift = 0, bool authentic = false)
+{
+    const uint32_t* px = touch.pixels;
+    const uint8_t* fl = touch.flags;
+    unsigned r = 0, g = 0, bl = 0;
+    SampleFillRGB(px, b.fill, r, g, bl);
+    Element e = MakePlateRect(x, y, w, h, (r << 16) | (g << 8) | bl);
     e.border = true;
     const int o = b.outline[1] * 256 + b.outline[0];
     e.borderColor = fl && LayerClass(fl[o]) == LAYER_OBJ ? b.outlineColour : px[o] & 0xFFFFFF;
     e.borderRadius = 2.5f;
     sc.items.push_back(e);
+    if (authentic)
+    {
+        // Subtle metallic bevel + B2W2 horizontal accent trim framing a dark high-contrast center band.
+        const uint32_t bevel = (((std::min(255u, r + 28)) << 16) | (std::min(255u, g + 28) << 8) | std::min(255u, bl + 28));
+        Element topHi = MakePlateRect(x + 2.0f, y + 1.5f, std::max(1.0f, w - 4.0f), std::max(0.6f, h * 0.04f), bevel);
+        topHi.borderRadius = 0.5f;
+        sc.items.push_back(topHi);
+        if (b.outlineColour != 0xFBFBFB && b.outlineColour != 0xF3F3FB)
+        {
+            const uint32_t barCol = b.key ? b.key : b.outlineColour;
+            const float barH = std::max(1.2f, h * 0.08f);
+            const float barW = std::max(2.0f, w - 3.0f);
+            sc.items.push_back(MakePlateRect(x + 1.5f, y + h * 0.22f, barW, barH, barCol));
+            sc.items.push_back(MakePlateRect(x + 1.5f, y + h * 0.78f - barH, barW, barH, barCol));
+        }
+    }
     // (At most as large as leaves it 3 grid pixels clear of the button's sides. Expand single-line
     // word labels safely within the button's interior so localized labels like ¡LUCHAR! or BOLSA
     // are never clipped.)
@@ -261,11 +293,15 @@ struct CommandLook
 {
     int cell[4][4];          // FIGHT!, BAG, RUN, POKEMON on the moves' grid (x, y, w, h)
     RoundButton button[4];
+    int art[4][4];           // authentic DS crops (x, y, w, h): FIGHT! banner, BAG, RUN, POKEMON
     uint32_t cursor;         // the colour of the cursor's brackets
 };
 
 // The four buttons for `look`, the grid's touch-screen pixel (x, y) at (left + x * s, top + y * s).
-inline void Commands(Scene& sc, const ScreenImage& touch, const CommandLook& look, float left, float top, float s)
+// authentic: draw authentic BW1 / B2W2 FIGHT! metallic plate and real DS BAG/RUN/POKEMON shapes
+// instead of flat Round() plates.
+inline void Commands(Scene& sc, const ScreenImage& touch, const CommandLook& look, float left, float top, float s,
+    bool authentic = false)
 {
     const uint32_t* px = touch.pixels;
     const uint8_t* fl = touch.flags;
@@ -303,11 +339,81 @@ inline void Commands(Scene& sc, const ScreenImage& touch, const CommandLook& loo
         const int* c = look.cell[i];
         x = left + c[0] * s; y = top + c[1] * s; w = c[2] * s; h = c[3] * s;
     };
+    float drawnRect[4][4] = {};
     for (int i = 0; i < 4; i++)
     {
         float x, y, w, h;
         rect(i, x, y, w, h);
-        if (i == 0 && icons)
+        drawnRect[i][0] = x; drawnRect[i][1] = y; drawnRect[i][2] = w; drawnRect[i][3] = h;
+        if (authentic && i == 0)
+        {
+            unsigned r = 0, g = 0, bl = 0;
+            SampleFillRGB(px, look.button[0].fill, r, g, bl);
+            Element fightBg = MakePlateRect(x, y, w, h, (r << 16) | (g << 8) | bl);
+            fightBg.border = true;
+            fightBg.borderRadius = 2.0f;
+            fightBg.borderColor = look.button[0].outlineColour;
+            fightBg.borderWidth = 5;
+            sc.items.push_back(fightBg);
+
+            const int* fa = look.art[0];
+            float fs = std::min((h - 2.0f) / fa[3], (w - 4.0f) / fa[2]);
+            if (icons)
+            {
+                const int iw = ix1 - ix0 + 1, ih = iy1 - iy0 + 1;
+                const float gap = 8.0f * s;
+                float is = std::min(s * look.button[0].labelScale, (h - 2.0f) / ih);
+                const float rawW = fa[2] * fs + iw * is;
+                if (rawW + gap > w - 4.0f && rawW > 0.01f)
+                {
+                    const float fit = (w - 4.0f - gap) / rawW;
+                    fs *= fit;
+                    is *= fit;
+                }
+                const float totalW = fa[2] * fs + gap + iw * is;
+                Element banner = Crop(1, fa[0], fa[1], fa[2], fa[3]);
+                banner.scale = fs;
+                banner.dx = x + (w - totalW) / 2.0f;
+                banner.dy = y + (h - fa[3] * fs) / 2.0f;
+                sc.items.push_back(banner);
+
+                Element ic = Crop(1, ix0, iy0, iw, ih);
+                ic.scale = is;
+                ic.dx = banner.dx + fa[2] * fs + gap;
+                ic.dy = y + (h - ih * is) / 2.0f;
+                ic.drop = LAYER_BG0 | LAYER_BG1 | LAYER_BG2 | LAYER_BG3 | LAYER_BACKDROP;
+                sc.items.push_back(ic);
+            }
+            else
+            {
+                Element banner = Crop(1, fa[0], fa[1], fa[2], fa[3]);
+                banner.scale = fs;
+                banner.dx = x + (w - fa[2] * fs) / 2.0f;
+                banner.dy = y + (h - fa[3] * fs) / 2.0f;
+                sc.items.push_back(banner);
+            }
+        }
+        else if (authentic)
+        {
+            const int* a = look.art[i];
+            const float scA = std::min(w / a[2], h / a[3]);
+            const float aw = a[2] * scA, ah = a[3] * scA;
+            const float ax = x + (w - aw) / 2.0f, ay = y + (h - ah) / 2.0f;
+            Element e = Crop(1, a[0], a[1], a[2], a[3]);
+            e.dx = ax;
+            e.dy = ay;
+            e.scale = scA;
+            e.drop = LAYER_BACKDROP;
+            if (!fl)
+            {
+                e.border = true;
+                e.borderRadius = 2.0f;
+                e.borderColor = look.button[i].outlineColour;
+            }
+            sc.items.push_back(e);
+            drawnRect[i][0] = ax; drawnRect[i][1] = ay; drawnRect[i][2] = aw; drawnRect[i][3] = ah;
+        }
+        else if (i == 0 && icons)
         {
             // The label and the icons side by side, 10 pixels apart, in the middle together.
             const RoundButton& b = look.button[0];
@@ -330,13 +436,9 @@ inline void Commands(Scene& sc, const ScreenImage& touch, const CommandLook& loo
     if (CursorBox(px, look.cursor, x0, y0, x1, y1))
     {
         const int middle = (x0 + x1) / 2;
-        const int on = y1 - y0 >= 90 ? 0 : y0 < 120 ? -1 : middle < 85 ? 1 : middle > 171 ? 3 : 2;
+        const int on = y1 - y0 >= 80 ? 0 : y0 < 120 ? -1 : middle < 85 ? 1 : middle > 171 ? 3 : 2;
         if (on >= 0)
-        {
-            float x, y, w, h;
-            rect(on, x, y, w, h);
-            Brackets(sc, x0, y0, x1, y1, x, y, w, h, s);
-        }
+            Brackets(sc, x0, y0, x1, y1, drawnRect[on][0], drawnRect[on][1], drawnRect[on][2], drawnRect[on][3], s);
     }
     for (int i = 0; i < 4; i++)
     {
@@ -359,7 +461,7 @@ struct BelowButton
 // view's x `from` (gap view pixels apart, at the grid's scale s), in the rows y to y + h; the
 // cursor's brackets (colour `cursor`) on the one it is on.
 inline void Below(Scene& sc, const ScreenImage& touch, const BelowButton* const* buttons, int n, float from, float y,
-    float h, float s, float gap, uint32_t cursor)
+    float h, float s, float gap, uint32_t cursor, bool authentic = false)
 {
     int x0, y0, x1, y1;
     const bool on = touch.pixels && CursorBox(touch.pixels, cursor, x0, y0, x1, y1) && y0 >= 132;
@@ -369,7 +471,7 @@ inline void Below(Scene& sc, const ScreenImage& touch, const BelowButton* const*
         const BelowButton& b = *buttons[i];
         const float w = b.width * s;
         x -= gap + w;
-        Round(sc, touch, b.look, x, y, w, h, s);
+        Round(sc, touch, b.look, x, y, w, h, s, 0, authentic);
         if (on && (x0 + x1) / 2 >= b.x0 && (x0 + x1) / 2 <= b.x1) Brackets(sc, x0, y0, x1, y1, x, y, w, h, s);
         TouchArea(sc, b.look.touch, x, y, w, h);
     }
@@ -389,6 +491,7 @@ inline const CommandLook& Black2Commands()
             { { 112, 175, 32, 10 }, { 100, 158, 56, 30 }, { 126, 160 }, { 128, 173 }, 0x20A2FB, 1.2f, 0, false },
             { { 190, 161, 57, 11 }, { 188, 150, 60, 36 }, { 214, 148 }, { 185, 160 }, 0x71DB30, 1.2f, 0, false },
         },
+        { { 82, 74, 92, 34 }, { 6, 146, 68, 40 }, { 94, 154, 68, 36 }, { 182, 146, 68, 40 } },
         0xC31028,
     };
     return look;
@@ -431,6 +534,7 @@ inline const CommandLook& BlackCommands()
             { { 116, 173, 23, 10 }, { 100, 158, 56, 30 }, { 126, 160 }, { 128, 151 }, 0xFBFBFB, 1.2f, 0, false },
             { { 195, 160, 52, 13 }, { 188, 145, 56, 40 }, { 214, 148 }, { 216, 135 }, 0xFBFBFB, 1.2f, 0, false },
         },
+        { { 54, 70, 148, 34 }, { 3, 134, 72, 52 }, { 91, 150, 74, 40 }, { 180, 134, 72, 52 } },
         0xFB0092,
     };
     return look;
@@ -458,39 +562,35 @@ inline const BelowButton& BlackBack()
     return b;
 }
 
-// Black 2 and White 2's battle buttons (STRIP), on the message box's band (rows 148-187) right of
-// its text: on the command menu FIGHT!, BAG, RUN and POKEMON as rounded buttons (Commands); on the
-// move menu (and the choice of a move's target) the buttons two by two, with the ones the touch
-// screen has below them (back, SHIFT, the rotation's) beside them. viewRight: the right edge of the view; grid: the moves or targets
-// rather than the command menu, when the touch screen's layers cannot tell; party: where the
-// parties' rows of balls go.
-inline void Black2(Scene& sc, float viewRight, const ScreenImage* screens, bool grid, const PartyPlaces& party,
-    float availRoom = -1.0f)
+// Whether Black 2 / White 2's battle touch screen has finished sliding its command or move
+// buttons into place (or flags are unavailable). Avoids showing mid-animation Poke Ball slices.
+inline bool Black2ButtonsReady(const ScreenImage& touch, bool& gridOut)
 {
-    // Which menu the touch screen shows, by the layers at a few places: the command menu's
-    // banners (BG0: BAG, RUN, POKEMON) and the inside of the FIGHT! plate above its banner (the
-    // backdrop); or buttons (BG1) two by two with the backdrop beside them: the moves, or the
-    // Pokemon a move can be aimed at in a double or triple battle (two or three across), in the
-    // same rows (34-125). While one menu turns into another the next one's function already runs:
-    // nothing is drawn until the buttons are in their places. (Without the layers: the menu whose
-    // function runs.)
+    const uint8_t* fl = touch.flags;
+    if (!fl) return true;
+    auto layer = [&](int x, int y) { return LayerClass(fl[y * 256 + x]); };
+    const bool commands = layer(39, 170) == LAYER_BG0 && layer(127, 180) == LAYER_BG0 &&
+                          layer(216, 170) == LAYER_BG0 && layer(128, 70) == LAYER_BACKDROP &&
+                          layer(39, 146) == LAYER_BG0 && layer(127, 156) == LAYER_BG0 && layer(216, 146) == LAYER_BG0;
+    const bool buttons = layer(40, 74) == LAYER_BG1 && layer(216, 74) == LAYER_BG1 &&
+                         layer(40, 120) == LAYER_BG1 && layer(216, 120) == LAYER_BG1 &&
+                         layer(0, 80) == LAYER_BACKDROP && layer(255, 80) == LAYER_BACKDROP;
+    if (!commands && !buttons) return false;
+    gridOut = buttons;
+    return true;
+}
+
+// Black 2 and White 2's battle buttons (STRIP / STANDARD / SUN AND MOON), on the message box's
+// band (rows 148-187) right of its text: party Poké Ball rows under both HP boxes, Commands
+// (authentic DS plates when authentic=true, or flat Round() / SmButtons) on command menus, and
+// real hexagonal move/target cards (drop = LAYER_BACKDROP) plus SHIFT / Rotation / Back on move
+// and target menus.
+inline void Black2(Scene& sc, float viewRight, const ScreenImage* screens, bool grid, const PartyPlaces& party,
+    float availRoom = -1.0f, bool authentic = true)
+{
     const uint8_t* fl = screens[1].flags;
     auto layer = [&](int x, int y) { return fl ? LayerClass(fl[y * 256 + x]) : 0; };
-    if (fl)
-    {
-        // (BAG, RUN and POKEMON slide up into their places, 8 rows a frame: their tops, rows 145,
-        // 155 and 145, are the last of them there.)
-        const bool commands = layer(39, 170) == LAYER_BG0 && layer(127, 180) == LAYER_BG0 &&
-                              layer(216, 170) == LAYER_BG0 && layer(128, 70) == LAYER_BACKDROP &&
-                              layer(39, 146) == LAYER_BG0 && layer(127, 156) == LAYER_BG0 && layer(216, 146) == LAYER_BG0;
-        // (Inside the buttons below their words, which are on other layers; row 80 at the
-        // screen's edges is between them, and the Ball's red on the command menu.)
-        const bool buttons = layer(40, 74) == LAYER_BG1 && layer(216, 74) == LAYER_BG1 &&
-                             layer(40, 120) == LAYER_BG1 && layer(216, 120) == LAYER_BG1 &&
-                             layer(0, 80) == LAYER_BACKDROP && layer(255, 80) == LAYER_BACKDROP;
-        if (!commands && !buttons) return;
-        grid = buttons;
-    }
+    if (fl && !Black2ButtonsReady(screens[1], grid)) return;
     const float right = viewRight - 2;
     // The buttons are drawn smaller where they would reach the message (a long name on a narrow
     // view): at least 4 pixels clear of it. When AdaptGen5BattlePrompt already resized the tray,
@@ -501,20 +601,10 @@ inline void Black2(Scene& sc, float viewRight, const ScreenImage* screens, bool 
     PartyRows(sc, party, Crop(1, 104, grid ? 19 : 43, 49, 10), Crop(1, 79, 127, 94, 16));
     if (!grid)
     {
-        // FIGHT!, BAG, RUN and POKEMON as rounded buttons on the moves' grid (Commands), as wide
-        // as the moves are with nothing beside them: 113 at 0.44, smaller, to 0.36, where the
-        // message leaves less room.
         const float s = std::clamp(room / 256, 0.36f, 0.44f);
-        Commands(sc, screens[1], Black2Commands(), right - 256 * s, 148 + (40 - 96 * s) / 2 - 32 * s, s);
+        Commands(sc, screens[1], Black2Commands(), right - 256 * s, 148 + (40 - 96 * s) / 2 - 32 * s, s, authentic);
         return;
     }
-    // The moves (127 x 44 each, at x 0 and 128, rows 34 and 82: name, type and PP), or the targets
-    // (two or three across, rows 35-125), as tall as the band, without the dark field behind them
-    // (the moves' types and the cursor are sprites, and stay). The buttons below them go left of
-    // them in the same order, as rounded buttons as tall as their two rows (Below): in a triple
-    // battle SHIFT, in a rotation battle the two that turn the Pokemon round, and back. Where the
-    // message leaves too little room for all of them at 0.44, they are drawn smaller, down to
-    // 0.36, and then without back (B goes back as well).
     const BelowButton* below[3];
     int n = 0;
     if (layer(39, 175) == LAYER_BG0 && layer(39, 150) == LAYER_BG0) below[n++] = &Black2Shift();
@@ -538,141 +628,6 @@ inline void Black2(Scene& sc, float viewRight, const ScreenImage* screens, bool 
     buttons.dy = top + 32 * s;
     buttons.drop = LAYER_BACKDROP;
     sc.items.push_back(buttons);
-    Below(sc, screens[1], below, n, left, top + 35 * s, 90 * s, s, gap, 0xC31028);
-}
-
-// Whether Black 2 / White 2's battle touch screen has finished sliding its command or move
-// buttons into place (or flags are unavailable). Avoids showing mid-animation Poke Ball slices.
-inline bool Black2ButtonsReady(const ScreenImage& touch, bool& gridOut)
-{
-    const uint8_t* fl = touch.flags;
-    if (!fl) return true;
-    auto layer = [&](int x, int y) { return LayerClass(fl[y * 256 + x]); };
-    const bool commands = layer(39, 170) == LAYER_BG0 && layer(127, 180) == LAYER_BG0 &&
-                          layer(216, 170) == LAYER_BG0 && layer(128, 70) == LAYER_BACKDROP &&
-                          layer(39, 146) == LAYER_BG0 && layer(127, 156) == LAYER_BG0 && layer(216, 146) == LAYER_BG0;
-    const bool buttons = layer(40, 74) == LAYER_BG1 && layer(216, 74) == LAYER_BG1 &&
-                         layer(40, 120) == LAYER_BG1 && layer(216, 120) == LAYER_BG1 &&
-                         layer(0, 80) == LAYER_BACKDROP && layer(255, 80) == LAYER_BACKDROP;
-    if (!commands && !buttons) return false;
-    gridOut = buttons;
-    return true;
-}
-
-// Authentic Black 2 / White 2 battle strip: crops the real textured touch-screen plates (FIGHT!
-// metallic bar above dotted-hexagonal BAG / RUN / POKEMON, or the 2x2 move cards) mutually
-// co-sized with AdaptGen5BattlePrompt on the bottom tray, highlighted with B2W2's crimson cursor.
-inline void Black2Authentic(Scene& sc, float viewRight, const ScreenImage& touch, bool moves, float promptRight)
-{
-    const uint32_t* px = touch.pixels;
-    if (!px) return;
-    struct Cell { int sx, sy, sw, sh; int hit[4]; float dx, dy, scale; };
-    const float boxTop = 147, boxBottom = 190, gap = 2, right = viewRight - 2;
-    const float top = boxTop + 2, bottom = boxBottom - 1, height = bottom - top;
-    const float availW = std::max(84.0f, right - (promptRight + 5.0f));
-    constexpr uint32_t kCursorCrimson = 0xC31028;
-
-    int x0 = 0, y0 = 0, x1 = -1, y1 = -1;
-    const bool hasCursor = CursorBox(px, kCursorCrimson, x0, y0, x1, y1);
-    auto cursorBest = [&](const std::vector<Cell>& cells) {
-        if (!hasCursor) return -1;
-        const float cx = (x0 + x1) / 2.0f, cy = (y0 + y1) / 2.0f;
-        if (!moves && y1 - y0 >= 80) return 0;
-        int best = -1;
-        float bestD = 1e9f;
-        for (size_t i = moves ? 0 : 1; i < cells.size(); i++)
-        {
-            const int* h = cells[i].hit;
-            const float dx = cx - (h[0] + h[2]) / 2.0f, dy = cy - (h[1] + h[3]) / 2.0f;
-            if (dx * dx + dy * dy < bestD) { bestD = dx * dx + dy * dy; best = (int)i; }
-        }
-        return best;
-    };
-
-    if (!moves)
-    {
-        const float sc1 = std::min((height - gap) / 62.0f, (availW - 2 * gap) / 204.0f);
-        const float cw = 68.0f * sc1, fightH = 22.0f * sc1;
-        const float totalH = fightH + 40.0f * sc1 + gap;
-        const float width = 3 * cw + 2 * gap;
-        const float left = right - width;
-        const float rowT = top + (height - totalH) / 2.0f;
-        const float rowB = rowT + fightH + gap;
-
-        std::vector<Cell> cells;
-        cells.push_back({ 82, 74, 92, 42, { 48, 46, 208, 136 }, left, rowT, sc1 });                       // FIGHT
-        cells.push_back({ 6, 146, 68, 40, { 0, 134, 84, 192 }, left, rowB, sc1 });                         // BAG
-        cells.push_back({ 94, 154, 68, 36, { 84, 144, 172, 192 }, left + cw + gap, rowB + 2 * sc1, sc1 }); // RUN
-        cells.push_back({ 182, 146, 68, 40, { 172, 134, 256, 192 }, left + 2 * (cw + gap), rowB, sc1 });   // POKEMON
-        const int best = cursorBest(cells);
-
-        // Upper FIGHT! plate: real centre banner unstretched inside a matching #202020 rounded plate.
-        Element fightBg = FillRect(left, rowT, 1000, std::max(1, (int)std::lround(1000 * fightH / width)), 0x202020);
-        fightBg.scale = width / 1000.0f;
-        fightBg.border = true;
-        fightBg.borderRadius = 2.0f;
-        fightBg.borderColor = best == 0 ? kCursorCrimson : 0xF3F3FB;
-        fightBg.borderWidth = best == 0 ? 10 : 5;
-        sc.items.push_back(fightBg);
-
-        const Cell& fc = cells[0];
-        const float fs = std::min((fightH - 2.0f) / (float)fc.sh, (width - 4.0f) / (float)fc.sw);
-        Element fightArt = Crop(1, fc.sx, fc.sy, fc.sw, fc.sh);
-        fightArt.scale = fs;
-        fightArt.dx = left + (width - fc.sw * fs) / 2.0f;
-        fightArt.dy = rowT + (fightH - fc.sh * fs) / 2.0f;
-        sc.items.push_back(fightArt);
-        const int fightTouch[4] = { 82, 54, 92, 80 }; // (x, y, w, h) of B2W2 FIGHT! plate
-        TouchArea(sc, fightTouch, left, rowT, width, fightH);
-
-        for (size_t i = 1; i < cells.size(); i++)
-        {
-            const Cell& c = cells[i];
-            Element e = Crop(1, c.sx, c.sy, c.sw, c.sh);
-            e.dx = c.dx;
-            e.dy = c.dy;
-            e.scale = c.scale;
-            e.border = true;
-            e.borderRadius = 2.0f;
-            if ((int)i == best)
-            {
-                e.borderColor = kCursorCrimson;
-                e.borderWidth = 10;
-            }
-            sc.items.push_back(e);
-        }
-        return;
-    }
-
-    const float ms = std::min((height - gap) / (2.0f * 40.0f), (availW - gap) / 256.0f);
-    const float cw = 128.0f * ms, rowH = 40.0f * ms;
-    const float width = 2 * cw + gap;
-    const float left = right - width;
-    const float totalH = 2 * rowH + gap;
-    const float topM = top + (height - totalH) / 2.0f;
-    std::vector<Cell> cells;
-    for (int i = 0; i < 4; i++)
-    {
-        const int col = i & 1, row = i >> 1;
-        cells.push_back({ col * 128, 36 + row * 48, 128, 40, { col * 128, 30 + row * 50, col * 128 + 128, 80 + row * 50 },
-            left + col * (cw + gap), topM + row * (rowH + gap), ms });
-    }
-    const int best = cursorBest(cells);
-    for (size_t i = 0; i < cells.size(); i++)
-    {
-        const Cell& c = cells[i];
-        Element e = Crop(1, c.sx, c.sy, c.sw, c.sh);
-        e.dx = c.dx;
-        e.dy = c.dy;
-        e.scale = c.scale;
-        e.border = true;
-        e.borderRadius = 2.0f;
-        if ((int)i == best)
-        {
-            e.borderColor = kCursorCrimson;
-            e.borderWidth = 10;
-        }
-        sc.items.push_back(e);
-    }
+    Below(sc, screens[1], below, n, left, top + 35 * s, 90 * s, s, gap, 0xC31028, authentic);
 }
 } // namespace Gen5Strip

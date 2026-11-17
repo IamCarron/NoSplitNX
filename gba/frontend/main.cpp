@@ -156,7 +156,12 @@ const std::vector<Setting>& SettingsList()
           "100", "THE GAME'S SOUND." },
         { "ff_mute", "FAST FORWARD SOUND", { { "0", "ON" }, { "1", "OFF" } }, "0",
           "ON: THE MUSIC CARRIES ON AT ITS NORMAL SPEED WHILE THE GAME FAST FORWARDS. OFF: FAST FORWARD IS SILENT." },
-        { "gba_start", "START BUTTON", { { "start", "GBA START" }, { "menu", "PAUSE MENU" } }, "start",
+        { "gba_start", "START BUTTON", { { "start", "GBA START" }, { "menu", "PAUSE MENU" } },
+#if defined(GBAW_EMBEDDED) || defined(__SWITCH__)
+          "menu",
+#else
+          "start",
+#endif
 #if defined(__SWITCH__)
           "PAUSE MENU: + OPENS THIS MENU, AND + AND - TOGETHER ARE THE GBA'S START. GBA START: + IS THE GBA'S START, "
           "AND + AND - TOGETHER OPEN THIS MENU." },
@@ -247,6 +252,7 @@ struct Settings
         if (!strcmp(key, "scaling")) { hk = "smooth"; hv = v == "smooth" ? "1" : "0"; }
         else if (!strcmp(key, "show_fps") || !strcmp(key, "volume") || !strcmp(key, "buttons") || !strcmp(key, "ff_mute") || !strcmp(key, "fast_lock") || !strcmp(key, "fast_button")) { hk = key; hv = v; }
         else if (!strcmp(key, "lcd")) { hk = "gba_lcd"; hv = v; }
+        else if (!strcmp(key, "gba_start")) { hk = "start_button"; hv = v == "start" ? "ds" : "menu"; }
         else if (!strcmp(key, "widescreen")) { hk = "aspect"; hv = v == "off" ? "3:2" : v; }
         else if (!strcmp(key, "fullscreen")) { hk = key; hv = v; }
         else return;
@@ -2838,13 +2844,21 @@ std::vector<ListGame> Find(const std::string& roms, const std::string& saves)
         l.file = g.ips.empty() ? g.rom : g.ips;
         const unsigned char* own = nullptr;
         size_t ownSize = 0;
-        l.art = g.patch.empty() ? std::string() : Art(g.patch, own, ownSize) ? g.patch : Games::ArtCode(g.sha1);
+        const std::string baseArt = !g.patch.compare(0, 7, "firered") || g.patch == "radicalred" || g.patch == "unbound" ? "firered"
+                                  : !g.patch.compare(0, 7, "emerald") || g.patch == "inclement" ? "emerald"
+                                  : !g.patch.compare(0, 9, "leafgreen") ? "leafgreen"
+                                  : !g.patch.compare(0, 4, "ruby") ? "ruby"
+                                  : !g.patch.compare(0, 8, "sapphire") ? "sapphire" : std::string();
+        l.art = g.patch.empty() ? std::string()
+              : Art(g.patch, own, ownSize) ? g.patch
+              : !Games::ArtCode(g.sha1).empty() ? Games::ArtCode(g.sha1)
+              : (!baseArt.empty() && Art(baseArt, own, ownSize)) ? baseArt : std::string();
         static const struct { const char* patch; const char* name; } kHackNames[] = {
             { "radicalred", "Radical Red" }, { "unbound", "Unbound" }, { "emeraldlegacy", "Emerald Legacy" },
             { "inclement", "Inclement Emerald" }, { "monomyth", "Monomyth" }, { "emeraldrogue", "Emerald Rogue" },
         };
         for (const auto& n : kHackNames)
-            if (g.patch == n.patch) l.name = n.name;
+            if (!g.forced && g.patch == n.patch) l.name = n.name;
         l.hasSave = g.hasSave;
         l.widescreen = !g.patch.empty();
         l.hack = !g.known;

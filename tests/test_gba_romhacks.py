@@ -151,7 +151,16 @@ class GbaRomHackTests(unittest.TestCase):
     def test_no_looks_like_pokemon_filter_and_switch_gba_enabled(self):
         gba_main = (ROOT / 'gba/frontend/main.cpp').read_text(encoding='utf-8')
         build_game = (ROOT / 'tools/switch/build_game.sh').read_text(encoding='utf-8')
+        sw_plat = (ROOT / 'frontend/switch_platform.cpp').read_text(encoding='utf-8')
         self.assertNotIn('LooksLikePokemon', gba_main)
         self.assertIn('SSR_GBA_DIR="$HERE/gba"', build_game)
         self.assertIn('GBAW_MGBA="$HERE/build-gba-mgba"', build_game)
         self.assertIn('LICENSE-mGBA.txt', build_game)
+        # Switch/embedded GBA defaults START button to PAUSE MENU, syncs start_button, and keeps forced hack names.
+        self.assertIn('"menu",', gba_main)
+        self.assertIn('!strcmp(key, "gba_start")', gba_main)
+        self.assertIn('if (!g.forced && g.patch == n.patch) l.name = n.name;', gba_main)
+        # HOME Menu forwarders include ROM hacks cleanly and generate fallback icons via DrawCartridgeCase.
+        self.assertIn('ForwarderKey(', sw_plat)
+        self.assertNotIn('!Playable(g) || g.hack', sw_plat)
+        self.assertIn('Launcher::DrawCartridgeCase(card,', sw_plat)

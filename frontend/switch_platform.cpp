@@ -96,6 +96,7 @@ struct MusicAudioSession
     AudioOutBuffer bufs[kBufCount]{};
     int pendingIdx = -1;
     int loadedIdx = -1;
+    int failedIdx = -1;
     int settleFrames = 0;
     float bands[RomMusic::Player::kBandCount] = {};
     bool bandsActive = false;
@@ -225,6 +226,7 @@ struct MusicAudioSession
         if (targetIdx != pendingIdx)
         {
             pendingIdx = targetIdx;
+            failedIdx = -1;
             settleFrames = 9; // ~150 ms debounce so fast carousel scrolling stays fluid
             if (targetIdx != loadedIdx)
             {
@@ -248,6 +250,7 @@ struct MusicAudioSession
                     RomMusic::Player nextPlayer;
                     nextPlayer.SetVolume(volPct);
                     const bool ok = nextPlayer.LoadFromRom(games[loadedIdx].rom, games[loadedIdx].platform, games[loadedIdx].code);
+                    if (!ok) failedIdx = loadedIdx;
                     fprintf(stderr, "[music] %s (%s): %s\n", games[loadedIdx].code.c_str(),
                             games[loadedIdx].platform == 1 ? "GBA" : "NDS", ok ? "loaded" : "no audio track");
                     std::lock_guard<std::mutex> lock(mtx);
@@ -260,7 +263,7 @@ struct MusicAudioSession
                 }
             }
         }
-        else if (loadedIdx >= 0 && volPct > 0)
+        else if (loadedIdx >= 0 && loadedIdx != failedIdx && volPct > 0)
         {
             bool needLoad = false;
             {
@@ -272,6 +275,7 @@ struct MusicAudioSession
                 RomMusic::Player nextPlayer;
                 nextPlayer.SetVolume(volPct);
                 const bool ok = nextPlayer.LoadFromRom(games[loadedIdx].rom, games[loadedIdx].platform, games[loadedIdx].code);
+                if (!ok) failedIdx = loadedIdx;
                 fprintf(stderr, "[music] %s (%s): %s\n", games[loadedIdx].code.c_str(),
                         games[loadedIdx].platform == 1 ? "GBA" : "NDS", ok ? "loaded" : "no audio track");
                 std::lock_guard<std::mutex> lock(mtx);
@@ -361,12 +365,61 @@ std::string SettingsPath(const std::string& dir)
 }
 
 #ifdef SSR_ALL_GAMES
+std::string UpperAscii(std::string s)
+{
+    for (char& c : s) c = (char)toupper((unsigned char)c);
+    return s;
+}
+
+std::string ForwarderSlug(const std::string& path)
+{
+    const size_t slash = path.find_last_of('/');
+    const size_t dot = path.find_last_of('.');
+    const size_t start = (slash == std::string::npos) ? 0 : slash + 1;
+    const size_t end = (dot != std::string::npos && dot > start) ? dot : path.size();
+    std::string out;
+    bool dash = true;
+    for (size_t i = start; i < end && out.size() < 48; i++)
+    {
+        const unsigned char ch = (unsigned char)path[i];
+        if (isalnum(ch)) { out += (char)toupper(ch); dash = false; }
+        else if (!dash) { out += '-'; dash = true; }
+    }
+    while (!out.empty() && out.back() == '-') out.pop_back();
+    return out;
+}
+
+std::string ForwarderKey(const Launcher::Game& g, std::vector<std::string>& used)
+{
+    std::string base = UpperAscii(g.code);
+    if (g.hack && (base.size() <= 4 || base.compare(0, 4, "GBA-") != 0))
+    {
+        const std::string slug = ForwarderSlug(g.rom);
+        base += slug.empty() ? "-HACK" : "-" + slug;
+    }
+    if (base.empty()) base = "GAME";
+    std::string key = base;
+    for (int n = 2; std::find(used.begin(), used.end(), key) != used.end(); n++)
+        key = base + "-" + std::to_string(n);
+    used.push_back(key);
+    return key;
+}
+
 // The game's picture as the HOME Menu's icon: a 256x256 JPEG (over the list's dark grey where
-// the picture is see-through, as a DS icon is). Empty without a picture.
+// the picture is see-through, as a DS icon is; falls back to the cartridge tile for ROM hacks
+// or GBA ROMs without a custom cover).
 std::vector<uint8_t> IconJpeg(const Launcher::Game& g)
 {
-    const std::vector<uint32_t> px = Launcher::GamePicture(g, 256);
-    if (px.empty()) return {};
+    std::vector<uint32_t> px = Launcher::GamePicture(g, 256);
+    if (px.empty())
+    {
+        Canvas card;
+        card.Resize(256, 256);
+        std::fill(card.px.begin(), card.px.end(), 0xFF121826u);
+        Launcher::DrawCartridgeCase(card, 0, 0, 256, 256, g.platform, g.hasIcon ? g.icon : nullptr,
+                                    g.code, g.name, 2, false, true);
+        px = std::move(card.px);
+    }
     std::vector<uint8_t> rgb((size_t)256 * 256 * 3);
     for (size_t i = 0; i < px.size(); i++)
     {
@@ -392,36 +445,34 @@ std::string InstallHomeIcons(const std::vector<Launcher::Game>& games)
     if (g_self.empty()) return "FAILED: NO PROGRAM PATH";
     std::vector<SwitchForwarder::Entry> entries;
     std::vector<std::string> done;
+    const std::string dir = g_self.substr(0, g_self.find_last_of('/'));
     for (const Launcher::Game& g : games)
     {
-        if (!Playable(g) || g.hack || std::find(done.begin(), done.end(), g.code) != done.end()) continue;
-        done.push_back(g.code);
+        if (!Playable(g)) continue;
+        const std::string key = ForwarderKey(g, done);
         SwitchForwarder::Entry e;
-        const Launcher::KnownGame* k = Launcher::Known(g.code);
+        const Launcher::KnownGame* k = !g.hack ? Launcher::Known(g.code) : nullptr;
         e.name = k ? k->name : Launcher::TitleCase(g.name);
-        e.args = "--game " + g.code;
-        // The icon: the player's own picture in icons/ if there is one, else the box art built
-        // into the program, else the list's picture (a one-game program's icon can be a placeholder).
+        e.args = "--game " + key;
+        // The icon: the player's own picture (icons/<code|stem> or beside the ROM) if there is one,
+        // else the box art built into the program for standard releases, else the DS banner icon or
+        // cartridge tile (never skipping GBA games or ROM hacks).
         Launcher::Game pic = g;
-        const std::string dir = g_self.substr(0, g_self.find_last_of('/'));
-        struct stat is;
-        const bool own = stat((dir + "/icons/" + g.code + ".jpg").c_str(), &is) == 0 || stat((dir + "/icons/" + g.code + ".png").c_str(), &is) == 0;
+        if (pic.art.empty()) Launcher::FindArt(pic, dir);
 #ifdef SSR_PC_ART
         size_t size = 0;
         std::vector<uint32_t> art;
-        if (!own)
+        if (pic.art.empty() && !g.hack)
             if (const unsigned char* data = PcLauncher::BuiltInArt(g.code.c_str(), size))
                 if (Launcher::LoadArt(data, size, art)) pic.art = art;
-#else
-        (void)own;
 #endif
         e.icon = IconJpeg(pic);
         if (e.icon.empty()) continue;
         // (For checking: the icons also written to a forwarder-debug folder beside the program, if there.)
-        const std::string debugDir = g_self.substr(0, g_self.find_last_of('/')) + "/forwarder-debug";
+        const std::string debugDir = dir + "/forwarder-debug";
         struct stat ds;
         if (stat(debugDir.c_str(), &ds) == 0)
-            if (FILE* f = fopen((debugDir + "/" + g.code + ".jpg").c_str(), "wb"))
+            if (FILE* f = fopen((debugDir + "/" + key + ".jpg").c_str(), "wb"))
             {
                 fwrite(e.icon.data(), 1, e.icon.size(), f);
                 fclose(f);
@@ -1353,9 +1404,19 @@ bool Start(int& argc, char**& argv)
     }
 #else
     int directGame = -1;
-    for (size_t i = 0; i < games.size() && !direct.empty(); i++)
-        if (games[i].code == direct && Playable(games[i]) && (directGame < 0 || (games[directGame].hack && !games[i].hack)))
-            directGame = (int)i;
+    if (!direct.empty())
+    {
+        std::vector<std::string> done;
+        for (size_t i = 0; i < games.size(); i++)
+        {
+            if (!Playable(games[i])) continue;
+            if (ForwarderKey(games[i], done) == direct) { directGame = (int)i; break; }
+        }
+        for (size_t i = 0; i < games.size() && directGame < 0; i++)
+            if (UpperAscii(games[i].code) == direct && Playable(games[i]) &&
+                (directGame < 0 || (games[directGame].hack && !games[i].hack)))
+                directGame = (int)i;
+    }
     if (!direct.empty() && directGame < 0) fprintf(stderr, "[switch] --game %s: not in the list\n", direct.c_str());
     if (directGame >= 0)
     {
@@ -1424,13 +1485,13 @@ bool Start(int& argc, char**& argv)
                 for (Launcher::Game& g : games)
                 {
                     size_t size = 0;
-                    if (g.art.empty())
+                    if (g.art.empty() && !g.hack)
                         if (const unsigned char* data = PcLauncher::BuiltInArt(g.code.c_str(), size)) Launcher::LoadArt(data, size, g.art);
                 }
 #endif
                 for (Launcher::Game& g : games)
                     for (const Launcher::Game& other : games)
-                        if (g.art.empty() && !other.art.empty() && other.code == g.code) g.art = other.art;
+                        if (g.art.empty() && !g.hack && !other.hack && !other.art.empty() && other.code == g.code) g.art = other.art;
 #ifdef SSR_UPDATER
                 Updater::Init(dir, dir, g_self);
 #endif

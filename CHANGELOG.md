@@ -4,6 +4,17 @@
 ## Unreleased
 
 
+## v1.2.2 — Gen 5 Authentic Battle Strip & GBA ROM Hack Fixes
+
+- **Gen 5 authentic battle strip with Poké Ball party bars and full actions**: restored trainer Poké Ball rows under both HP boxes, hexagonal move and target buttons without the background Poké Ball, side-by-side **Shift**, rotation and **Back** buttons, double/triple partner icons on **Fight**, animated cursor brackets and edge-to-edge prompt resizing inside the default **Strip** battle menu for Pokémon Black, White, Black 2 and White 2.
+- **GBA & DS ROM hack fixes (widescreen, pause menu, artwork, HOME Menu forwarders & launcher music)**:
+  - Allowed GBA ROM hacks with custom header codes or relocated free space to automatically use any compatible widescreen patch whose hooks and free region are intact, while preserving each hack's own title.
+  - Defaulted **Start Button** in embedded/Switch GBA games to **Pause Menu** (synced with launcher settings) so `+` opens the pause and game-list menu consistently (`+` and `-` together press GBA Start).
+  - Fixed custom artwork lookup for `.ips`/`.ups`/`.bps`/`.xdelta` hacks across `icons/` and ROM folders, and prevented hacks from overwriting their custom icon or DS banner icon with vanilla box art.
+  - Included DS and GBA ROM hacks when installing Nintendo Switch **HOME Menu Icons** with unique `--game` launch arguments, generating crisp cartridge-tile fallback icons for GBA ROMs without custom covers.
+  - Fixed GBA launcher music previews mixing tracks or dropping channels across large `>512 KB` ROM jumps by keeping full ROM offsets available, isolating unused track state, and validating MP2K track jumps and voices.
+
+
 ## v1.2.1 — Authentic Co-Sized Gen 5 Battle Buttons
 
 - **Authentic Gen 5 battle buttons with mutual tray co-sizing**: restored authentic DS game command and move plates (`BattleStripClassic` in Black/White and `Gen5Strip::Black2Authentic` in Black 2/White 2) as the default **Strip** battle button style, mutually co-sized edge-to-edge with the left battle prompt (`AdaptGen5BattlePrompt`) while preserving transition layer checks and fade-to-Party/Bag continuity (keeping the optional flat **Standard** and **Sun and Moon** styles available under **Battle Buttons**).

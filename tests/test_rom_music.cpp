@@ -751,6 +751,67 @@ int main()
         assert(ComputeRms(out) > 400.0);
     }
 
+    // 5. Far (>512 KB) GBA ROM hack MP2K jump + non-looping FINE restart stays clean without reading offset 0.
+    {
+        std::vector<uint8_t> farRom(2u * 1024u * 1024u, 0);
+        // Deliberately fill offset 0x0000..0x2000 with corrupt noisy bytes to verify tracks never jump to pc=0.
+        std::fill(farRom.begin(), farRom.begin() + 0x2000, 0xD4);
+        const uint32_t base = 0x08000000u;
+        const uint32_t vgOff = 0x4000;
+        farRom[vgOff + 0] = 0x01; // CGB square pulse
+        farRom[vgOff + 1] = 60;
+        farRom[vgOff + 3] = 0x80 | 64;
+        PutU32(farRom, vgOff + 4, 2);
+        farRom[vgOff + 8] = 255; farRom[vgOff + 9] = 0; farRom[vgOff + 10] = 220; farRom[vgOff + 11] = 180;
+
+        // Track 0 at 0x5000 jumps via 0xB2 GOTO >1 MB away to 0x120000, plays a note, then ends cleanly (0xB1).
+        const uint32_t trk0 = 0x5000;
+        const uint32_t trk0Far = 0x120000;
+        farRom[trk0 + 0] = 0xBB; farRom[trk0 + 1] = 75;
+        farRom[trk0 + 2] = 0xBD; farRom[trk0 + 3] = 0;
+        farRom[trk0 + 4] = 0xBE; farRom[trk0 + 5] = 115;
+        farRom[trk0 + 6] = 0xB2; PutU32(farRom, trk0 + 7, base + trk0Far);
+
+        farRom[trk0Far + 0] = 0xE8; farRom[trk0Far + 1] = 60; farRom[trk0Far + 2] = 110;
+        farRom[trk0Far + 3] = 0x98; // W24
+        farRom[trk0Far + 4] = 0xE8; farRom[trk0Far + 5] = 64; farRom[trk0Far + 6] = 110;
+        farRom[trk0Far + 7] = 0x98; // W24
+        farRom[trk0Far + 8] = 0xB1; // FINE (natural end triggers clean restart at startPc)
+
+        const uint32_t hdrOff = 0x6000;
+        farRom[hdrOff + 0] = 4; // BGM table requires >= 4 tracks
+        PutU32(farRom, hdrOff + 4, base + vgOff);
+        PutU32(farRom, hdrOff + 8, base + trk0);
+        for (uint32_t t = 1; t < 4; t++)
+        {
+            const uint32_t ti = 0x5100 + t * 0x20;
+            farRom[ti + 0] = 0xBD; farRom[ti + 1] = 0;
+            farRom[ti + 2] = 0xBE; farRom[ti + 3] = 80;
+            farRom[ti + 4] = 0xE8; farRom[ti + 5] = (uint8_t)(48 + t * 4); farRom[ti + 6] = 90;
+            farRom[ti + 7] = 0x98;
+            farRom[ti + 8] = 0xB1;
+            PutU32(farRom, hdrOff + 8 + t * 4, base + ti);
+        }
+
+        const uint32_t stOff = 0x7000;
+        for (uint32_t i = 0; i < 32; i++)
+        {
+            PutU32(farRom, stOff + i * 8 + 0, base + hdrOff);
+            PutU16(farRom, stOff + i * 8 + 4, 0);
+            PutU16(farRom, stOff + i * 8 + 6, 0);
+        }
+
+        const auto farPath = tmp / "far_hack.gba";
+        WriteBytes(farPath, farRom);
+        RomMusic::Player p;
+        p.SetVolume(100);
+        assert(p.LoadFromRom(farPath.string(), 1, "GBA-FAR"));
+        assert(p.IsLoaded());
+        std::vector<int16_t> out(72000 * 2); // spans past initial FINE and tests clean restart
+        p.Mix(out.data(), 72000);
+        assert(ComputeRms(out) > 400.0);
+    }
+
     std::filesystem::remove_all(tmp);
     std::printf("RomMusicPlayer tests OK (DS SDAT/SSEQ/SWAR + GBA MP2K + fuzz safety)\n");
     return 0;

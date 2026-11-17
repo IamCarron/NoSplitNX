@@ -401,34 +401,53 @@ inline bool ValidateSongHeader(const uint8_t* rom, size_t romSize, uint32_t hdrO
         if (!IsRomPtr(tptr, romSize, toff) || toff + 2 > romSize) return false;
         // Scan up to 1024 bytes cleanly for note events, GOTO (0xB2), or FINE (0xB1).
         bool sawEnd = false;
+        bool clean = true;
+        bool followedJump = false;
+        int trkNotes = 0;
         size_t pc = toff;
-        const size_t limit = std::min(romSize, pc + 1024);
+        size_t limit = std::min(romSize, pc + 1024);
         uint8_t runCmd = 0;
         for (int steps = 0; steps < 512 && pc < limit; steps++)
         {
             const uint8_t op = rom[pc++];
             if (op < 0x80)
             {
-                if (runCmd == 0) break;
+                if (runCmd == 0) { clean = false; break; }
                 if (pc < limit && rom[pc] < 0x80) pc++;
                 if (runCmd >= 0xD0 && pc < limit && rom[pc] < 0x80) pc++; // MP2K gate-time offset
-                if (runCmd >= 0xCF) outNoteScore++;
+                if (runCmd >= 0xCF) { outNoteScore++; trkNotes++; }
                 continue;
             }
             if (op <= 0xB0) continue;
             if (op == 0xB1) { sawEnd = true; break; }
             if (op == 0xB2 || op == 0xB3)
             {
-                if (pc + 4 > romSize) break;
+                if (pc + 4 > romSize) { clean = false; break; }
                 uint32_t tgt = 0;
                 const uint32_t raw = RdU32(rom, romSize, pc);
                 pc += 4;
-                if (!IsRomPtr(raw, romSize, tgt)) { sawEnd = false; break; }
+                if (!IsRomPtr(raw, romSize, tgt)) { clean = false; break; }
                 if (op == 0xB2)
                 {
                     if (tgt <= pc && tgt >= toff) outLoopTracks++;
+                    // Follow one stub jump if the track redirected before its first note.
+                    if (!followedJump && trkNotes == 0 && tgt < romSize)
+                    {
+                        followedJump = true;
+                        pc = tgt;
+                        limit = std::min(romSize, pc + 1024);
+                        runCmd = 0;
+                        continue;
+                    }
                     sawEnd = true;
                     break;
+                }
+                if (!followedJump && trkNotes == 0 && tgt < romSize)
+                {
+                    followedJump = true;
+                    pc = tgt;
+                    limit = std::min(romSize, pc + 1024);
+                    runCmd = 0;
                 }
                 continue;
             }
@@ -448,12 +467,13 @@ inline bool ValidateSongHeader(const uint8_t* rom, size_t romSize, uint32_t hdrO
                 if (pc < limit && rom[pc] < 0x80) pc++;
                 if (pc < limit && rom[pc] < 0x80) pc++;
                 if (op >= 0xD0 && pc < limit && rom[pc] < 0x80) pc++; // MP2K gate-time offset (gtp)
-                if (op >= 0xCF) outNoteScore++;
+                if (op >= 0xCF) { outNoteScore++; trkNotes++; }
                 continue;
             }
+            clean = false;
             break;
         }
-        (void)sawEnd;
+        if (!clean && !sawEnd) return false;
     }
     outTracks = trkCnt;
     return outNoteScore >= 2;
@@ -486,7 +506,7 @@ public:
         insts_.clear();
         progs_.clear();
         keySplitMap_.clear();
-        seqData_.clear();
+        std::vector<uint8_t>().swap(seqData_);
         seqBaseRomOff_ = 0;
         gbaRomLimit_ = 0;
         tracks_.clear();
@@ -646,6 +666,7 @@ private:
         uint8_t runningCmd = 0; // MP2K running status
         uint8_t lastNote = 60;
         uint8_t lastVel = 100;
+        size_t startPc = SIZE_MAX;
         size_t loopStartPc = 0;
         uint8_t loopRemain = 0;
         bool inLoop = false;
@@ -995,10 +1016,25 @@ private:
             for (const Track& t : tracks_) if (t.active) { anyActive = true; break; }
             if (!anyActive && !tracks_.empty())
             {
-                for (Track& t : tracks_) { if (t.loopStartPc < seqData_.size()) { t.active = true; t.pc = t.loopStartPc; t.waitTicks = 0; } }
-                tracks_[0].active = true;
-                tracks_[0].pc = 0;
-                tracks_[0].waitTicks = 0;
+                for (Track& t : tracks_)
+                {
+                    if (t.startPc < seqData_.size())
+                    {
+                        t.active = true;
+                        t.pc = t.startPc;
+                        t.waitTicks = 0;
+                        t.callSp = 0;
+                        t.inLoop = false;
+                    }
+                }
+                if (mode_ == SeqMode::NitroSseq)
+                {
+                    tracks_[0].active = true;
+                    tracks_[0].pc = 0;
+                    tracks_[0].waitTicks = 0;
+                    tracks_[0].callSp = 0;
+                    tracks_[0].inLoop = false;
+                }
             }
         }
     }
@@ -1250,6 +1286,7 @@ private:
                         tr.pc = off;
                         if (++loopJumps >= 8) { tr.waitTicks = 1; break; }
                     }
+                    else tr.active = false;
                 }
                 else tr.inLoop = false;
                 continue;
@@ -1338,9 +1375,14 @@ private:
         tempoBpm_ = 120.0;
         masterVol_ = 127;
         dcPrevInL_ = dcPrevOutL_ = dcPrevInR_ = dcPrevOutR_ = 0.0;
-        tracks_.assign(kMaxTracks, Track{});
-        tracks_[0].active = true;
-        tracks_[0].pc = 0;
+        if (mode_ == SeqMode::NitroSseq)
+        {
+            tracks_.assign(kMaxTracks, Track{});
+            tracks_[0].active = true;
+            tracks_[0].pc = 0;
+            tracks_[0].startPc = 0;
+        }
+        const std::vector<Track> initTracks = tracks_;
 
         bool audible = false;
         int nonZeroSamples = 0;
@@ -1369,9 +1411,7 @@ private:
         masterVol_ = 127;
         dcPrevInL_ = dcPrevOutL_ = dcPrevInR_ = dcPrevOutR_ = 0.0;
         bands_.fill(0.0f);
-        tracks_.assign(kMaxTracks, Track{});
-        tracks_[0].active = true;
-        tracks_[0].pc = 0;
+        tracks_ = initTracks;
         return audible;
     }
 
@@ -1635,16 +1675,20 @@ private:
         std::vector<uint8_t> rom;
         if (!ReadFileSlice(f, 0, (size_t)fsz, rom)) return false;
 
-        // Scan 4-byte aligned offsets for the best MP2K SongTable run (>= 32 entries).
-        const size_t rsz = rom.size();
-        size_t bestTableOff = 0;
-        int bestTableScore = 0;
-        size_t bestTableEntries = 0;
+        // Keep full ROM slice during playback/probing so far GOTO/CALL targets in 32 MB hacks never drop tracks.
+        seqData_ = std::move(rom);
+        seqBaseRomOff_ = 0;
+        const size_t rsz = seqData_.size();
+        gbaRomLimit_ = (uint32_t)rsz;
 
-        for (size_t off = 0x200; off + 32 * 8 <= rsz; )
+        // Scan 4-byte aligned offsets for candidate MP2K SongTable runs (>= 16 entries).
+        struct GbaTable { size_t off; size_t entries; int score; };
+        std::vector<GbaTable> tables;
+
+        for (size_t off = 0x200; off + 16 * 8 <= rsz; )
         {
             uint32_t dummy = 0;
-            const uint32_t ptr0 = RdU32(rom.data(), rsz, off);
+            const uint32_t ptr0 = RdU32(seqData_.data(), rsz, off);
             if ((ptr0 & 3u) != 0 || !Mp2k::IsRomPtr(ptr0, rsz, dummy))
             {
                 off += 4;
@@ -1652,261 +1696,256 @@ private:
             }
             size_t cnt = 0;
             int bgmCnt = 0;
-            for (size_t pos = off; pos + 8 <= rsz && cnt < 1024; pos += 8)
+            for (size_t pos = off; pos + 8 <= rsz && cnt < 2048; pos += 8)
             {
-                const uint32_t p = RdU32(rom.data(), rsz, pos);
-                const uint16_t ms = RdU16(rom.data(), rsz, pos + 4);
-                const uint16_t me = RdU16(rom.data(), rsz, pos + 6);
+                const uint32_t p = RdU32(seqData_.data(), rsz, pos);
+                const uint16_t ms = RdU16(seqData_.data(), rsz, pos + 4);
+                const uint16_t me = RdU16(seqData_.data(), rsz, pos + 6);
                 uint32_t hoff = 0;
                 if ((p & 3u) != 0 || !Mp2k::IsRomPtr(p, rsz, hoff) || ms != me || ms >= 16) break;
                 cnt++;
-                if (ms == 0 && hoff + 8 <= rsz && rom[hoff] >= 4 && rom[hoff] <= 16) bgmCnt++;
+                if (ms == 0 && hoff + 8 <= rsz && seqData_[hoff] >= 4 && seqData_[hoff] <= 16) bgmCnt++;
             }
             if (cnt >= 16 && bgmCnt >= 1)
             {
-                const int sc = (int)cnt + bgmCnt * 12;
-                if (sc > bestTableScore)
-                {
-                    bestTableScore = sc;
-                    bestTableOff = off;
-                    bestTableEntries = cnt;
-                }
+                int sc = (int)cnt + bgmCnt * 12;
+                if (cnt >= 64) sc += 200;
+                if (bgmCnt >= 8) sc += 200;
+                tables.push_back({ off, cnt, sc });
                 off += cnt * 8;
                 continue;
             }
             off += 4;
         }
-        if (bestTableEntries == 0) return false;
+        if (tables.empty()) return false;
+        std::stable_sort(tables.begin(), tables.end(), [](const GbaTable& a, const GbaTable& b) { return a.score > b.score; });
 
-        // Pick best rich looping Player-0 BGM header from SongTable.
-        struct GbaCand { uint32_t hdrOff; uint32_t vgOff; uint8_t tracks; int score; };
-        std::vector<GbaCand> cands;
-        for (size_t i = 0; i < bestTableEntries; i++)
+        for (size_t tblIdx = 0; tblIdx < std::min<size_t>(4, tables.size()); tblIdx++)
         {
-            const size_t pos = bestTableOff + i * 8;
-            const uint16_t ms = RdU16(rom.data(), rsz, pos + 4);
-            if (ms != 0) continue; // Player 0 = main BGM
-            uint32_t hoff = 0;
-            if (!Mp2k::IsRomPtr(RdU32(rom.data(), rsz, pos), rsz, hoff)) continue;
-            uint8_t nTrk = 0;
-            uint32_t vgOff = 0;
-            int loopTrk = 0;
-            int noteScore = 0;
-            if (Mp2k::ValidateSongHeader(rom.data(), rsz, hoff, nTrk, vgOff, loopTrk, noteScore))
+            const GbaTable& tbl = tables[tblIdx];
+            // Pick best rich looping Player-0 BGM header from SongTable.
+            struct GbaCand { uint32_t hdrOff; uint32_t vgOff; uint8_t tracks; int score; };
+            std::vector<GbaCand> cands;
+            for (size_t i = 0; i < tbl.entries; i++)
             {
-                const uint8_t reverb = rom[hoff + 3];
-                int sc = (int)nTrk * 12 + loopTrk * 40 + std::min(noteScore, 80);
-                if (nTrk >= 6) sc += 30;
-                if (reverb & 0x80) sc += 25;
-                cands.push_back({ hoff, vgOff, nTrk, sc });
-            }
-        }
-        if (cands.empty()) return false;
-        std::stable_sort(cands.begin(), cands.end(), [](const GbaCand& a, const GbaCand& b) { return a.score > b.score; });
-
-        for (size_t ci = 0; ci < std::min<size_t>(8, cands.size()); ci++)
-        {
-            const GbaCand& pick = cands[ci];
-            // Materialize ROM-referenced region cleanly: copy VoiceGroup (128 * 12 B) + referenced PCM waves + tracks
-            samples_.clear();
-            insts_.clear();
-            progs_.assign(128, ProgramSlot{});
-            keySplitMap_.clear();
-
-            auto parseVoiceEntry = [&](const uint8_t* ent, Instrument& outInst) -> bool {
-                const uint8_t vtype = ent[0];
-                const uint8_t baseKey = ent[1];
-                const uint8_t pan = ent[3];
-                const uint32_t argPtr = RdU32(ent, 12, 4);
-                outInst.baseNote = baseKey ? baseKey : 60;
-                outInst.attack = ent[8];
-                outInst.decay = ent[9];
-                outInst.sustain = ent[10];
-                outInst.release = ent[11];
-                outInst.pan = (pan & 0x80) ? (uint8_t)(pan & 0x7F) : 64;
-
-                const uint8_t kind = vtype & 0xC7;
-                if (kind == 0) // DirectSound PCM8 signed (bit 3 = 0x08 fixed frequency)
+                const size_t pos = tbl.off + i * 8;
+                const uint16_t ms = RdU16(seqData_.data(), rsz, pos + 4);
+                if (ms != 0) continue; // Player 0 = main BGM
+                uint32_t hoff = 0;
+                if (!Mp2k::IsRomPtr(RdU32(seqData_.data(), rsz, pos), rsz, hoff)) continue;
+                uint8_t nTrk = 0;
+                uint32_t vgOff = 0;
+                int loopTrk = 0;
+                int noteScore = 0;
+                if (Mp2k::ValidateSongHeader(seqData_.data(), rsz, hoff, nTrk, vgOff, loopTrk, noteScore))
                 {
-                    uint32_t woff = 0;
-                    if (!Mp2k::IsRomPtr(argPtr, rsz, woff) || woff + 16 > rsz) return false;
-                    const uint16_t st = RdU16(rom.data(), rsz, woff + 2);
-                    const uint32_t freqQ10 = RdU32(rom.data(), rsz, woff + 4);
-                    const uint32_t loopStart = RdU32(rom.data(), rsz, woff + 8);
-                    const uint32_t len = RdU32(rom.data(), rsz, woff + 12);
-                    if (len == 0 || len > 512u * 1024u || woff + 16 + len > rsz) return false;
-                    const double rate = (double)freqQ10 / 1024.0;
-                    if (rate < 1000.0 || rate > 80000.0) return false;
-
-                    Sample smp;
-                    smp.loop = (st & 0x4000) != 0;
-                    smp.loopStart = std::min(loopStart, len);
-                    smp.baseRate = rate;
-                    smp.pcm.resize(len);
-                    for (uint32_t k = 0; k < len; k++)
-                        smp.pcm[k] = (int16_t)((int8_t)rom[woff + 16 + k]) * 256;
-                    outInst.kind = WaveKind::Pcm;
-                    outInst.fixedFreq = (vtype & 0x08) != 0;
-                    outInst.sampleIndex = (int)samples_.size();
-                    samples_.push_back(std::move(smp));
-                    return true;
+                    const uint8_t reverb = seqData_[hoff + 3];
+                    int sc = (int)nTrk * 12 + loopTrk * 40 + std::min(noteScore, 80);
+                    if (nTrk >= 6) sc += 30;
+                    if (reverb & 0x80) sc += 25;
+                    cands.push_back({ hoff, vgOff, nTrk, sc });
                 }
-                auto scaleCgbEnv = [&]() {
-                    // CGB hardware envelopes use 0..7 steps (sus 0..15); convert when in native range.
-                    if (outInst.attack <= 7 && outInst.decay <= 7 && outInst.sustain <= 15 && outInst.release <= 7)
+            }
+            if (cands.empty()) continue;
+            std::stable_sort(cands.begin(), cands.end(), [](const GbaCand& a, const GbaCand& b) { return a.score > b.score; });
+
+            for (size_t ci = 0; ci < std::min<size_t>(12, cands.size()); ci++)
+            {
+                const GbaCand& pick = cands[ci];
+                samples_.clear();
+                insts_.clear();
+                progs_.assign(128, ProgramSlot{});
+                keySplitMap_.clear();
+
+                auto parseVoiceEntry = [&](const uint8_t* ent, Instrument& outInst) -> bool {
+                    const uint8_t vtype = ent[0];
+                    if ((vtype & 0xF0u) != 0 || (vtype & 0x07u) > 4) return false;
+                    const uint8_t baseKey = ent[1];
+                    const uint8_t pan = ent[3];
+                    const uint32_t argPtr = RdU32(ent, 12, 4);
+                    outInst.baseNote = baseKey ? baseKey : 60;
+                    outInst.attack = ent[8];
+                    outInst.decay = ent[9];
+                    outInst.sustain = ent[10];
+                    outInst.release = ent[11];
+                    outInst.pan = (pan & 0x80) ? (uint8_t)(pan & 0x7F) : 64;
+
+                    const uint8_t kind = vtype & 0x07u;
+                    if (kind == 0) // DirectSound PCM8 signed (bit 3 = 0x08 fixed frequency)
                     {
-                        outInst.attack = outInst.attack == 0 ? 255 : (uint8_t)std::max(8, 255 - outInst.attack * 34);
-                        outInst.decay = outInst.decay == 0 ? 255 : (uint8_t)(255 - outInst.decay * 10);
-                        outInst.sustain = (uint8_t)(outInst.sustain * 17);
-                        outInst.release = outInst.release == 0 ? 40 : (uint8_t)(250 - outInst.release * 16);
-                    }
-                };
-                if (kind == 3) // CGB Channel 3 programmable 4-bit Wave RAM (32 samples in 16 bytes)
-                {
-                    scaleCgbEnv();
-                    uint32_t woff = 0;
-                    if (Mp2k::IsRomPtr(argPtr, rsz, woff) && woff + 16 <= rsz)
-                    {
+                        uint32_t woff = 0;
+                        if (!Mp2k::IsRomPtr(argPtr, rsz, woff) || woff + 16 > rsz) return false;
+                        const uint16_t st = RdU16(seqData_.data(), rsz, woff + 2);
+                        const uint32_t freqQ10 = RdU32(seqData_.data(), rsz, woff + 4);
+                        const uint32_t loopStart = RdU32(seqData_.data(), rsz, woff + 8);
+                        const uint32_t len = RdU32(seqData_.data(), rsz, woff + 12);
+                        if (len == 0 || len > 512u * 1024u || woff + 16 + len > rsz) return false;
+                        const double rate = (double)freqQ10 / 1024.0;
+                        if (rate < 1000.0 || rate > 80000.0) return false;
+
                         Sample smp;
-                        smp.loop = true;
-                        smp.loopStart = 0;
-                        // Middle C (note 60 = 261.6256 Hz) * 32 samples/cycle
-                        smp.baseRate = 261.625565 * 32.0;
-                        smp.pcm.resize(32);
-                        for (int k = 0; k < 16; k++)
-                        {
-                            const uint8_t b = rom[woff + k];
-                            smp.pcm[k * 2 + 0] = (int16_t)(((int)(b >> 4) - 8) * 3200);
-                            smp.pcm[k * 2 + 1] = (int16_t)(((int)(b & 0x0F) - 8) * 3200);
-                        }
+                        smp.loop = (st & 0x4000) != 0;
+                        smp.loopStart = std::min(loopStart, len);
+                        smp.baseRate = rate;
+                        smp.pcm.resize(len);
+                        for (uint32_t k = 0; k < len; k++)
+                            smp.pcm[k] = (int16_t)((int8_t)seqData_[woff + 16 + k]) * 256;
                         outInst.kind = WaveKind::Pcm;
-                        outInst.baseNote = 60;
+                        outInst.fixedFreq = (vtype & 0x08) != 0;
                         outInst.sampleIndex = (int)samples_.size();
                         samples_.push_back(std::move(smp));
                         return true;
                     }
-                    outInst.kind = WaveKind::Pulse;
-                    outInst.duty = 3;
-                    outInst.baseNote = 60;
-                    return true;
-                }
-                if (kind == 1 || kind == 2)
-                {
-                    scaleCgbEnv();
-                    // GBA duty 0..3 (12.5%, 25%, 50%, 75%) -> 1/8ths threshold (0, 1, 3, 5)
-                    static constexpr uint8_t kCgbDuty[4] = { 0, 1, 3, 5 };
-                    outInst.kind = WaveKind::Pulse;
-                    outInst.duty = kCgbDuty[argPtr & 3u];
-                    outInst.baseNote = 60;
-                    return true;
-                }
-                if (kind == 4)
-                {
-                    scaleCgbEnv();
-                    outInst.kind = WaveKind::Noise;
-                    outInst.baseNote = 60;
-                    return true;
-                }
-                return false;
-            };
-
-            for (uint32_t pi = 0; pi < 128; pi++)
-            {
-                const uint32_t eoff = pick.vgOff + pi * 12;
-                if (eoff + 12 > rsz) break;
-                const uint8_t* ent = rom.data() + eoff;
-                const uint8_t vtype = ent[0];
-                ProgramSlot& ps = progs_[pi];
-                if (vtype == 0x80) // MultiSample / DrumSet
-                {
-                    uint32_t subVgOff = 0;
-                    if (!Mp2k::IsRomPtr(RdU32(ent, 12, 4), rsz, subVgOff)) continue;
-                    ps.type = 16;
-                    ps.lowNote = 0;
-                    ps.highNote = 127;
-                    ps.subBase = (int)keySplitMap_.size();
-                    ps.subCount = 128;
-                    for (uint32_t n = 0; n < 128; n++)
-                    {
-                        if (subVgOff + (n + 1) * 12 > rsz) { keySplitMap_.push_back(-1); continue; }
-                        Instrument ins;
-                        if (parseVoiceEntry(rom.data() + subVgOff + n * 12, ins))
+                    auto scaleCgbEnv = [&]() {
+                        // CGB hardware envelopes use 0..7 steps (sus 0..15); convert when in native range.
+                        if (outInst.attack <= 7 && outInst.decay <= 7 && outInst.sustain <= 15 && outInst.release <= 7)
                         {
-                            keySplitMap_.push_back((int)insts_.size());
+                            outInst.attack = outInst.attack == 0 ? 255 : (uint8_t)std::max(8, 255 - outInst.attack * 34);
+                            outInst.decay = outInst.decay == 0 ? 255 : (uint8_t)(255 - outInst.decay * 10);
+                            outInst.sustain = (uint8_t)(outInst.sustain * 17);
+                            outInst.release = outInst.release == 0 ? 40 : (uint8_t)(250 - outInst.release * 16);
+                        }
+                    };
+                    if (kind == 3) // CGB Channel 3 programmable 4-bit Wave RAM (32 samples in 16 bytes)
+                    {
+                        scaleCgbEnv();
+                        uint32_t woff = 0;
+                        if (Mp2k::IsRomPtr(argPtr, rsz, woff) && woff + 16 <= rsz)
+                        {
+                            Sample smp;
+                            smp.loop = true;
+                            smp.loopStart = 0;
+                            // Middle C (note 60 = 261.6256 Hz) * 32 samples/cycle
+                            smp.baseRate = 261.625565 * 32.0;
+                            smp.pcm.resize(32);
+                            for (int k = 0; k < 16; k++)
+                            {
+                                const uint8_t b = seqData_[woff + k];
+                                smp.pcm[k * 2 + 0] = (int16_t)(((int)(b >> 4) - 8) * 3200);
+                                smp.pcm[k * 2 + 1] = (int16_t)(((int)(b & 0x0F) - 8) * 3200);
+                            }
+                            outInst.kind = WaveKind::Pcm;
+                            outInst.baseNote = 60;
+                            outInst.sampleIndex = (int)samples_.size();
+                            samples_.push_back(std::move(smp));
+                            return true;
+                        }
+                        outInst.kind = WaveKind::Pulse;
+                        outInst.duty = 3;
+                        outInst.baseNote = 60;
+                        return true;
+                    }
+                    if (kind == 1 || kind == 2)
+                    {
+                        scaleCgbEnv();
+                        // GBA duty 0..3 (12.5%, 25%, 50%, 75%) -> 1/8ths threshold (0, 1, 3, 5)
+                        static constexpr uint8_t kCgbDuty[4] = { 0, 1, 3, 5 };
+                        outInst.kind = WaveKind::Pulse;
+                        outInst.duty = kCgbDuty[argPtr & 3u];
+                        outInst.baseNote = 60;
+                        return true;
+                    }
+                    if (kind == 4)
+                    {
+                        scaleCgbEnv();
+                        outInst.kind = WaveKind::Noise;
+                        outInst.baseNote = 60;
+                        return true;
+                    }
+                    return false;
+                };
+
+                for (uint32_t pi = 0; pi < 128; pi++)
+                {
+                    const uint32_t eoff = pick.vgOff + pi * 12;
+                    if (eoff + 12 > rsz) break;
+                    const uint8_t* ent = seqData_.data() + eoff;
+                    const uint8_t vtype = ent[0];
+                    ProgramSlot& ps = progs_[pi];
+                    if (vtype == 0x80) // MultiSample / DrumSet
+                    {
+                        uint32_t subVgOff = 0;
+                        if (!Mp2k::IsRomPtr(RdU32(ent, 12, 4), rsz, subVgOff)) continue;
+                        ps.type = 16;
+                        ps.lowNote = 0;
+                        ps.highNote = 127;
+                        ps.subBase = (int)keySplitMap_.size();
+                        ps.subCount = 128;
+                        for (uint32_t n = 0; n < 128; n++)
+                        {
+                            if (subVgOff + (n + 1) * 12 > rsz) { keySplitMap_.push_back(-1); continue; }
+                            Instrument ins;
+                            if (parseVoiceEntry(seqData_.data() + subVgOff + n * 12, ins))
+                            {
+                                keySplitMap_.push_back((int)insts_.size());
+                                insts_.push_back(ins);
+                            }
+                            else keySplitMap_.push_back(-1);
+                        }
+                    }
+                    else if (vtype == 0x40) // KeySplit
+                    {
+                        uint32_t subVgOff = 0, mapOff = 0;
+                        if (!Mp2k::IsRomPtr(RdU32(ent, 12, 4), rsz, subVgOff)) continue;
+                        if (!Mp2k::IsRomPtr(RdU32(ent, 12, 8), rsz, mapOff) || mapOff + 128 > rsz) continue;
+                        ps.type = 16;
+                        ps.lowNote = 0;
+                        ps.highNote = 127;
+                        ps.subBase = (int)keySplitMap_.size();
+                        ps.subCount = 128;
+                        for (uint32_t n = 0; n < 128; n++)
+                        {
+                            const uint8_t subIdx = seqData_[mapOff + n];
+                            if (subVgOff + ((uint32_t)subIdx + 1) * 12 > rsz) { keySplitMap_.push_back(-1); continue; }
+                            Instrument ins;
+                            if (parseVoiceEntry(seqData_.data() + subVgOff + subIdx * 12, ins))
+                            {
+                                keySplitMap_.push_back((int)insts_.size());
+                                insts_.push_back(ins);
+                            }
+                            else keySplitMap_.push_back(-1);
+                        }
+                    }
+                    else
+                    {
+                        Instrument ins;
+                        if (parseVoiceEntry(ent, ins))
+                        {
+                            ps.type = 1;
+                            ps.directInst = (int)insts_.size();
                             insts_.push_back(ins);
                         }
-                        else keySplitMap_.push_back(-1);
                     }
                 }
-                else if (vtype == 0x40) // KeySplit
-                {
-                    uint32_t subVgOff = 0, mapOff = 0;
-                    if (!Mp2k::IsRomPtr(RdU32(ent, 12, 4), rsz, subVgOff)) continue;
-                    if (!Mp2k::IsRomPtr(RdU32(ent, 12, 8), rsz, mapOff) || mapOff + 128 > rsz) continue;
-                    ps.type = 16;
-                    ps.lowNote = 0;
-                    ps.highNote = 127;
-                    ps.subBase = (int)keySplitMap_.size();
-                    ps.subCount = 128;
-                    for (uint32_t n = 0; n < 128; n++)
-                    {
-                        const uint8_t subIdx = rom[mapOff + n];
-                        if (subVgOff + ((uint32_t)subIdx + 1) * 12 > rsz) { keySplitMap_.push_back(-1); continue; }
-                        Instrument ins;
-                        if (parseVoiceEntry(rom.data() + subVgOff + subIdx * 12, ins))
-                        {
-                            keySplitMap_.push_back((int)insts_.size());
-                            insts_.push_back(ins);
-                        }
-                        else keySplitMap_.push_back(-1);
-                    }
-                }
-                else
-                {
-                    Instrument ins;
-                    if (parseVoiceEntry(ent, ins))
-                    {
-                        ps.type = 1;
-                        ps.directInst = (int)insts_.size();
-                        insts_.push_back(ins);
-                    }
-                }
-            }
-            if (insts_.empty()) continue;
+                if (insts_.empty()) continue;
 
-            // Copy all tracks & referenced patterns into seqData_ without altering ROM bytes.
-            std::vector<uint32_t> trkRomOffs(pick.tracks);
-            uint32_t minOff = 0xFFFFFFFFu, maxOff = 0;
-            bool ptrOk = true;
-            for (uint8_t t = 0; t < pick.tracks; t++)
-            {
-                uint32_t toff = 0;
-                if (!Mp2k::IsRomPtr(RdU32(rom.data(), rsz, pick.hdrOff + 8 + t * 4), rsz, toff)) { ptrOk = false; break; }
-                trkRomOffs[t] = toff;
-                minOff = std::min(minOff, toff);
-                maxOff = std::max(maxOff, toff);
-            }
-            if (!ptrOk) continue;
-            const size_t spanStart = (minOff > 32768u) ? (minOff - 32768u) : 0u;
-            const size_t spanEnd = std::min(rsz, std::max<size_t>(maxOff + 65536u, spanStart + 256u * 1024u));
-            const size_t spanSize = std::min<size_t>(512u * 1024u, spanEnd - spanStart);
-            if (minOff < spanStart || maxOff >= spanStart + spanSize) continue;
-            seqData_.resize(spanSize);
-            for (size_t i = 0; i < spanSize; i++) seqData_[i] = rom[spanStart + i];
-            seqBaseRomOff_ = (uint32_t)spanStart;
-            gbaRomLimit_ = (uint32_t)rsz;
+                std::vector<uint32_t> trkRomOffs(pick.tracks);
+                bool ptrOk = true;
+                for (uint8_t t = 0; t < pick.tracks; t++)
+                {
+                    uint32_t toff = 0;
+                    if (!Mp2k::IsRomPtr(RdU32(seqData_.data(), rsz, pick.hdrOff + 8 + t * 4), rsz, toff)) { ptrOk = false; break; }
+                    trkRomOffs[t] = toff;
+                }
+                if (!ptrOk) continue;
 
-            mode_ = SeqMode::GbaMp2k;
-            tempoBpm_ = 120.0;
-            masterVol_ = 127;
-            tracks_.assign(kMaxTracks, Track{});
-            for (uint8_t t = 0; t < pick.tracks && t < kMaxTracks; t++)
-            {
-                tracks_[t].active = true;
-                tracks_[t].pc = trkRomOffs[t] - spanStart;
-                tracks_[t].loopStartPc = tracks_[t].pc;
+                mode_ = SeqMode::GbaMp2k;
+                tempoBpm_ = 120.0;
+                masterVol_ = 127;
+                tracks_.assign(kMaxTracks, Track{});
+                for (uint8_t t = 0; t < pick.tracks && t < kMaxTracks; t++)
+                {
+                    tracks_[t].active = true;
+                    tracks_[t].pc = trkRomOffs[t];
+                    tracks_[t].startPc = trkRomOffs[t];
+                }
+                if (!ProbeAudible(96000))
+                {
+                    mode_ = SeqMode::None;
+                    continue;
+                }
+                return true;
             }
-            return true;
         }
         return false;
     }

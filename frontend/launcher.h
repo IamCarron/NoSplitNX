@@ -282,6 +282,7 @@ inline bool ReadGame(const std::string& rom, const std::string& folder, Game& g)
 
     const bool isHack = (!Known(g.code) && HackBaseCode(g.code) != nullptr) ||
                         IsCustomHackTitle(banTitle) || IsCustomHackTitle(stem);
+    g.hack = isHack;
 
     if (k)
     {
@@ -473,9 +474,43 @@ inline std::vector<uint32_t> GamePicture(const Game& g, int m)
 inline void FindArt(Game& g, const std::string& listFolder)
 {
     std::vector<unsigned char> data;
-    const std::string base = g.rom.substr(0, g.rom.size() - 4);
-    for (const std::string& path : { listFolder + "/icons/" + g.code + ".jpg", listFolder + "/icons/" + g.code + ".png",
-                                     base + ".jpg", base + ".png", g.folder + "/icon.jpg" })
+    const size_t slash = g.rom.find_last_of('/');
+    const size_t dot = g.rom.find_last_of('.');
+    const std::string romDir = (slash != std::string::npos) ? g.rom.substr(0, slash) : "";
+    const std::string base = (dot != std::string::npos && (slash == std::string::npos || dot > slash))
+                           ? g.rom.substr(0, dot) : g.rom;
+    const std::string stem = (slash != std::string::npos) ? base.substr(slash + 1) : base;
+    std::string upperCode = g.code;
+    for (char& c : upperCode) c = (char)toupper((unsigned char)c);
+    std::vector<std::string> candidates = {
+        listFolder + "/icons/" + g.code + ".jpg",
+        listFolder + "/icons/" + g.code + ".png",
+    };
+    if (upperCode != g.code)
+    {
+        candidates.push_back(listFolder + "/icons/" + upperCode + ".jpg");
+        candidates.push_back(listFolder + "/icons/" + upperCode + ".png");
+    }
+    if (!stem.empty())
+    {
+        candidates.push_back(listFolder + "/icons/" + stem + ".jpg");
+        candidates.push_back(listFolder + "/icons/" + stem + ".png");
+        if (!romDir.empty() && romDir != listFolder)
+        {
+            candidates.push_back(romDir + "/icons/" + stem + ".jpg");
+            candidates.push_back(romDir + "/icons/" + stem + ".png");
+        }
+        if (!g.folder.empty() && g.folder != listFolder && g.folder != romDir)
+        {
+            candidates.push_back(g.folder + "/icons/" + stem + ".jpg");
+            candidates.push_back(g.folder + "/icons/" + stem + ".png");
+        }
+    }
+    candidates.push_back(base + ".jpg");
+    candidates.push_back(base + ".png");
+    candidates.push_back(g.folder + "/icon.jpg");
+    candidates.push_back(g.folder + "/icon.png");
+    for (const std::string& path : candidates)
         if (ReadFile(path, data) && LoadArt(data.data(), data.size(), g.art)) return;
     if (g.folder == listFolder) return;
     if (DIR* d = opendir(g.folder.c_str()))
@@ -644,6 +679,7 @@ inline void SyncGbaSettings(const std::string& cfg, const std::string& dataDir)
     set.push_back({ "scaling", ConfigValue(cfg, "smooth") == "1" ? "smooth" : had == "whole" ? "whole" : "sharp" });
     set.push_back({ "show_fps", ConfigValue(cfg, "show_fps") == "1" ? "1" : "0" });
     set.push_back({ "fast_button", ConfigValue(cfg, "fast_button") == "toggle" ? "toggle" : "hold" });
+    set.push_back({ "gba_start", ConfigValue(cfg, "start_button") == "ds" ? "start" : "menu" });
     const std::string fast = ConfigValue(cfg, "fast_lock");
     if (fast == "0" || fast == "1") set.push_back({ "fast_lock", fast });
     const std::string vol = ConfigValue(cfg, "volume");
