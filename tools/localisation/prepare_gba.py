@@ -21,6 +21,7 @@ ui=ui[:a0]+'    static int TextWidthRaw(const std::string& s,int scale) { return
 a0=ui.index('inline std::vector<std::string> Wrap(');b0=ui.index('// The colours of the menus.',a0)
 ui=ui[:a0]+'inline std::vector<std::string> Wrap(const std::string& text,int chars) { return UiLang::Wrap(UiLang::Tr(text),chars*6); }\n\n'+ui[b0:]
 ui=ui.replace('"< " + it.value + " >"','"< " + UiLang::Tr(it.value) + " >"')
+ui=ui.replace('inline void ApplyUiLanguage(const std::string& code) { (void)code; }','inline void ApplyUiLanguage(const std::string& code) { UiLang::Set(code); }')
 ui=ui.replace('const int lineH = big ?', 'const int baseLine = UiLang::Tall() ? 16 : 12;\n        const int lineH = big ?').replace('std::max(12, std::min(30,','std::max(baseLine * s, std::min(30,').replace(' : 12;\n        auto shown', ' : baseLine;\n        auto shown')
 ui=ui.replace('const int headH = 7 * s + 10, footH = 18;','const int headH = (UiLang::Tall()?12:7) * s + 10, footH = UiLang::Tall()?24:18;')
 ui=ui.replace('const int ty = y + (lineH - 7 * s) / 2;','const int ty = y + (lineH - (UiLang::Tall()?10:7) * s) / 2;')

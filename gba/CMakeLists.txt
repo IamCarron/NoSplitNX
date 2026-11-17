@@ -43,7 +43,7 @@ set(GBAW_PATCH_FILES emerald-wide.ips emerald-wide.safety firered-wide.ips firer
     leafgreenes-wide.ips leafgreenes-wide.safety leafgreenit-wide.ips leafgreenit-wide.safety
     radicalred-wide.ips radicalred-wide.safety unbound-wide.ips unbound-wide.safety
     emeraldlegacy-wide.ips emeraldlegacy-wide.safety inclement-wide.ips inclement-wide.safety
-    monomyth-wide.ips monomyth-wide.safety)
+    monomyth-wide.ips monomyth-wide.safety gen3evolved-wide.ips gen3evolved-wide.safety)
 if(NOT GBAW_PATCHES_H)
     foreach(f ${GBAW_PATCH_FILES})
         if(NOT EXISTS "${GBAW_PATCHES}/${f}")

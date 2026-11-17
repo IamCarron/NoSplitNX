@@ -436,10 +436,24 @@ inline uint32_t PatchColour(const char* name)
     return 0xFF8A3A30;
 }
 
-inline void PatchStats(const std::vector<uint8_t>& rom, const WidePatch& patch, int& callCount, int& sameMatch)
+inline void PatchStats(const std::vector<uint8_t>& rom, const WidePatch& patch, int& callCount, int& callMatch, int& hookMatch, int& sameMatch)
 {
     callCount = 0;
+    callMatch = 0;
+    hookMatch = 0;
     sameMatch = 0;
+    auto looksLikeThumbEntry = [&](size_t off) {
+        if (off + 2 > rom.size()) return false;
+        const uint8_t b0 = rom[off], b1 = rom[off + 1];
+        const uint16_t insn = (uint16_t)b0 | ((uint16_t)b1 << 8);
+        if ((insn & 0xFE00u) == 0xB400u) return true; // PUSH {..}
+        if ((insn & 0xF800u) == 0x4800u) return true; // LDR rN, [PC, #..] (hook trampoline)
+        if ((insn & 0xFF00u) == 0x4700u) return true; // BX / BLX
+        if ((insn & 0xF000u) == 0xF000u) return true; // BL prefix
+        if ((insn & 0xF800u) == 0xE000u) return true; // B unconditional
+        if ((insn & 0xFF00u) == 0x4600u) return true; // MOV high/reg
+        return false;
+    };
     const char* s = patch.safety;
     while (*s)
     {
@@ -450,18 +464,45 @@ inline void PatchStats(const std::vector<uint8_t>& rom, const WidePatch& patch, 
         unsigned off = 0, size = 0, crc = 0;
         const int got = sscanf(line.c_str(), "%7s %x %x %x", kind, &off, &size, &crc);
         if (got < 3) continue;
-        if (!strcmp(kind, "call")) callCount++;
+        if (!strcmp(kind, "call"))
+        {
+            callCount++;
+            if (got >= 4 && (size_t)off + size <= rom.size())
+            {
+                if (doCrc32(rom.data() + off, size) == crc) callMatch++;
+                else if (size == 2 && looksLikeThumbEntry(off)) hookMatch++;
+            }
+        }
         else if (!strcmp(kind, "same") && got >= 4 && (size_t)off + size <= rom.size() &&
                  doCrc32(rom.data() + off, size) == crc)
             sameMatch++;
     }
 }
 
+inline bool PatchFreeOk(const std::vector<uint8_t>& rom, const WidePatch& patch)
+{
+    const char* s = patch.safety;
+    while (*s)
+    {
+        const char* end = strchr(s, '\n');
+        const std::string line(s, end ? end - s : strlen(s));
+        s = end ? end + 1 : s + line.size();
+        char kind[8] = {};
+        unsigned off = 0, size = 0;
+        if (sscanf(line.c_str(), "%7s %x %x", kind, &off, &size) >= 3 && !strcmp(kind, "free"))
+        {
+            for (unsigned i = 0; i < size && off + i < rom.size(); i++)
+                if (rom[off + i] != 0xFF) return false;
+        }
+    }
+    return true;
+}
+
 inline bool SameFamily(const char* patchName, const char* codeBase)
 {
     if (!patchName || !codeBase) return false;
     if (!strncmp(codeBase, "firered", 7))
-        return !strncmp(patchName, "firered", 7) || !strcmp(patchName, "radicalred") || !strcmp(patchName, "unbound");
+        return !strncmp(patchName, "firered", 7) || !strcmp(patchName, "radicalred") || !strcmp(patchName, "unbound") || !strcmp(patchName, "gen3evolved");
     if (!strncmp(codeBase, "emerald", 7))
         return !strncmp(patchName, "emerald", 7) || !strcmp(patchName, "inclement");
     if (!strncmp(codeBase, "leafgreen", 9)) return !strncmp(patchName, "leafgreen", 9);
@@ -521,19 +562,32 @@ inline void Identify(Game& g, const std::vector<uint8_t>& rom)
         }
     }
     // Custom-code hacks or hacks that relocated/filled the vanilla free block can still safely run
-    // any sibling widescreen patch whose call hooks and free space are completely intact.
+    // any sibling widescreen patch whose call hooks and free space are intact (or at least 85%
+    // of entry hooks matching with valid Thumb hook prologues and untouched free space).
     const WidePatch* best = nullptr;
     int bestScore = -1;
-    for (const WidePatch& wp : kWidePatches)
+    for (int stage = 0; stage < 2 && !best; stage++)
     {
-        int calls = 0, same = 0;
-        PatchStats(rom, wp, calls, same);
-        if (calls < 10 || !PatchCantTry(rom, wp).empty()) continue;
-        const int score = (codeBase && SameFamily(wp.name, codeBase) ? 10000 : 0) + (p == &wp ? 500 : 0) + same * 10 + calls;
-        if (score > bestScore)
+        for (const WidePatch& wp : kWidePatches)
         {
-            bestScore = score;
-            best = &wp;
+            int calls = 0, callMatch = 0, hookMatch = 0, same = 0;
+            PatchStats(rom, wp, calls, callMatch, hookMatch, same);
+            if (stage == 0)
+            {
+                if (calls < 10 || !PatchCantTry(rom, wp).empty()) continue;
+            }
+            else
+            {
+                if (calls < 20 || !PatchFreeOk(rom, wp)) continue;
+                if (callMatch * 100 < calls * 85 || callMatch + hookMatch != calls) continue;
+            }
+            const int score = (codeBase && SameFamily(wp.name, codeBase) ? 10000 : 0) + (p == &wp ? 500 : 0) +
+                              callMatch * 25 + same * 10 + calls;
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = &wp;
+            }
         }
     }
     if (best)
@@ -588,9 +642,9 @@ struct ScanCache
                 if (t == std::string::npos) break;
                 a = t + 1;
             }
-            // (An older list's lines: looked at again. Version 4: fallback detection across
-            // alternate free spaces / custom codes.)
-            if (f.size() != 13 || f[12] != "4") continue;
+            // (An older list's lines: looked at again. Version 5: hooked-entry fallback detection
+            // across sibling patches including Generation 3 Evolved.)
+            if (f.size() != 13 || f[12] != "5") continue;
             Game g;
             g.rom = f[1];
             g.ips = f[2];
@@ -644,7 +698,7 @@ struct ScanCache
             snprintf(colour, sizeof colour, "%08X", (unsigned)g.colour);
             out += clean(e.first) + "\t" + clean(g.rom) + "\t" + clean(g.ips) + "\t" + clean(g.fileName) + "\t" + clean(g.key) +
                    "\t" + clean(g.name) + "\t" + g.sha1 + "\t" + g.patch + "\t" + clean(g.why) + "\t" + colour + "\t" +
-                   (g.known ? "1" : "0") + "\t" + (g.forced ? "1" : "0") + "\t4\n";
+                   (g.known ? "1" : "0") + "\t" + (g.forced ? "1" : "0") + "\t5\n";
         }
         WriteFile(path, std::vector<uint8_t>(out.begin(), out.end()));
         changed = false;

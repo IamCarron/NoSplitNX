@@ -38,6 +38,7 @@
 #define STBI_WRITE_NO_STDIO
 #include "thirdparty/stb_image_write.h"
 #include "switch_forwarder.h"
+#include "cover_fetch.h"
 #ifdef SSR_UPDATER
 #include "updater.h"
 #endif
@@ -504,7 +505,7 @@ std::string InstallHomeIcons(const std::vector<Launcher::Game>& games)
 // autoFrames > 0: the list is shown that many frames and the selected game played (test runs:
 // "arg --show-list" in test.txt, to time a game started after the list).
 // cfgPath: the settings file, for the settings page (Y).
-int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::string& cfgPath, int autoFrames = 0)
+int PickGame(std::vector<Launcher::Game>& games, int selected, const std::string& cfgPath, int autoFrames = 0)
 {
     Framebuffer fb;
     if (R_FAILED(framebufferCreate(&fb, nwindowGetDefault(), 1280, 720, PIXEL_FORMAT_RGBA_8888, 2))) return selected;
@@ -561,6 +562,7 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
     int shown = 0;
 #ifdef SSR_ALL_GAMES
     bool installIcons = false; // (HOME MENU ICONS chosen: done after INSTALLING is on the screen)
+    bool downloadCovers = false; // (DOWNLOAD COVERS chosen: runs after status modal appears)
 #ifdef SSR_UPDATER
     bool updateWork = false; // (CHECK FOR UPDATES: done after CHECKING... is on the screen)
     bool launchCheck = false; // (Once, after the list's first picture is on the screen)
@@ -647,6 +649,13 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
                     if (st.key && !strcmp(st.key, "!forwarders") && !st.values.empty()) st.values[0].second = "INSTALLING...";
             installIcons = true;
         }
+        if (key && !strcmp(key, "!covers") && !downloadCovers)
+        {
+            for (auto* list : { &page.items, &page.all })
+                for (Launcher::Setting& st : *list)
+                    if (st.key && !strcmp(st.key, "!covers") && !st.values.empty()) st.values[0].second = "DOWNLOADING...";
+            downloadCovers = true;
+        }
 #ifdef SSR_UPDATER
         // CHECK FOR UPDATES: the work runs on this thread after CHECKING... is on the screen
         // (a second thread here stops the program).
@@ -679,6 +688,31 @@ int PickGame(const std::vector<Launcher::Game>& games, int selected, const std::
             modalTitle = "HOME MENU ICONS";
             modalMsg = res;
             modalDetail.clear();
+        }
+        if (downloadCovers)
+        {
+            const std::string dataDir = g_self.empty() ? listDir : g_self.substr(0, g_self.find_last_of('/'));
+            showStatusModal("DOWNLOAD COVERS", "DOWNLOADING...", "PLEASE WAIT...", std::string(), true, 0);
+            auto httpGet = [](const std::string& url, const std::string& auth, int& st, std::string& body, std::string& err) {
+                return Achievements::HttpGet(url, auth, "NoSplitNX/1.2", 15L, 8u << 20, st, body, err);
+            };
+            auto onProg = [&](int done, int total, const std::string& name) {
+                const int pct = total > 0 ? done * 100 / total : 100;
+                showStatusModal("DOWNLOAD COVERS", "DOWNLOADING...", name.empty() ? "PLEASE WAIT..." : name, std::string(), true, pct);
+            };
+            const CoverFetch::Result r = CoverFetch::DownloadMissing(dataDir, cfgPath, games, httpGet, onProg);
+            const std::string res = r.downloaded > 0 ? std::to_string(r.downloaded) + " COVERS SAVED"
+                                  : r.hadNetworkError ? "NO INTERNET"
+                                  : r.checked == 0 ? "ALL COVERS PRESENT" : "NO COVERS FOUND";
+            for (auto* list : { &page.items, &page.all })
+                for (Launcher::Setting& st : *list)
+                    if (st.key && !strcmp(st.key, "!covers") && !st.values.empty()) st.values[0].second = res;
+            downloadCovers = false;
+            modalTitle = "DOWNLOAD COVERS";
+            modalMsg = res;
+            modalDetail = (r.skippedHacksNoKey > 0 && !r.usedSgdb)
+                        ? "PUT A FREE STEAMGRIDDB API KEY IN SGDB_API_KEY.TXT FOR ROM HACK COVERS."
+                        : std::string();
         }
 #ifdef SSR_UPDATER
         if (updateWork)

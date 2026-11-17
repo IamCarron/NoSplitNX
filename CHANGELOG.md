@@ -4,6 +4,14 @@
 ## Unreleased
 
 
+## v1.2.3 — HG/SS Battles, GBA Fixes, Achievements Banner & Online Covers
+
+- **HeartGold & SoulSilver battles (Mega Evolution & Yes/No prompts)**: recognised HG-Engine's Mega Evolution button in white-background indoor/Gym battles (and during press flash), and laid out battle Yes/No questions (including *"Will you switch your Pokémon?"*) as clean rounded buttons in the bottom band beside the message box without covering battle HUD elements.
+- **GBA *Generation 3 Evolved v1.0.22*, widescreen hook tolerance & localised Slate pause menu**: added the official `gen3evolved` widescreen patch, allowed binary GBA ROM hacks with untouched free space and ≥85% matching entry prologues (`>= 20` calls) with valid Thumb jump hooks to use sibling widescreen patches safely, synced the launcher's selected UI language into embedded GBA menus (`language` + `ApplyUiLanguage`), and styled the embedded GBA pause overlay with rounded slate cards matching the launcher.
+- **RetroAchievements unlock celebration banner**: added a slide-up glass achievement card with trophy badge, title, points and rarity (plus a **Game Mastered** banner when completing a set), configurable between **Modern** and **Classic** under **RetroAchievements -> Unlock Banner**.
+- **Online cover downloader (`Download Covers`)**: added an online box-art fetcher in Switch **Game List** settings using keyless Libretro Thumbnails for standard DS/GBA games and optional **SteamGridDB API v2** (`sgdb_api_key.txt` / `sgdb_api_key=`) for ROM hack covers, saving PNG/JPG artwork directly into `icons/`.
+
+
 ## v1.2.2 — Gen 5 Authentic Battle Strip & GBA ROM Hack Fixes
 
 - **Gen 5 authentic battle strip with Poké Ball party bars and full actions**: restored trainer Poké Ball rows under both HP boxes, hexagonal move and target buttons without the background Poké Ball, side-by-side **Shift**, rotation and **Back** buttons, double/triple partner icons on **Fight**, animated cursor brackets and edge-to-edge prompt resizing inside the default **Strip** battle menu for Pokémon Black, White, Black 2 and White 2.

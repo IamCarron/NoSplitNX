@@ -199,20 +199,48 @@ struct Settings
         path = p;
         values.clear();
         std::vector<uint8_t> data;
-        if (!Games::ReadFile(path, data, 1 << 20)) return;
-        std::string line;
-        data.push_back('\n');
-        for (uint8_t c : data)
+        if (Games::ReadFile(path, data, 1 << 20))
         {
-            if (c == '\n' || c == '\r')
+            std::string line;
+            data.push_back('\n');
+            for (uint8_t c : data)
             {
-                const size_t eq = line.find('=');
-                if (eq != std::string::npos) values[line.substr(0, eq)] = line.substr(eq + 1);
-                line.clear();
+                if (c == '\n' || c == '\r')
+                {
+                    const size_t eq = line.find('=');
+                    if (eq != std::string::npos) values[line.substr(0, eq)] = line.substr(eq + 1);
+                    line.clear();
+                }
+                else
+                    line += (char)c;
             }
-            else
-                line += (char)c;
         }
+        std::string lang = values.count("language") ? values["language"] : "";
+        if (lang.empty())
+        {
+            auto h = values.find("host_settings");
+            if (h != values.end() && !h->second.empty())
+            {
+                std::vector<uint8_t> hd;
+                if (Games::ReadFile(h->second, hd, 1 << 20))
+                {
+                    std::string line, fallback;
+                    hd.push_back('\n');
+                    for (uint8_t c : hd)
+                    {
+                        if (c == '\n' || c == '\r')
+                        {
+                            if (!line.compare(0, 10, "list_lang=")) lang = line.substr(10);
+                            else if (!line.compare(0, 9, "language=")) fallback = line.substr(9);
+                            line.clear();
+                        }
+                        else line += (char)c;
+                    }
+                    if (lang.empty()) lang = fallback;
+                }
+            }
+        }
+        ApplyUiLanguage(lang);
     }
     void Save() const
     {
@@ -2855,7 +2883,7 @@ std::vector<ListGame> Find(const std::string& roms, const std::string& saves)
               : (!baseArt.empty() && Art(baseArt, own, ownSize)) ? baseArt : std::string();
         static const struct { const char* patch; const char* name; } kHackNames[] = {
             { "radicalred", "Radical Red" }, { "unbound", "Unbound" }, { "emeraldlegacy", "Emerald Legacy" },
-            { "inclement", "Inclement Emerald" }, { "monomyth", "Monomyth" }, { "emeraldrogue", "Emerald Rogue" },
+            { "inclement", "Inclement Emerald" }, { "monomyth", "Monomyth" }, { "gen3evolved", "Gen 3 Evolved" }, { "emeraldrogue", "Emerald Rogue" },
         };
         for (const auto& n : kHackNames)
             if (!g.forced && g.patch == n.patch) l.name = n.name;
@@ -2912,7 +2940,10 @@ bool Play(const std::string& file, const Options& o)
     for (const Games::Game& g : app->games)
         if (g.rom == file || g.ips == file)
         {
-            fprintf(stderr, "[gba] %s (%s, widescreen patch %s)\n", file.c_str(), g.key.c_str(), g.patch.empty() ? "none" : g.patch.c_str());
+            fprintf(stderr, "[gba] %s (%s, widescreen patch %s%s%s)\n", file.c_str(), g.key.c_str(),
+                    g.patch.empty() ? "none" : g.patch.c_str(),
+                    g.patch.empty() && !g.why.empty() ? ": " : "",
+                    g.patch.empty() ? g.why.c_str() : "");
             started = app->Start(g);
             break;
         }

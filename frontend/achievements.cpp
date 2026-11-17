@@ -46,6 +46,8 @@ bool g_loginClock = false; // the login failed on the server's certificate or th
 
 std::mutex g_msgMutex;
 std::deque<std::string> g_messages;
+std::mutex g_unlockMutex;
+std::deque<Unlock> g_unlocks;
 
 // In the menus' font: capitals, digits and : - + . / < > ! ( ), others as spaces.
 std::string Shown(const char* s, size_t max = 60)
@@ -169,11 +171,37 @@ void RC_CCONV Event(const rc_client_event_t* e, rc_client_t*)
     {
     case RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED:
         if (e->achievement)
-            Say("ACHIEVEMENT: " + Shown(e->achievement->title, 40) + " (" + std::to_string(e->achievement->points) + ")");
+        {
+            Unlock u;
+            u.title = Shown(e->achievement->title, 60);
+            u.name = e->achievement->title ? e->achievement->title : "";
+            u.points = e->achievement->points;
+            u.rarity = e->achievement->rarity;
+            fprintf(stderr, "[achievements] unlocked: %s (%u)\n", u.title.c_str(), u.points);
+            std::lock_guard<std::mutex> lock(g_unlockMutex);
+            g_unlocks.push_back(std::move(u));
+        }
         break;
     case RC_CLIENT_EVENT_GAME_COMPLETED:
-        Say("EVERY ACHIEVEMENT UNLOCKED!");
+    {
+        Unlock u;
+        u.mastery = true;
+        if (const rc_client_game_t* g = rc_client_get_game_info(g_client))
+        {
+            u.game = Shown(g->title, 40);
+            u.name = g->title ? g->title : "";
+        }
+        u.title = u.game.empty() ? "THIS GAME" : u.game;
+        if (u.name.empty()) u.name = u.title;
+        rc_client_user_game_summary_t s;
+        rc_client_get_user_game_summary(g_client, &s);
+        u.gamePoints = s.points_unlocked;
+        u.gamePointsTotal = s.points_core;
+        fprintf(stderr, "[achievements] game completed: %s\n", u.game.c_str());
+        std::lock_guard<std::mutex> lock(g_unlockMutex);
+        g_unlocks.push_back(std::move(u));
         break;
+    }
     case RC_CLIENT_EVENT_SERVER_ERROR:
         if (e->server_error) Say("RETROACHIEVEMENTS: " + Shown(e->server_error->error_message, 50));
         break;
@@ -577,6 +605,15 @@ bool PopMessage(std::string& message)
     if (g_messages.empty()) return false;
     message = std::move(g_messages.front());
     g_messages.pop_front();
+    return true;
+}
+
+bool PopUnlock(Unlock& unlock)
+{
+    std::lock_guard<std::mutex> lock(g_unlockMutex);
+    if (g_unlocks.empty()) return false;
+    unlock = std::move(g_unlocks.front());
+    g_unlocks.pop_front();
     return true;
 }
 

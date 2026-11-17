@@ -160,7 +160,15 @@ class GbaRomHackTests(unittest.TestCase):
         self.assertIn('"menu",', gba_main)
         self.assertIn('!strcmp(key, "gba_start")', gba_main)
         self.assertIn('if (!g.forced && g.patch == n.patch) l.name = n.name;', gba_main)
+        self.assertIn('"gen3evolved"', gba_main)
+        self.assertIn('ApplyUiLanguage(', gba_main)
         # HOME Menu forwarders include ROM hacks cleanly and generate fallback icons via DrawCartridgeCase.
         self.assertIn('ForwarderKey(', sw_plat)
         self.assertNotIn('!Playable(g) || g.hack', sw_plat)
         self.assertIn('Launcher::DrawCartridgeCase(card,', sw_plat)
+        self.assertIn('CoverFetch::DownloadMissing(', sw_plat)
+        # Upstream HG/SS battle Yes/No + RetroAchievements unlock banner ported.
+        main_cpp = (ROOT / 'frontend/main.cpp').read_text(encoding='utf-8')
+        self.assertIn('shownName == "battle-yesno" && pendingName == "battle"', main_cpp)
+        self.assertIn('M_RA_BANNER', main_cpp)
+        self.assertIn('ACHIEVEMENT UNLOCKED', main_cpp)

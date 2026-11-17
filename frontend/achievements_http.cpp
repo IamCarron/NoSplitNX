@@ -64,7 +64,8 @@ size_t Write(char* data, size_t size, size_t count, void* user)
 }
 
 bool Request(const std::string& url, const std::string& post, const std::string& contentType,
-             const std::string& userAgent, long timeout, size_t limit, int& status, std::string& body, std::string& error)
+             const std::string& authHeader, const std::string& userAgent, long timeout, size_t limit,
+             int& status, std::string& body, std::string& error)
 {
     // The console's network (libnx's sockets), started the first time it is needed and closed
     // as the program ends. It must be closed: the Homebrew Menu's loader starts the next .nro
@@ -82,6 +83,7 @@ bool Request(const std::string& url, const std::string& post, const std::string&
     if (!c) { error = "no curl"; return false; }
     curl_slist* headers = nullptr;
     if (!post.empty()) headers = curl_slist_append(headers, ("Content-Type: " + contentType).c_str());
+    if (!authHeader.empty()) headers = curl_slist_append(headers, authHeader.c_str());
     body.clear();
     curl_easy_setopt(c, CURLOPT_URL, url.c_str());
     curl_easy_setopt(c, CURLOPT_USERAGENT, userAgent.c_str());
@@ -119,13 +121,19 @@ bool Request(const std::string& url, const std::string& post, const std::string&
 bool HttpPost(const std::string& url, const std::string& post, const std::string& contentType,
               const std::string& userAgent, int& status, std::string& body, std::string& error)
 {
-    return Request(url, post, contentType, userAgent, 30L, 8u << 20, status, body, error);
+    return Request(url, post, contentType, "", userAgent, 30L, 8u << 20, status, body, error);
+}
+
+bool HttpGet(const std::string& url, const std::string& authHeader, const std::string& userAgent,
+             long timeout, size_t maxBytes, int& status, std::string& body, std::string& error)
+{
+    return Request(url, "", "", authHeader, userAgent, timeout, maxBytes, status, body, error);
 }
 
 // (The updater's download, updater.cpp: the whole program, which may take minutes.)
 bool HttpDownload(const std::string& url, const std::string& userAgent, int& status, std::string& body, std::string& error)
 {
-    return Request(url, "", "", userAgent, 900L, 512u << 20, status, body, error);
+    return Request(url, "", "", "", userAgent, 900L, 512u << 20, status, body, error);
 }
 
 // (While on, a transfer going on another thread ends at once, failing, and none starts.)
@@ -147,6 +155,13 @@ bool Available() { return false; }
 
 bool HttpPost(const std::string&, const std::string&, const std::string&, const std::string&, int&, std::string&,
               std::string& error)
+{
+    error = "not available on non-Switch test host";
+    return false;
+}
+
+bool HttpGet(const std::string&, const std::string&, const std::string&, long, size_t, int&, std::string&,
+             std::string& error)
 {
     error = "not available on non-Switch test host";
     return false;

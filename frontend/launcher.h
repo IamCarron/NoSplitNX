@@ -680,6 +680,8 @@ inline void SyncGbaSettings(const std::string& cfg, const std::string& dataDir)
     set.push_back({ "show_fps", ConfigValue(cfg, "show_fps") == "1" ? "1" : "0" });
     set.push_back({ "fast_button", ConfigValue(cfg, "fast_button") == "toggle" ? "toggle" : "hold" });
     set.push_back({ "gba_start", ConfigValue(cfg, "start_button") == "ds" ? "start" : "menu" });
+    const std::string lang = ConfigValue(cfg, "list_lang");
+    set.push_back({ "language", lang.empty() ? ConfigValue(cfg, "language") : lang });
     const std::string fast = ConfigValue(cfg, "fast_lock");
     if (fast == "0" || fast == "1") set.push_back({ "fast_lock", fast });
     const std::string vol = ConfigValue(cfg, "volume");
@@ -1932,6 +1934,8 @@ inline std::vector<Setting> SettingsList()
     // (frontend/switch_forwarder.cpp, made by the game list: switch_platform.cpp.)
     l.push_back({ "!forwarders", "HOME MENU ICONS", { { "", "INSTALL" } }, "",
                   "PUTS AN ICON FOR EACH GAME IN THIS LIST ON THE HOME MENU WITH ITS PICTURE. IT STARTS THAT GAME STRAIGHT AWAY. MADE ON THIS CONSOLE: NO PC OR KEYS FILE NEEDED. LIKE ANY FORWARDER THE ICONS NEED SIGPATCHES TO START. INSTALL AGAIN AFTER ADDING GAMES. REMOVE ONE IN THE HOME MENU (OPTIONS / DELETE SOFTWARE)." });
+    l.push_back({ "!covers", "DOWNLOAD COVERS", { { "", "DOWNLOAD" } }, "",
+                  "DOWNLOADS MISSING COVERS INTO ICONS/ WHEN ONLINE (LIBRETRO THUMBNAILS; PUT A FREE STEAMGRIDDB API KEY IN SGDB_API_KEY.TXT FOR ROM HACK COVERS)." });
 #endif
     // The interface's language (UiLang, ui_lang.h), shown first among DISPLAY's options.
     l.insert(l.begin(), { "list_lang", "LANGUAGE", UiLang::Choices(), "auto",
@@ -1997,6 +2001,7 @@ inline int GroupOf(const Setting& s)
     if (s.key && !strcmp(s.key, "!updates")) return 7;
     if (!s.key) return !strcmp(s.name, "KEYS AND BUTTONS") ? 3 : 7;
     if (!strcmp(s.key, "list_lang")) return 0;
+    if (!strcmp(s.key, "!covers")) return 5;
     if (!strncmp(s.key, "list_", 5)) return 5;
     if (!strcmp(s.key, "ra") || !strcmp(s.key, "!ra_login")) return 6;
     static const char* display[] = { "view", "large_screen", "fullscreen", "smooth", "battle_buttons", "show_fps" };

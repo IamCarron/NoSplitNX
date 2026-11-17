@@ -44,6 +44,59 @@ struct Canvas
         Fill(x - t, y, t, rh, argb);
         Fill(x + rw, y, t, rh, argb);
     }
+    void FillRound(int x, int y, int rw, int rh, int rad, uint32_t argb)
+    {
+        if (rw <= 0 || rh <= 0) return;
+        const int r = std::max(0, std::min(rad, std::min(rw, rh) / 2));
+        for (int yy = 0; yy < rh; yy++)
+        {
+            int inset = 0;
+            if (yy < r)
+            {
+                const int dy = r - 1 - yy;
+                int dx = 0;
+                while (dx < r && dx * dx + dy * dy <= r * r) dx++;
+                inset = std::max(0, r - dx);
+            }
+            else if (yy >= rh - r)
+            {
+                const int dy = yy - (rh - r);
+                int dx = 0;
+                while (dx < r && dx * dx + dy * dy <= r * r) dx++;
+                inset = std::max(0, r - dx);
+            }
+            Fill(x + inset, y + yy, rw - 2 * inset, 1, argb);
+        }
+    }
+    void OutlineRound(int x, int y, int rw, int rh, int rad, int t, uint32_t argb)
+    {
+        if (rw <= 0 || rh <= 0 || t <= 0) return;
+        const int r = std::max(0, std::min(rad, std::min(rw, rh) / 2));
+        for (int yy = 0; yy < rh; yy++)
+        {
+            int inset = 0;
+            if (yy < r)
+            {
+                const int dy = r - 1 - yy;
+                int dx = 0;
+                while (dx < r && dx * dx + dy * dy <= r * r) dx++;
+                inset = std::max(0, r - dx);
+            }
+            else if (yy >= rh - r)
+            {
+                const int dy = yy - (rh - r);
+                int dx = 0;
+                while (dx < r && dx * dx + dy * dy <= r * r) dx++;
+                inset = std::max(0, r - dx);
+            }
+            if (yy < t || yy >= rh - t) Fill(x + inset, y + yy, rw - 2 * inset, 1, argb);
+            else
+            {
+                Fill(x + inset, y + yy, t, 1, argb);
+                Fill(x + rw - inset - t, y + yy, t, 1, argb);
+            }
+        }
+    }
 
     // 5x7 letters, one row per byte, bit 4 the leftmost pixel.
     static const uint8_t* Glyph(char c)
@@ -139,6 +192,9 @@ struct Canvas
 #define PS_SQUARE "\x03"
 #define PS_TRIANGLE "\x04"
 
+// Overridden by prepare_gba.py when built inside Fulldex/NoSplitNX to apply the UI language.
+inline void ApplyUiLanguage(const std::string& code) { (void)code; }
+
 // Words to lines of at most `chars` letters.
 inline std::vector<std::string> Wrap(const std::string& text, int chars)
 {
@@ -166,19 +222,19 @@ inline std::vector<std::string> Wrap(const std::string& text, int chars)
 namespace Colour
 {
 #ifdef GBAW_EMBEDDED
-// (Inside the all-in-one launcher: its near-black, white text and red details.)
-constexpr uint32_t Back = 0xFF0B0B0C;
-constexpr uint32_t Band = 0xFF141416;
-constexpr uint32_t BandLine = 0xFFE0242C;
+// (Inside the all-in-one launcher: matches NoSplitNX's slate-glass palette with blue accents.)
+constexpr uint32_t Back = 0xFF0E1420;
+constexpr uint32_t Band = 0xFF161D2C;
+constexpr uint32_t BandLine = 0xFF3B82F6;
 constexpr uint32_t Title = 0xFFFFFFFF;
-constexpr uint32_t Text = 0xFFB8B8BC;
+constexpr uint32_t Text = 0xFFCBD5E1;
 constexpr uint32_t Bright = 0xFFFFFFFF;
-constexpr uint32_t Hint = 0xFF8A8A90;
-constexpr uint32_t Chosen = 0xFFE0242C;
-constexpr uint32_t Box = 0xFF1A1A1D;
-constexpr uint32_t BoxEdge = 0xFFE0242C;
-constexpr uint32_t Shade = 0xA0000000;
-constexpr uint32_t Warn = 0xFFE0242C;
+constexpr uint32_t Hint = 0xFF94A3B8;
+constexpr uint32_t Chosen = 0xFF2563EB;
+constexpr uint32_t Box = 0xEE182030;
+constexpr uint32_t BoxEdge = 0xFF475569;
+constexpr uint32_t Shade = 0xB8090D16;
+constexpr uint32_t Warn = 0xFFF59E0B;
 #else
 constexpr uint32_t Back = 0xFF0B0F18;     // the pages' background
 constexpr uint32_t Band = 0xFF152036;     // the title band
@@ -252,8 +308,14 @@ struct Menu
         const int boxH = headH + lineH * visible + footH;
         const int bx = (c.w - boxW) / 2, by = std::max(2, (c.h - boxH) / 2);
         c.Fill(0, 0, c.w, c.h, Colour::Shade);
+#ifdef GBAW_EMBEDDED
+        c.FillRound(bx, by, boxW, boxH, 4 * s, Colour::Box);
+        c.OutlineRound(bx, by, boxW, boxH, 4 * s, 1, Colour::BoxEdge);
+        c.Fill(bx + 4 * s, by + headH - 2, boxW - 8 * s, 1, Colour::BandLine);
+#else
         c.Frame(bx, by, boxW, boxH, 1, Colour::BoxEdge);
         c.Fill(bx, by, boxW, boxH, Colour::Box);
+#endif
         c.TextCentred(bx + boxW / 2, by + 5, title, s, Colour::Title);
         box = { bx, by, boxW, boxH };
         rows.clear();
@@ -265,7 +327,11 @@ struct Menu
             const bool sel = item == selected;
             rows.push_back({ bx + 2, y, boxW - 4, lineH });
             rowItem.push_back(item);
+#ifdef GBAW_EMBEDDED
+            if (sel) c.FillRound(bx + 3 * s, y + 1, boxW - 6 * s, lineH - 2, 3 * s, Colour::Chosen);
+#else
             if (sel) c.Fill(bx + 2, y, boxW - 4, lineH, Colour::Chosen);
+#endif
             const uint32_t col = sel ? Colour::Bright : Colour::Text;
             const int ty = y + (lineH - 7 * s) / 2;
             c.Text(bx + 4 + 4 * s, ty, items[item].label, s, col);

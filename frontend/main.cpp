@@ -1639,6 +1639,7 @@ struct Settings
     // RETROACHIEVEMENTS (achievements.h): on or off (off to start), and the account's user name
     // and the token the server gave at login (never the password).
     Achievements::Account ra;
+    bool raClassicBanner = false; // RetroAchievements UNLOCK BANNER: MODERN (false) or CLASSIC (true)
     // OTHER VERSION POKEMON (exclusives.h): SoulSilver and HeartGold's wild Pokemon of both
     // versions. Off to start.
     bool bothVersions = false;
@@ -1709,6 +1710,7 @@ struct Settings
             else if (k == "both_versions") bothVersions = v == "1";
             else if (k == "ra_user") ra.user = v;
             else if (k == "ra_token") ra.token = v;
+            else if (k == "unlock_banner") raClassicBanner = v == "classic";
             else if (k == "update_sha") updateSha = v;
             else if (k == "update_time") updateTime = v;
             else if (k == "last_game") lastGame = v;
@@ -1766,6 +1768,7 @@ struct Settings
         f << "ra=" << (ra.on ? 1 : 0) << "\n";
         if (!ra.user.empty()) f << "ra_user=" << ra.user << "\n";
         if (!ra.token.empty()) f << "ra_token=" << ra.token << "\n";
+        if (raClassicBanner) f << "unlock_banner=classic\n";
         if (!updateSha.empty()) f << "update_sha=" << updateSha << "\n";
         if (!updateTime.empty()) f << "update_time=" << updateTime << "\n";
         if (!lastGame.empty()) f << "last_game=" << lastGame << "\n";
@@ -2832,6 +2835,13 @@ int main(int argc, char** argv)
         auto blue = [&](int x, int y) { int r, g, bl; rgb(x, y, r, g, bl); return bl > 150 && r < 110 && g > 90 && g < 200 && bl > r + 60; };
         auto red = [&](int x, int y) { int r, g, bl; rgb(x, y, r, g, bl); return r > 180 && g < 120 && bl < 120; };
         auto orange = [&](int x, int y) { int r, g, bl; rgb(x, y, r, g, bl); return r > 180 && g > 110 && g < 200 && bl < 110; };
+        // A button's outline: dark grey (65), or mid grey (178, then 138) for the few frames a press
+        // flashes the button white and then a pale tint (never white or grass-green background).
+        auto edge = [&](int x, int y) {
+            int r, g, bl;
+            rgb(x, y, r, g, bl);
+            return std::max({ r, g, bl }) - std::min({ r, g, bl }) < 16 && r < 200;
+        };
         // (Platinum's first battle has FIGHT alone: no Bag, no running, no party yet.)
         // (Platinum: which panel the battle drew last, when known. Its "Use next Pokemon?" is a
         // red bar on top like the first battle's FIGHT, with RUN below it in neither colour.)
@@ -2843,20 +2853,27 @@ int main(int argc, char** argv)
                                   red(128, 60) && !orange(40, 160) && !blue(128, 166) && !blue(40, 166);
         const bool cmd = pt.dp ? (dpShown && ptPanel == 1) || battleFightOnly
                                : (red(128, 60) && orange(40, 160) && blue(128, 166) && ptPanel != 4) || battleFightOnly;
-        // HG-Engine's Mega Evolution button in the CANCEL bar's right end (y 152-191): a blue
-        // or glowing white/pale-blue face (no dark red beside it at x 175).
+        // HG-Engine's Mega Evolution button in the CANCEL bar's right end (y 152-191): CANCEL's
+        // right edge at 174 and Mega's left edge at 177 tell this row from a whole CANCEL bar, even
+        // on white indoor/Gym backgrounds and while the button flashes after a press.
         auto megaFace = [&](int x, int y) {
             int r, g, bl;
             rgb(x, y, r, g, bl);
             return blue(x, y) || (bl > 230 && g > 190 && r > 100);
         };
-        const bool megaButton = !pt.on && blue(40, 166) && blue(128, 166) && !megaFace(175, 166) &&
+        const bool megaButton = !pt.on && blue(40, 166) && blue(128, 166) && edge(174, 166) && edge(177, 166) &&
                                 megaFace(186, 166) && megaFace(238, 166);
         const bool moves = pt.dp ? dpShown && ptPanel == 3
                                  : !cmd && ptPanel != 4 && blue(40, 166) && blue(128, 166) && (blue(216, 166) || megaButton);
         battleMega = moves && megaButton;
+        // The Yes / No panel (battle-yesno, below): red above blue, checked above the button labels
+        // so long prompts like "Switch Pokemon" stay recognised too, including flash frames on press.
+        auto lit = [&](int x, int y) { int r, g, bl; rgb(x, y, r, g, bl); return r > 160 && g > 160 && bl > 160; };
+        const bool yes = red(128, 50) || red(128, 64), no = blue(128, 124) || blue(128, 136);
+        const bool yesNo = !pt.dp && !blue(128, 166) && !orange(40, 160) &&
+                           ((yes && no) || (yes && lit(128, 124) && edge(128, 112)) || (no && lit(128, 50) && edge(128, 40)));
         const bool idle = AutoFocus::Blank(screens[1].pixels) || (!blue(128, 166) && !red(128, 60));
-        battleUnknown = (cmd || moves || idle) ? 0 : battleUnknown + 1;
+        battleUnknown = (cmd || moves || yesNo || idle) ? 0 : battleUnknown + 1;
         // (Another of Platinum's panels, known for what it is: the touch screen shown at once.)
         if (ptPanel == 4 && !cmd && !moves && !AutoFocus::Blank(screens[1].pixels)) battleUnknown = std::max(battleUnknown, 20);
         // Only after the commands (FIGHT): after a move is chosen the battle goes on and
@@ -3116,18 +3133,66 @@ int main(int argc, char** argv)
             }
             sc.items.insert(sc.items.end(), shades.begin(), shades.end());
         }
-        else if (!pt.dp && red(128, 64) && blue(128, 136) && !blue(128, 166) && !orange(40, 160))
+        else if (yesNo)
         {
-            // The Yes / No panel ("Would you like to give a nickname?" after a catch): only the two
-            // buttons, at the right above the message bar, so the caught Pokemon and the message
-            // stay in sight (the whole touch screen pasted at the lower left covered them).
+            // The Yes / No panel ("Would you like to give a nickname?", "Will you switch your
+            // Pokemon?"): stacked at the right end of the bottom band beside the message box on
+            // wide views, with only rounded button outlines (keyed out at the 2-pixel rim).
             sc.name = "battle-yesno";
             const float viewR = 128 + viewWidth / 2;
-            const float scale = viewWidth < 300 ? 0.4f : 0.5f, w = 244 * scale, h = 60 * scale, gap = 4;
-            const float x = viewR - w - 4, y1 = 144 - 2 * h - gap - 4;
-            put(6, 35, 244, 60, x, y1, scale);
-            put(6, 107, 244, 60, x, y1 + h + gap, scale);
-            for (size_t k = sc.items.size() - 2; k < sc.items.size(); k++) sc.items[k].border = true;
+            const float scale = viewWidth < 300 ? 0.4f : 0.5f, gap = 4;
+            if (viewWidth >= 300)
+            {
+                const float bandY = 144, bandH = 48, viewL = 128 - viewWidth / 2;
+                const float s = 20.5f / 56, bw = 240 * s, bh = 56 * s, rowGap = 2, pad = 3;
+                const int edgeW = 10;
+                const float room = viewWidth - (bw + 2 * pad) - edgeW;
+                const uint32_t* t = screens[0].pixels;
+                int textR = 0;
+                for (int y = 150; y < 187; y++)
+                    for (int x = 206; x > textR; x--)
+                    {
+                        const uint32_t c = t[y * 256 + x];
+                        if (std::max({ (c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF }) < 140)
+                        {
+                            textR = x;
+                            break;
+                        }
+                    }
+                const float need = (float)std::max(textR + 6, 120);
+                const float boxScale = need > room ? room / need : 1.0f;
+                const int boxW = (int)std::min(206.0f, need > room ? need : room);
+                const float boxY = bandY + bandH * (1 - boxScale) / 2;
+                sc.items.push_back(FillRect(viewL, bandY, (int)std::ceil(viewWidth) + 1, (int)bandH, 0x202020));
+                sc.items.push_back({ 0, 0, 144, boxW, 48, viewL, boxY, boxScale, 0, 255, false });
+                float boxR = viewL + boxW * boxScale;
+                if (boxScale == 1.0f && room > boxW + 0.5f && textR < 200)
+                {
+                    Element fill = { 0, 202, 144, 2, 48, boxR, boxY, 1.0f, 0, 255, false };
+                    fill.stretchX = (room - boxW) / 2;
+                    sc.items.push_back(fill);
+                    boxR = viewL + room;
+                }
+                Element boxEdge = { 0, 0, 144, edgeW, 48, boxR, boxY, boxScale, 0, 255, false };
+                boxEdge.flipX = true;
+                sc.items.push_back(boxEdge);
+                const float x = viewR - pad - bw, y1 = bandY + (bandH - 2 * bh - rowGap) / 2;
+                put(8, 40, 240, 56, x, y1, s);
+                put(8, 112, 240, 56, x, y1 + bh + rowGap, s);
+                for (size_t k = sc.items.size() - 2; k < sc.items.size(); k++)
+                {
+                    sc.items[k].keys[0] = b[64 * 256 + 4] & 0xFFFFFF;
+                    sc.items[k].keyTolerance = 24;
+                    sc.items[k].keyRing = 2;
+                }
+            }
+            else
+            {
+                const float w = 244 * scale, h = 60 * scale, x = viewR - w - 4, y1 = 144 - 2 * h - gap - 4;
+                put(6, 35, 244, 60, x, y1, scale);
+                put(6, 107, 244, 60, x, y1 + h + gap, scale);
+                for (size_t k = sc.items.size() - 2; k < sc.items.size(); k++) sc.items[k].border = true;
+            }
         }
         else if (viewWidth < 300 || battleUnknown >= 20)
         {
@@ -5144,7 +5209,7 @@ int main(int argc, char** argv)
         M_WIDELINES, M_AUTODETAIL, M_WIDEGPU, M_GPU3D, M_SHOWFPS, M_BUTTONS, M_PADTOUCH, M_EMULATION,
         M_CONTROLS, M_STARTBTN, M_FAST, M_FASTBTN, M_FFLOWRES, M_SWITCH_FF, M_SAVESTATE, M_LOADSTATE, M_RESET, M_QUIT,
         M_SETTINGS, M_DISPLAY, M_LANGUAGE, M_SOUND, M_GRAPHICS, M_CONTROLMENU, M_BACK, M_CHEATS, M_NOTHING,
-        M_VOLUME, M_FFMUTE, M_ASPECT, M_RA, M_RA_ON, M_RA_ACCOUNT, M_RA_GAME, M_RA_LOGIN, M_RA_TYPED, M_RA_CANCEL, M_BOTHVER,
+        M_VOLUME, M_FFMUTE, M_ASPECT, M_RA, M_RA_ON, M_RA_ACCOUNT, M_RA_GAME, M_RA_BANNER, M_RA_LOGIN, M_RA_TYPED, M_RA_CANCEL, M_BOTHVER,
         M_RA_LIST, M_ACH_POINTS, M_ACH_STATUS, M_ACH_RARITY,
         M_CSEARCH, M_SEARCH_LETTER, M_SEARCH_DELETE, M_SEARCH_SPACE, M_SEARCH_CLEAR, M_SEARCH_DONE,
         M_CDETAIL_TOGGLE, M_CINFO, M_BACKUPS, M_RESTORE_CONFIRM, M_LOAD_CONFIRM,
@@ -5465,6 +5530,7 @@ int main(int argc, char** argv)
                 add(M_RA_ACCOUNT, "ACCOUNT", Achievements::AccountLine(), true);
                 add(M_RA_GAME, "THIS GAME", cfg.ra.on ? Achievements::GameLine() : "-", true);
                 if (cfg.ra.on && Achievements::Active()) add(M_RA_LIST, "ACHIEVEMENTS", "");
+                add(M_RA_BANNER, "UNLOCK BANNER", cfg.raClassicBanner ? "CLASSIC" : "MODERN");
                 add(M_RA_LOGIN, Achievements::LoggedIn() ? "LOG OUT" : "LOG IN", "");
                 add(M_BACK, "BACK", "");
             }
@@ -5519,6 +5585,32 @@ int main(int argc, char** argv)
 
     std::string toast;
     uint32_t toastUntil = 0;
+    std::deque<Achievements::Unlock> celebrateQueue;
+    Achievements::Unlock celebrateNow;
+    uint32_t celebrateUntil = 0;
+    if (const char* tu = getenv("SSR_TEST_UNLOCK"))
+    {
+        if (*tu)
+        {
+            Achievements::Unlock u;
+            if (!strcmp(tu, "mastery"))
+            {
+                u.mastery = true;
+                u.title = "POKEMON SOULSILVER";
+                u.name = "Pokemon SoulSilver Version";
+                u.gamePoints = 540;
+                u.gamePointsTotal = 540;
+            }
+            else
+            {
+                u.title = tu;
+                u.name = tu;
+                u.points = 50;
+                u.rarity = 12.3f;
+            }
+            celebrateQueue.push_back(std::move(u));
+        }
+    }
     int shownFps = 0;
     uint32_t presented = 0, fpsSince = 0;
     auto say = [&](const std::string& msg) {
@@ -6931,6 +7023,10 @@ int main(int argc, char** argv)
                 Achievements::SetOn(!cfg.ra.on);
                 if (bw2map.Supported() && cfg.wideMap) say(cfg.ra.on ? "WIDE MAP LOADING OFF FROM THE NEXT START" : "WIDE MAP LOADING BACK FROM THE NEXT START");
                 break;
+            case M_RA_BANNER:
+                cfg.raClassicBanner = !cfg.raClassicBanner;
+                cfg.Save(opt.config);
+                break;
             case M_RA_LIST:
                 achList = Achievements::List();
                 goPage(PAGE_RA_LIST, -1);
@@ -7227,6 +7323,14 @@ int main(int argc, char** argv)
         {
             std::string m;
             if (frame >= toastUntil && Achievements::PopMessage(m)) say(m);
+            Achievements::Unlock u;
+            while (Achievements::PopUnlock(u)) celebrateQueue.push_back(std::move(u));
+            if (frame >= celebrateUntil && !celebrateQueue.empty())
+            {
+                celebrateNow = std::move(celebrateQueue.front());
+                celebrateQueue.pop_front();
+                celebrateUntil = frame + 260;
+            }
         }
         if (menu.open && menuPage == PAGE_RA && !raTyping && frame % 20 == 0) buildMenu();
 
@@ -8614,6 +8718,7 @@ int main(int argc, char** argv)
                 if (pendingName != picked.name) pending = 0;
                 pendingName = picked.name;
                 int need = shownName == "bottom" && fieldNow ? 1 :
+                    shownName == "battle-yesno" && pendingName == "battle" ? 2 :
                     shownName == "battle-menu" && (pendingName == "top" || pendingName == "battle") ? 40 :
                     (shownName == "starter" || shownName == "intro") && pendingName == "top" ? 16 : 4;
                 if (++pending >= need)
@@ -9035,6 +9140,17 @@ int main(int argc, char** argv)
             const uint32_t left = toastUntil - frame;
             toastFade = left >= 60 ? 255 : left * 255 / 60;
         }
+        const bool showUnlock = !menu.open && frame < celebrateUntil;
+        uint32_t unlockAlpha = 0;
+        int unlockLift = 0;
+        if (showUnlock)
+        {
+            const uint32_t elapsed = 260 - (celebrateUntil - frame);
+            const uint32_t remain = celebrateUntil - frame;
+            const uint32_t in = std::min<uint32_t>(18, elapsed), out = std::min<uint32_t>(24, remain);
+            unlockAlpha = elapsed < 18 ? in * 255 / 18 : remain < 24 ? out * 255 / 24 : 255;
+            unlockLift = elapsed < 18 ? (int)((18 - in) * 32 / 18) : remain < 24 ? (int)((24 - out) * 24 / 24) : 0;
+        }
 
         std::string menuTitle, menuHint, menuNote;
         bool wideMenu = false, needCpuDim = false;
@@ -9085,6 +9201,7 @@ int main(int argc, char** argv)
                 if (selId == M_NOTHING && menuPage == PAGE_CHEATS && cheats.items.empty()) menuHint = "DATABASE INFO EXPLAINS WHAT WAS FOUND";
                 if (selId == M_RA) menuHint = "FROM RETROACHIEVEMENTS.ORG";
                 if (selId == M_RA_ON) menuHint = "CASUAL MODE: NEEDS AN ACCOUNT";
+                if (selId == M_RA_BANNER) menuHint = "MODERN GLASS CARD OR CLASSIC PIXEL BANNER";
                 if (selId == M_RA_ACCOUNT || selId == M_RA_GAME)
                     menuHint = !Achievements::Detail().empty() ? Achievements::Detail()
                              : selId == M_RA_GAME ? "FOUND FROM THE ROM ITSELF" : "YOUR RETROACHIEVEMENTS ACCOUNT";
@@ -9152,14 +9269,22 @@ int main(int argc, char** argv)
             }
         }
 
-        const bool overlayUsed = showCursor || showShoes || showPtDex || showToast || menu.open;
+        const bool overlayUsed = showCursor || showShoes || showPtDex || showToast || showUnlock || menu.open;
         if (overlayUsed)
         {
             uint64_t curOverlaySig = 1469598103934665603ULL;
             mixHash(curOverlaySig, (uint64_t)outW);
             mixHash(curOverlaySig, (uint64_t)outH);
             mixHash(curOverlaySig, (showCursor ? 1ULL : 0ULL) | (showShoes ? 2ULL : 0ULL) |
-                (showPtDex ? 4ULL : 0ULL) | (showToast ? 8ULL : 0ULL) | (menu.open ? 16ULL : 0ULL));
+                (showPtDex ? 4ULL : 0ULL) | (showToast ? 8ULL : 0ULL) | (menu.open ? 16ULL : 0ULL) | (showUnlock ? 32ULL : 0ULL));
+            if (showUnlock)
+            {
+                mixHash(curOverlaySig, unlockAlpha);
+                mixHash(curOverlaySig, (uint64_t)(unsigned)unlockLift);
+                mixHash(curOverlaySig, cfg.raClassicBanner ? 1ULL : 0ULL);
+                mixHash(curOverlaySig, celebrateNow.mastery ? 2ULL : 0ULL);
+                mixStr(curOverlaySig, celebrateNow.title);
+            }
             if (showCursor)
             {
                 mixHash(curOverlaySig, (uint64_t)(unsigned)cursorPxX);
@@ -9298,6 +9423,75 @@ int main(int argc, char** argv)
                     canvas.FillGlass(tx, ty, tw, th, 3 * sc, ((0xE0 * toastFade / 255) << 24) | 0x161C28u, ((0xE0 * toastFade / 255) << 24) | 0x0E121Au, ((0xFF * toastFade / 255) << 24) | 0x2A354Au, 1);
                     canvas.FillRound(tx + sc, ty + 2 * sc, std::max(2, 2 * sc), th - 4 * sc, sc, ((0xFF * toastFade / 255) << 24) | 0x0090FFu);
                     canvas.Text(tx + 7 * sc, ty + 3 * sc, toast, sc, (toastFade << 24) | 0xFFFFFF);
+                }
+                if (showUnlock)
+                {
+                    const bool classic = cfg.raClassicBanner || getenv("SSR_TEST_CLASSIC") != nullptr;
+                    const uint32_t fade = unlockAlpha;
+                    auto A = [&](uint32_t rgb, uint32_t a = 255) { return ((a * fade / 255) << 24) | (rgb & 0xFFFFFFu); };
+                    const uint32_t accent = celebrateNow.mastery ? 0xFFD75Eu : 0x38BDF8u;
+                    const std::string head = UiLang::Tr(celebrateNow.mastery ? "GAME MASTERED" : "ACHIEVEMENT UNLOCKED");
+                    const std::string nm = celebrateNow.name.empty() ? celebrateNow.title : celebrateNow.name;
+                    char rare[48] = "";
+                    if (!celebrateNow.mastery && celebrateNow.rarity > 0.0f)
+                        snprintf(rare, sizeof rare, "  \xC2\xB7  %.1f%%", celebrateNow.rarity);
+                    const std::string ptsLabel = UiLang::Tr("POINTS");
+                    const std::string info = celebrateNow.mastery
+                        ? std::to_string(celebrateNow.gamePoints) + " / " + std::to_string(celebrateNow.gamePointsTotal) + " " + ptsLabel
+                        : std::to_string(celebrateNow.points) + " " + ptsLabel + rare;
+                    if (!classic)
+                    {
+                        const float k = std::max(0.5f, outH / 720.0f);
+                        auto K = [&](float v) { return (int)std::lround(v * k); };
+                        const int bs = K(56), pad = K(14);
+                        const int fHead = K(14), fName = K(22), fInfo = K(15);
+                        const int textMax = std::max({ Canvas::ModernTextWidth(head, fHead),
+                                                       Canvas::ModernTextWidth(nm, fName),
+                                                       Canvas::ModernTextWidth(info, fInfo) });
+                        const int cw = std::min(outW - K(32), pad + bs + K(14) + textMax + pad + K(10));
+                        const int ch = bs + 2 * pad;
+                        const int cx = (outW - cw) / 2, cy = outH - ch - K(24) + K((float)unlockLift);
+                        canvas.ShadowRound(cx, cy, cw, ch, K(14), K(4), K(4));
+                        canvas.FillGlass(cx, cy, cw, ch, K(14), A(0x1E2534, 0xEB), A(0x111622, 0xEB), A(0xFFFFFF, 0x40), 1);
+                        canvas.FillRound(cx + K(4), cy + pad, K(4), bs, K(2), A(accent));
+                        const int bx = cx + pad + K(4), by = cy + pad;
+                        canvas.FillRound(bx, by, bs, bs, K(12), A(0x0E1219));
+                        canvas.OutlineRound(bx, by, bs, bs, K(12), 1, A(accent, 0x80));
+                        // Crisp vector-style trophy inside badge slot
+                        canvas.FillRound(bx + bs / 4, by + bs / 5, bs / 2, bs / 3, K(6), A(accent));
+                        canvas.Fill(bx + bs / 2 - K(3), by + bs / 2, K(6), bs / 4, A(accent));
+                        canvas.FillRound(bx + bs / 3, by + bs * 3 / 4 - K(2), bs / 3, K(5), K(2), A(accent));
+                        const int tx = bx + bs + K(12), textW = std::max(40, cx + cw - pad - tx);
+                        auto fitM = [&](std::string t, int px) {
+                            if (Canvas::ModernTextWidth(t, px) <= textW) return t;
+                            while (t.size() > 3 && Canvas::ModernTextWidth(t + "...", px) > textW) t.pop_back();
+                            return t + "...";
+                        };
+                        canvas.ModernText(tx, by + K(2), fitM(head, fHead), fHead, A(accent), true);
+                        canvas.ModernText(tx, by + K(19), fitM(nm, fName), fName, A(0xF8FAFC), true);
+                        canvas.ModernText(tx, by + K(40), fitM(info, fInfo), fInfo, A(0xCBD5E1), true);
+                    }
+                    else
+                    {
+                        const int sc = outH / 240 < 1 ? 1 : outH / 240;
+                        const int small = std::max(1, sc - 1), bs = 20 * sc, pad = 5 * sc;
+                        const std::string line3 = celebrateNow.mastery
+                            ? std::to_string(celebrateNow.gamePoints) + "/" + std::to_string(celebrateNow.gamePointsTotal) + " " + ptsLabel
+                            : std::to_string(celebrateNow.points) + " " + ptsLabel;
+                        const int twMax = std::max({ Canvas::TextWidth(head, small), Canvas::TextWidth(celebrateNow.title, sc), Canvas::TextWidth(line3, small) });
+                        const int cw = std::min(outW - 12 * sc, pad + bs + 6 * sc + twMax + pad);
+                        const int ch = bs + 2 * pad;
+                        const int cx = (outW - cw) / 2, cy = outH - ch - 8 * sc + unlockLift * sc / 2;
+                        canvas.ShadowRound(cx, cy, cw, ch, 4 * sc, sc, sc);
+                        canvas.FillGlass(cx, cy, cw, ch, 4 * sc, A(0x161C28, 0xE6), A(0x0E121A, 0xE6), A(accent, 0xA0), 1);
+                        const int bx = cx + pad, by = cy + pad, tx = bx + bs + 6 * sc;
+                        canvas.FillRound(bx, by, bs, bs, 3 * sc, A(0x0E1219));
+                        canvas.FillRound(bx + bs / 4, by + bs / 4, bs / 2, bs / 3, 2 * sc, A(accent));
+                        canvas.FillRound(bx + bs / 3, by + bs * 2 / 3, bs / 3, 3 * sc, sc, A(accent));
+                        canvas.Text(tx, by + 1 * sc, head, small, A(accent));
+                        canvas.Text(tx, by + 8 * sc, celebrateNow.title, sc, A(0xFFFFFF));
+                        canvas.Text(tx, by + 16 * sc, line3, small, A(0xB9C9DD));
+                    }
                 }
                 if (menu.open)
                 {

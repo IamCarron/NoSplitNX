@@ -95,8 +95,25 @@ bool Busy();               // a login or the game's set is on its way
 bool LoginForToken(const std::string& user, const std::string& password, const std::string& product,
                    std::string& outUser, std::string& outToken, std::string& error);
 
-// Messages for the player (an unlock, a login that failed, ...), in the menus' font.
+// Messages for the player (a login that failed, an error, ...), in the menus' font.
 bool PopMessage(std::string& message);
+
+// Shared HTTP GET helper (uses libnx sockets + curl on Switch).
+bool HttpGet(const std::string& url, const std::string& authHeader, const std::string& userAgent,
+             long timeout, size_t maxBytes, int& status, std::string& body, std::string& error);
+
+// An unlock for the in-game celebration banner: achievement title (pixel & UTF-8), points, rarity,
+// or whole-game mastery with game name and totals.
+struct Unlock
+{
+    std::string title, name;
+    uint32_t points = 0;
+    float rarity = 0;
+    bool mastery = false;
+    std::string game;
+    uint32_t gamePoints = 0, gamePointsTotal = 0;
+};
+bool PopUnlock(Unlock& unlock);
 
 void Stop();
 
