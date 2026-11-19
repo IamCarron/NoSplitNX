@@ -161,11 +161,18 @@ inline std::string ToNiceTitle(const std::string& s)
     if (!IsAllUpper(s)) return s;
     static const char* const acronyms[] = {
         "GBA", "3DS", "NDS", "GPU", "CPU", "FPS", "ROM", "NRO", "HD", "NX", "UI", "LCD", "XBRZ",
-        "HDMI", "USB", "HDR", "DS", "PC", "SD", "TV", "2K", "4K", "3D", "ZR", "ZL",
+        "HDMI", "USB", "HDR", "DS", "PC", "SD", "TV", "2K", "4K", "3D", "ZR", "ZL", "HOME",
         "192P", "288P", "384P", "480P", "576P", "720P", "960P", "1080P", "1440P", "2160P"
     };
     static const char* const regionCodes[] = {
         "US", "EU", "ES", "FR", "DE", "IT", "JP", "UK", "EN", "JA", "KO", "USA", "EUR"
+    };
+    // Keep minor connecting words lowercase inside titles (Spanish, Italian, French, English)
+    // unless they start the title or follow punctuation like ':' or '('.
+    static const char* const minorWords[] = {
+        "DE", "DEL", "LA", "EL", "LAS", "LOS", "Y", "E", "O", "U", "A", "AL", "EN", "CON", "SIN", "POR", "PARA",
+        "DI", "DA", "IL", "LO", "GLI", "LE", "ET", "DU", "DES", "LES", "AU", "AUX", "UN", "UNA",
+        "OF", "TO", "IN", "ON", "FOR", "AND", "OR", "THE", "WITH"
     };
     auto isWordEnd = [&](size_t end) {
         if (end >= s.size()) return true;
@@ -175,6 +182,7 @@ inline std::string ToNiceTitle(const std::string& s)
     std::string res;
     res.reserve(s.size());
     bool newWord = true;
+    bool forceCap = true;
     int parenDepth = 0;
     for (size_t i = 0; i < s.size(); )
     {
@@ -190,6 +198,7 @@ inline std::string ToNiceTitle(const std::string& s)
             res.push_back((char)c);
             res.push_back((char)c2);
             newWord = false;
+            forceCap = false;
             i += 2;
             continue;
         }
@@ -198,6 +207,7 @@ inline std::string ToNiceTitle(const std::string& s)
         if (c == ' ' || c == '/' || c == '-' || c == '(' || c == '<' || c == '>' || c == ':' || c == '.' || c == ',')
         {
             newWord = true;
+            if (c == ':' || c == '/' || c == '(' || c == '-' || c == '.' || c == ',') forceCap = true;
             res.push_back((char)c);
             i++;
             continue;
@@ -213,6 +223,7 @@ inline std::string ToNiceTitle(const std::string& s)
                     res.append(acr, len);
                     i += len;
                     newWord = false;
+                    forceCap = false;
                     matched = true;
                     break;
                 }
@@ -227,6 +238,24 @@ inline std::string ToNiceTitle(const std::string& s)
                         res.append(rc, len);
                         i += len;
                         newWord = false;
+                        forceCap = false;
+                        matched = true;
+                        break;
+                    }
+                }
+            }
+            if (!matched && !forceCap)
+            {
+                for (const char* mw : minorWords)
+                {
+                    size_t len = strlen(mw);
+                    if (i + len <= s.size() && s.compare(i, len, mw) == 0 && isWordEnd(i + len))
+                    {
+                        for (size_t k = 0; k < len; k++)
+                            res.push_back((char)std::tolower((unsigned char)mw[k]));
+                        i += len;
+                        newWord = false;
+                        forceCap = false;
                         matched = true;
                         break;
                     }
@@ -236,6 +265,7 @@ inline std::string ToNiceTitle(const std::string& s)
             if (c >= 'a' && c <= 'z') c = (unsigned char)(c - 'a' + 'A');
             res.push_back((char)c);
             newWord = false;
+            forceCap = false;
         }
         else
         {
@@ -252,10 +282,14 @@ inline std::string ToNiceSentence(const std::string& s)
     if (!IsAllUpper(s)) return s;
     static const char* const acronyms[] = {
         "GBA", "3DS", "NDS", "GPU", "CPU", "FPS", "ROM", "NRO", "HD", "NX", "UI", "APK", "ESC", "LCD", "XBRZ",
-        "F11", "HDMI", "USB", "HDR", "DS", "PC", "SD", "TV", "2K", "4K", "3D", "F5", "F8", "ZR", "ZL"
+        "F11", "HDMI", "USB", "HDR", "DS", "PC", "SD", "TV", "2K", "4K", "3D", "F5", "F8", "ZR", "ZL", "HOME"
     };
     struct ProperNoun { const char* upper; const char* shown; };
     static const ProperNoun nouns[] = {
+        { "SHA256SUMS.TXT", "SHA256SUMS.txt" }, { "SGDB_API_KEY.TXT", "sgdb_api_key.txt" },
+        { "BACKGROUND.JPG", "background.jpg" }, { "BACKGROUND.PNG", "background.png" },
+        { "GAME.LOG", "game.log" }, { "STEAMGRIDDB", "SteamGridDB" }, { "LIBRETRO", "Libretro" },
+        { "MISSIONCONTROL", "MissionControl" }, { "JOY-CON", "Joy-Con" }, { "SYS-CON", "sys-con" },
         { "SWITCH", "Switch" }, { "RETROACHIEVEMENTS", "RetroAchievements" },
         { "OPENGL", "OpenGL" }, { "GITHUB", "GitHub" }, { "NOSPLITNX", "NoSplitNX" },
         { "ANDROID", "Android" }, { "WINDOWS", "Windows" }, { "LINUX", "Linux" },
@@ -264,7 +298,7 @@ inline std::string ToNiceSentence(const std::string& s)
     auto isWordEnd = [&](size_t end) {
         if (end >= s.size()) return true;
         unsigned char u = (unsigned char)s[end];
-        return !std::isalnum(u) && u != 0xC3;
+        return !std::isalnum(u) && u != 0xC3 && u != '_' && u != '-';
     };
     std::string res;
     res.reserve(s.size());
@@ -290,8 +324,11 @@ inline std::string ToNiceSentence(const std::string& s)
         }
         if (c == '.' || c == '!' || c == '?')
         {
-            capNext = true;
-            wordStart = true;
+            // Only start a new sentence when punctuation is followed by whitespace or end-of-string,
+            // leaving filenames and URLs (background.jpg, game.log, github.com) lowercase.
+            const bool nextIsSpace = (i + 1 >= s.size()) || s[i + 1] == ' ' || s[i + 1] == '\n';
+            if (nextIsSpace) capNext = true;
+            wordStart = nextIsSpace;
             res.push_back((char)c);
             i++;
             continue;
@@ -306,12 +343,12 @@ inline std::string ToNiceSentence(const std::string& s)
         if (wordStart)
         {
             bool matchedAcronym = false;
-            for (const char* acr : acronyms)
+            for (const auto& pn : nouns)
             {
-                size_t len = strlen(acr);
-                if (i + len <= s.size() && s.compare(i, len, acr) == 0 && isWordEnd(i + len))
+                size_t len = strlen(pn.upper);
+                if (i + len <= s.size() && s.compare(i, len, pn.upper) == 0 && isWordEnd(i + len))
                 {
-                    res.append(acr, len);
+                    res.append(pn.shown);
                     i += len;
                     capNext = false;
                     wordStart = false;
@@ -321,12 +358,12 @@ inline std::string ToNiceSentence(const std::string& s)
             }
             if (!matchedAcronym)
             {
-                for (const auto& pn : nouns)
+                for (const char* acr : acronyms)
                 {
-                    size_t len = strlen(pn.upper);
-                    if (i + len <= s.size() && s.compare(i, len, pn.upper) == 0 && isWordEnd(i + len))
+                    size_t len = strlen(acr);
+                    if (i + len <= s.size() && s.compare(i, len, acr) == 0 && isWordEnd(i + len))
                     {
-                        res.append(pn.shown);
+                        res.append(acr, len);
                         i += len;
                         capNext = false;
                         wordStart = false;

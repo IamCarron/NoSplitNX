@@ -307,11 +307,15 @@ struct MusicAudioSession
 void ShowMessage(const std::string& text)
 {
     fprintf(stderr, "%s\n", text.c_str());
+    fflush(stderr);
     consoleInit(nullptr);
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     PadState pad;
     padInitializeDefault(&pad);
-    printf("\n  NoSplitNX\n\n%s\n\n  Press + to return to the Homebrew Menu.\n", text.c_str());
+    const char* footer = (UiLang::lang == 1)
+        ? "  Pulsa + para volver al Homebrew Menu."
+        : "  Press + to return to the Homebrew Menu.";
+    printf("\n  NoSplitNX\n\n%s\n\n%s\n", text.c_str(), footer);
     while (appletMainLoop())
     {
         padUpdate(&pad);
@@ -552,7 +556,7 @@ int PickGame(std::vector<Launcher::Game>& games, int selected, const std::string
     Menu keysMenu;
     Menu choiceMenu;
     std::string choiceTitle;
-    MusicAudioSession music(autoFrames == 0, MusicAudioSession::ParseVolume(page.Stored("volume")));
+    MusicAudioSession music(autoFrames == 0, MusicAudioSession::ParseVolume(Launcher::ConfigValue(cfgPath, "volume")));
     auto keysBuild = [&]() {
         keysMenu.items.clear();
         for (int a = 0; a < Controls::COUNT; a++)
@@ -1312,7 +1316,6 @@ std::vector<Launcher::Game> FindGames(const std::string& dir, bool& ownFolder)
 #endif
 #endif
     savesIn(games);
-    Launcher::AddComingSoon(games);
     Launcher::Sort(games);
     // The same game in two folders (two ROMs, two saves): each says where it is.
     for (size_t i = 0; i < games.size(); i++)
@@ -1377,22 +1380,36 @@ bool Start(int& argc, char**& argv)
         }
     }
     if (!freopen(logPath.c_str(), "w", stderr)) freopen("game.log", "w", stderr);
-    setvbuf(stderr, nullptr, _IOLBF, 0);
+    // Use an 8 KB block buffer instead of line buffering so incidental stderr messages never
+    // stall emulation or rendering on synchronous FAT32 SD writes; perf summaries and exits flush.
+    setvbuf(stderr, nullptr, _IOFBF, 8192);
     setenv("SSR_PERF", "1", 0);
     fprintf(stderr, "[switch] started from %s\n", argc > 0 && argv[0] ? argv[0] : "?");
     fputs(testNotes.c_str(), stderr);
+    UiLang::DetectSystem();
+    {
+        const std::string savedLang = Launcher::ConfigValue(SettingsPath(dir), "list_lang");
+        const std::string legacyLang = savedLang.empty() ? Launcher::ConfigValue(SettingsPath(dir), "language") : savedLang;
+        if (!legacyLang.empty()) UiLang::Set(legacyLang);
+    }
 
     // Started from the album (applet mode) a homebrew program only gets a few hundred MB of
     // memory; the game's code alone is larger. Started in place of a game (holding R) it gets
     // nearly all of it.
     const AppletType type = appletGetAppletType();
     fprintf(stderr, "[switch] applet type %d\n", (int)type);
+    fflush(stderr);
     if (type != AppletType_Application && type != AppletType_SystemApplication)
     {
-        ShowMessage("  This needs the console's full memory.\n"
-                    "  Start it from a game instead of the album:\n"
-                    "  hold R while starting any game, then choose this game\n"
-                    "  (or start it from its forwarder on the HOME Menu).");
+        ShowMessage(UiLang::lang == 1
+            ? "  NoSplitNX necesita toda la memoria de la consola.\n"
+              "  Abrelo desde un juego en lugar del Album:\n"
+              "  manten pulsado R al abrir cualquier juego y elige NoSplitNX\n"
+              "  (o abrelo desde su icono en el menu HOME)."
+            : "  This needs the console's full memory.\n"
+              "  Start it from a game instead of the album:\n"
+              "  hold R while starting any game, then choose this game\n"
+              "  (or start it from its forwarder on the HOME Menu).");
         return false;
     }
     u64 total = 0, used = 0;
@@ -1427,8 +1444,9 @@ bool Start(int& argc, char**& argv)
 #endif
     if (games.empty())
     {
-        ShowMessage("  No game found. Copy your ROMs (Pokemon Black, White, Black 2 or White 2 in\n"
-                    "  English; SoulSilver, HeartGold or Platinum US) into\n  " + romsDir);
+        ShowMessage(UiLang::lang == 1
+            ? "  No se encontraron juegos. Copia tus ROMs de Pokemon DS o GBA en:\n  " + romsDir
+            : "  No game found. Copy your Pokemon DS or GBA ROMs into:\n  " + romsDir);
         return false;
     }
     int chosen = 0;
@@ -1845,134 +1863,6 @@ void JitStarted()
     fprintf(stderr, "[switch] the JIT is running\n");
 }
 
-namespace
-{
-bool g_ffBoosted = false;
-bool g_ffBoostUnavailable = false;
-bool g_ffBoostHandheld = true;
-bool g_ffCpuRaised = false;
-bool g_ffMemRaised = false;
-u32 g_ffCpuNormal = 0;
-u32 g_ffMemNormal = 0;
-uint32_t g_ffBoostChecks = 0;
-constexpr u32 BoostCpuHz = 1785000000u;
-constexpr u32 BoostMemHz = 1600000000u;
-constexpr u32 ClockMarginHz = 15000000u;
-
-bool ClkrstRaiseModule(PcvModuleId mod, u32 targetHz, u32& normalHz, bool& wasRaised,
-    u32* prevOut = nullptr, u32* nowOut = nullptr)
-{
-    ClkrstSession s;
-    if (R_FAILED(clkrstOpenSession(&s, mod, 3))) return false;
-    u32 cur = 0;
-    bool ok = R_SUCCEEDED(clkrstGetClockRate(&s, &cur));
-    if (prevOut) *prevOut = cur;
-    if (nowOut) *nowOut = cur;
-    if (ok && cur + ClockMarginHz < targetHz)
-    {
-        if (!wasRaised) normalHz = cur;
-        ok = R_SUCCEEDED(clkrstSetClockRate(&s, targetHz));
-        if (ok)
-        {
-            wasRaised = true;
-            u32 now = 0;
-            if (R_SUCCEEDED(clkrstGetClockRate(&s, &now)) && nowOut)
-                *nowOut = now;
-        }
-    }
-    clkrstCloseSession(&s);
-    return ok;
-}
-
-void ClkrstRestoreModule(PcvModuleId mod, u32 normalHz, bool& wasRaised)
-{
-    if (!wasRaised) return;
-    ClkrstSession s;
-    if (R_SUCCEEDED(clkrstOpenSession(&s, mod, 3)))
-    {
-        clkrstSetClockRate(&s, normalHz);
-        clkrstCloseSession(&s);
-    }
-    wasRaised = false;
-}
-}
-
-void SetFastForwardBoost(bool on)
-{
-    if (!on)
-    {
-        if (!g_ffBoosted) return;
-        g_ffBoosted = false;
-        g_ffBoostChecks = 0;
-        if (g_ffCpuRaised || g_ffMemRaised)
-        {
-            if (hosversionAtLeast(8, 0, 0) && R_SUCCEEDED(clkrstInitialize()))
-            {
-                ClkrstRestoreModule(PcvModuleId_CpuBus, g_ffCpuNormal, g_ffCpuRaised);
-                if (IsHandheld() == g_ffBoostHandheld)
-                    ClkrstRestoreModule(PcvModuleId_EMC, g_ffMemNormal, g_ffMemRaised);
-                else
-                    g_ffMemRaised = false;
-                clkrstExit();
-            }
-            else
-                g_ffCpuRaised = g_ffMemRaised = false;
-        }
-        return;
-    }
-
-    if (g_ffBoostUnavailable) return;
-    if (g_ffBoosted)
-    {
-        // Re-check periodically without keeping pcv/clkrst sessions open (avoids fatal 2011-0102).
-        if (++g_ffBoostChecks % 60 != 0) return;
-        if (!g_ffCpuRaised && !g_ffMemRaised) return;
-        if (R_FAILED(clkrstInitialize())) return;
-        if (g_ffCpuRaised) ClkrstRaiseModule(PcvModuleId_CpuBus, BoostCpuHz, g_ffCpuNormal, g_ffCpuRaised);
-        if (g_ffMemRaised) ClkrstRaiseModule(PcvModuleId_EMC, BoostMemHz, g_ffMemNormal, g_ffMemRaised);
-        clkrstExit();
-        return;
-    }
-
-    if (!hosversionAtLeast(8, 0, 0) || R_FAILED(clkrstInitialize()))
-    {
-        g_ffBoostUnavailable = true;
-        return;
-    }
-
-    u32 prevCpu = 0, nowCpu = 0, prevMem = 0, nowMem = 0;
-    const bool cpuOk = ClkrstRaiseModule(PcvModuleId_CpuBus, BoostCpuHz, g_ffCpuNormal, g_ffCpuRaised, &prevCpu, &nowCpu);
-    const bool memOk = ClkrstRaiseModule(PcvModuleId_EMC, BoostMemHz, g_ffMemNormal, g_ffMemRaised, &prevMem, &nowMem);
-    clkrstExit();
-
-    if (!cpuOk || nowCpu + ClockMarginHz < BoostCpuHz)
-    {
-        fprintf(stderr, "[switch] fast-forward clock boost unavailable (cpu %u -> %u MHz, mem %u -> %u MHz)\n",
-            prevCpu / 1000000, nowCpu / 1000000, prevMem / 1000000, nowMem / 1000000);
-        // Restore memory if it was raised before CPU failed.
-        if (g_ffMemRaised && R_SUCCEEDED(clkrstInitialize()))
-        {
-            ClkrstRestoreModule(PcvModuleId_EMC, g_ffMemNormal, g_ffMemRaised);
-            clkrstExit();
-        }
-        g_ffCpuRaised = g_ffMemRaised = false;
-        g_ffBoostUnavailable = true;
-        return;
-    }
-
-    g_ffBoostHandheld = IsHandheld();
-    g_ffBoosted = true;
-    g_ffBoostChecks = 0;
-    static bool logged = false;
-    if (!logged && (g_ffCpuRaised || g_ffMemRaised))
-    {
-        logged = true;
-        fprintf(stderr, "[switch] fast-forward clock boost on: cpu %u -> %u MHz, mem %u -> %u MHz%s\n",
-            prevCpu / 1000000, nowCpu / 1000000, prevMem / 1000000, nowMem / 1000000,
-            memOk ? "" : " (mem unchanged)");
-    }
-}
-
 std::string Status()
 {
     // Test runs only, one session at a time, each closed straight after. The clocks come from
@@ -2032,7 +1922,6 @@ extern "C" void SsrJitRelease();
 
 void Finish()
 {
-    SetFastForwardBoost(false);
     JitStarted(); // (an ordinary exit: the JIT did start)
     SsrJitRelease(); // (the JIT's code memory given back: without that the Homebrew Menu cannot start the game list again)
     // QUIT in the pause menu, for a game chosen from the game list: the Homebrew Menu's loader

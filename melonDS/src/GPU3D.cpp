@@ -2603,7 +2603,12 @@ void GPU3D::InterpSkipLog(const char* why, u32 a, u32 b) noexcept
     static const bool all = getenv("SSR_INTERP_LOG") != nullptr;
     static u32 logged = 0;
     InterpSkipped++;
+#ifdef __SWITCH__
+    // On Switch, stderr writes to game.log on the SD card; skip per-vblank spam unless requested.
+    if (!all) return;
+#else
     if (!all && logged >= 400) return;
+#endif
     logged++;
     if (!strcmp(why, "matched"))
         fprintf(stderr, "[60fps] vblank %u: no in-between frame: %u of %u polygons found in the frame before\n", VBlankCount, a, b);

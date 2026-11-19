@@ -31,9 +31,7 @@ endif()
 # Windows through WGL, frontend/glcontext_wgl.cpp, for the PC all-games program).
 set(BUILD_QT_SDL OFF CACHE BOOL "" FORCE)
 set(SSR_GPU3D_DEFAULT OFF)
-if(NINTENDO_SWITCH OR CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
-    set(SSR_GPU3D_DEFAULT ON)
-elseif(UNIX AND NOT APPLE AND NOT ANDROID)
+if(NOT NINTENDO_SWITCH AND NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch" AND UNIX AND NOT APPLE AND NOT ANDROID)
     find_library(SSR_EGL_LIBRARY EGL)
     find_path(SSR_EGL_INCLUDE EGL/egl.h)
     if(SSR_EGL_LIBRARY AND SSR_EGL_INCLUDE)
@@ -41,6 +39,7 @@ elseif(UNIX AND NOT APPLE AND NOT ANDROID)
     endif()
 endif()
 option(SSR_GPU3D "Draw the 3D scene on the graphics chip when chosen (OpenGL through EGL)" ${SSR_GPU3D_DEFAULT})
+option(SSR_DEKO_PROBE "Switch: build the deko3D bring-up probe (--deko-probe)" OFF)
 set(ENABLE_OGLRENDERER ${SSR_GPU3D} CACHE BOOL "" FORCE)
 # The JIT is only for games that are not recompiled (Pokemon Black 2: --jit); the recompiled
 # SoulSilver runs on its own code either way.
@@ -148,16 +147,16 @@ if(SSR_SWITCH)
         # (glad's loader includes <dlfcn.h>, which the Switch does not have; it is not used)
         target_include_directories(core BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/frontend/switch_stub")
         target_include_directories(core PRIVATE ${SDL2_STATIC_INCLUDE_DIRS})
-        # EGL and Mesa (SDL's OpenGL ES drawing uses them too; named here in case its
-        # pkg-config file does not pass them on).
-        foreach(lib EGL glapi drm_nouveau)
-            find_library(SSR_SWITCH_${lib} ${lib} HINTS "${DEVKITPRO}/portlibs/switch/lib")
-            if(SSR_SWITCH_${lib})
-                target_link_libraries(ssrecomp PRIVATE "${SSR_SWITCH_${lib}}")
-            endif()
-        endforeach()
-        target_link_libraries(ssrecomp PRIVATE nx)
     endif()
+    # EGL and Mesa (SDL's OpenGL ES drawing uses them too; named here in case its
+    # pkg-config file does not pass them on).
+    foreach(lib EGL glapi drm_nouveau)
+        find_library(SSR_SWITCH_${lib} ${lib} HINTS "${DEVKITPRO}/portlibs/switch/lib")
+        if(SSR_SWITCH_${lib})
+            target_link_libraries(ssrecomp PRIVATE "${SSR_SWITCH_${lib}}")
+        endif()
+    endforeach()
+    target_link_libraries(ssrecomp PRIVATE nx)
 
     # deko3D, the Switch's own graphics API (devkitPro's switch-dev has the library and uam,
     # which compiles its shaders, written in GLSL, at build time; they are then built into the
@@ -172,12 +171,16 @@ if(SSR_SWITCH)
         # folder:shader:stage:header[:DEFINE[,DEFINE]] (the header deko_shaders/<header>.h holds the array
         # <header>; with a DEFINE, the shader is compiled with it defined, as a variant: uam has
         # no option for that, so a copy with the #define after its first line is compiled)
-        foreach(shader frontend/deko:probe_vsh:vert:probe_vsh frontend/deko:probe_fsh:frag:probe_fsh
+        set(SSR_DEKO_SHADER_SPECS
                 melonDS/src/wide_gpu:wide_vsh:vert:wide_vsh_dksh melonDS/src/wide_gpu:wide_fsh:frag:wide_fsh_dksh
                 melonDS/src/wide_gpu:wide_fsh:frag:wide_fsh_texbuf_dksh:WIDE_TEXBUF
                 melonDS/src/wide_gpu:wide_fsh:frag:wide_fsh_early_dksh:WIDE_EARLY
                 melonDS/src/wide_gpu:wide_fsh:frag:wide_fsh_texbuf_early_dksh:WIDE_TEXBUF,WIDE_EARLY
                 melonDS/src/wide_gpu:final_vsh:vert:final_vsh_dksh melonDS/src/wide_gpu:final_fsh:frag:final_fsh_dksh)
+        if(SSR_DEKO_PROBE)
+            list(PREPEND SSR_DEKO_SHADER_SPECS frontend/deko:probe_vsh:vert:probe_vsh frontend/deko:probe_fsh:frag:probe_fsh)
+        endif()
+        foreach(shader ${SSR_DEKO_SHADER_SPECS})
             string(REPLACE ":" ";" parts "${shader}")
             list(GET parts 0 folder)
             list(GET parts 1 name)
@@ -212,7 +215,10 @@ if(SSR_SWITCH)
         # (The core library is made in another folder, which cannot see that these headers are
         # generated here: both wait for a target that makes them instead.)
         add_custom_target(ssr_deko_shaders DEPENDS ${SSR_DEKO_HEADERS})
-        target_sources(ssrecomp PRIVATE frontend/dekoprobe.cpp)
+        if(SSR_DEKO_PROBE)
+            target_sources(ssrecomp PRIVATE frontend/dekoprobe.cpp)
+            target_compile_definitions(ssrecomp PRIVATE SSR_DEKO_PROBE)
+        endif()
         add_dependencies(ssrecomp ssr_deko_shaders)
         target_include_directories(ssrecomp PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
         target_compile_definitions(ssrecomp PRIVATE SSR_DEKO3D)

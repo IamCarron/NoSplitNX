@@ -120,7 +120,7 @@ public:
             const bool sharp = nearest && MergedSharp(s * el.stretchX, s);
             const bool keyed = el.keys[0] != 0xFFFFFFFF || el.keyGrey;
             const bool spriteKey = el.dropSpriteCorner > 0 && src.flags;
-            const bool plain = !(el.drop && src.flags) && !keyed && !spriteKey && el.alpha == 255 && el.cutX >= 256 && !el.holeCount;
+            const bool plain = !(el.drop && src.flags) && !keyed && !spriteKey && !el.whiteBoxText && el.alpha == 255 && el.cutX >= 256 && !el.holeCount;
             const int slotIndex = slot++;
             SDL_Texture* tex = Slot(slotIndex, el.sw, el.sh);
             if (!tex) continue;
@@ -155,6 +155,7 @@ public:
             }
             if (cacheHit)
             {
+                if (cached.empty) continue;
                 const SDL_BlendMode bm = plain ? SDL_BLENDMODE_NONE : (!nearest && slotIndex < (int)CachedPremul.size() && CachedPremul[slotIndex]) ? Premultiplied : SDL_BLENDMODE_BLEND;
                 if (!cached.hasBlend || cached.blend != bm)
                 {
@@ -163,11 +164,12 @@ public:
                     cached.hasBlend = true;
                 }
                 DrawPiece(tex, dst, el, sharp ? slotIndex : -1, true, true, sig);
-                if (sharp) DrawCrisp(el, src, dst, slotIndex, keyed);
+                if (sharp && !el.whiteBoxText) DrawCrisp(el, src, dst, slotIndex, keyed, true, true, sig);
                 continue;
             }
             cached.hasSig = canCache && steadyWorld;
             cached.sig = sig;
+            cached.empty = false;
             const auto tu = std::chrono::steady_clock::now();
             if (plain)
             {
@@ -212,8 +214,9 @@ public:
                         wideCol[x] = (wx >= 0 && wx < wide->w) ? wx : -1;
                     }
                 }
-                const bool fastLayerOnly = !keyed && !spriteKey && al == 255 && !el.holeCount && el.cutX >= 256 && el.sx + el.sw <= 256;
+                const bool fastLayerOnly = !keyed && !spriteKey && !el.whiteBoxText && al == 255 && !el.holeCount && el.cutX >= 256 && el.sx + el.sw <= 256;
                 auto div255 = [](uint32_t val) -> uint32_t { return (val + 1u + (val >> 8)) >> 8; };
+                bool anyOpaque = false;
                 for (int y = 0; y < el.sh; y++)
                 {
                     const int sy = el.sy + y;
@@ -237,6 +240,7 @@ public:
                                 const uint8_t lc = LayerClass(frow[x]);
                                 const bool skip = (lc & dropMask) ||
                                     (lc == LAYER_BACKDROP && wideCol[x] >= 0 && (wideRow[wideCol[x]] >> 24) != 0);
+                                if (!skip) anyOpaque = true;
                                 out[x] = skip ? (premul ? 0 : c) : (0xFF000000u | c);
                             }
                         }
@@ -246,6 +250,7 @@ public:
                             {
                                 const uint32_t c = row[x] & 0xFFFFFF;
                                 const bool skip = (LayerClass(frow[x]) & dropMask) != 0;
+                                if (!skip) anyOpaque = true;
                                 out[x] = skip ? (premul ? 0 : c) : (0xFF000000u | c);
                             }
                         }
@@ -263,21 +268,38 @@ public:
                                 std::min(y, el.sh - 1 - y) < el.dropSpriteCorner) ||
                             (keyed && MergedKeyed(el, c) &&
                                 (!el.keyRing || std::min({ x, el.sw - 1 - x, y, el.sh - 1 - y }) < el.keyRing));
+                        if (!skip && el.whiteBoxText)
+                        {
+                            if (!MergedWhiteBoxPixel(src, el.sx + x, sy, el.sx, el.sy, c))
+                                skip = true;
+                        }
                         if (skip)
                             out[x] = premul ? 0 : c;
                         else if (premul && al != 255)
+                        {
+                            if (al) anyOpaque = true;
                             out[x] = (al << 24) | (div255(((c >> 16) & 0xFF) * al) << 16) |
                                 (div255(((c >> 8) & 0xFF) * al) << 8) | div255((c & 0xFF) * al);
+                        }
                         else
+                        {
+                            if (al) anyOpaque = true;
                             out[x] = (al << 24) | c;
+                        }
                     }
+                }
+                if (!anyOpaque)
+                {
+                    cached.empty = true;
+                    (overWorld ? UnderWorldMs : UploadMs) += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tu).count();
+                    continue;
                 }
                 SDL_UpdateTexture(tex, nullptr, Buf.data(), el.sw * 4);
             }
             (overWorld ? UnderWorldMs : UploadMs) += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tu).count();
             Uploads++;
             DrawPiece(tex, dst, el, sharp ? slotIndex : -1, false, cached.hasSig, sig);
-            if (sharp) DrawCrisp(el, src, dst, slotIndex, keyed);
+            if (sharp && !el.whiteBoxText) DrawCrisp(el, src, dst, slotIndex, keyed, false, cached.hasSig, sig);
         }
         if (!useWide && scene.edgeFill && !scene.items.empty() && scene.items[0].screen >= 0 && scene.items[0].screen < 2 && screens[scene.items[0].screen].pixels)
         {
@@ -294,8 +316,12 @@ private:
         SDL_Texture* t = nullptr;
         int w = 0, h = 0;
         uint64_t sig = 0;
+        uint64_t pieceSig = 0;
         uint64_t wideSerial = 0;
         bool hasSig = false;
+        bool hasPieceSig = false;
+        bool empty = false;
+        SDL_Rect crispBounds {};
         SDL_ScaleMode scale = SDL_ScaleModeNearest;
         SDL_BlendMode blend = SDL_BLENDMODE_NONE;
         bool hasScale = false, hasBlend = false;
@@ -307,6 +333,9 @@ private:
         if (x.t) SDL_DestroyTexture(x.t);
         x.t = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
         x.hasSig = false;
+        x.hasPieceSig = false;
+        x.empty = false;
+        x.crispBounds = {};
         x.hasScale = false;
         x.hasBlend = false;
         x.w = w;
@@ -314,53 +343,10 @@ private:
         return x.t;
     }
 
-    // TEXT STAYS SHARP (GitHub #183): a piece drawn with MergedSharp's even pixels has its
-    // seams blended, which softened the text of message boxes and menus. Its 2D background
-    // layers (the game's text boxes, menus and windows: they do not move with the camera, so
-    // they cannot shimmer) are drawn again over it with nearest pixels, as before 1.6.
-    void DrawCrisp(const Element& el, const ScreenImage& src, const SDL_Rect& dst, int slotIndex, bool keyed)
+    void BlitCrisp(Tex& x, const Element& el, const SDL_Rect& dst)
     {
-        if (!src.flags || el.alpha != 255) return;
-        if ((int)Crisp.size() <= slotIndex) { Crisp.resize(slotIndex + 1); CrispAny.resize(slotIndex + 1, 0); }
-        Tex& x = Crisp[slotIndex];
-        SDL_Texture* t = Make(x, el.sw, el.sh);
-        if (!t) return;
-        uint64_t h = 1469598103934665603ull;
-        auto mix = [&h](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
-        mix((uint64_t)(el.screen + 1) << 48 | (uint64_t)el.sx << 32 | (uint64_t)el.sy << 16 | (uint64_t)el.sw);
-        mix((uint64_t)el.sh << 32 | (uint64_t)el.drop << 16 | (keyed ? 1u : 0u));
-        for (uint32_t k : el.keys) mix(k);
-        mix((uint64_t)el.keyTolerance << 32 | (uint32_t)el.keyRing);
-        mix((uint64_t)(uint32_t)el.keyGrey);
-        for (int y = 0; y < el.sh; y++)
-        {
-            const uint32_t* row = src.pixels + (el.sy + y) * 256 + el.sx;
-            const uint8_t* f = src.flags + (el.sy + y) * 256 + el.sx;
-            for (int i = 0; i < el.sw; i++) mix((uint64_t)f[i] << 32 | row[i]);
-        }
-        if (!x.hasSig || x.sig != h)
-        {
-            x.hasSig = true;
-            x.sig = h;
-            CrispBuf.assign((size_t)el.sw * el.sh, 0);
-            bool any = false;
-            for (int y = 0; y < el.sh; y++)
-                for (int i = 0; i < el.sw; i++)
-                {
-                    const int sx = el.sx + i, sy = el.sy + y;
-                    const uint8_t lc = LayerClass(src.flags[sy * 256 + sx]);
-                    if (lc < 1 || lc > 0x0F || (el.drop & lc) || el.Skips(sx, sy)) continue;
-                    const uint32_t c = src.pixels[sy * 256 + sx] & 0xFFFFFF;
-                    if (keyed && MergedKeyed(el, c) &&
-                        (!el.keyRing || std::min({ i, el.sw - 1 - i, y, el.sh - 1 - y }) < el.keyRing))
-                        continue;
-                    CrispBuf[(size_t)y * el.sw + i] = 0xFF000000 | c;
-                    any = true;
-                }
-            SDL_UpdateTexture(t, nullptr, CrispBuf.data(), el.sw * 4);
-            CrispAny[slotIndex] = any;
-        }
-        if (!CrispAny[slotIndex]) return;
+        SDL_Texture* t = x.t;
+        if (!t || x.crispBounds.w <= 0 || x.crispBounds.h <= 0) return;
         if (!x.hasScale || x.scale != SDL_ScaleModeNearest)
         {
             SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
@@ -373,11 +359,149 @@ private:
             x.blend = SDL_BLENDMODE_BLEND;
             x.hasBlend = true;
         }
+        const SDL_Rect& b = x.crispBounds;
+        const int fx = el.flipX ? (el.sw - (b.x + b.w)) : b.x;
+        const int fy = el.flipY ? (el.sh - (b.y + b.h)) : b.y;
+        const SDL_FRect dstSub = {
+            dst.x + (float)fx * dst.w / el.sw,
+            dst.y + (float)fy * dst.h / el.sh,
+            (float)b.w * dst.w / el.sw,
+            (float)b.h * dst.h / el.sh,
+        };
         if (el.flipX || el.flipY)
-            SDL_RenderCopyEx(R, t, nullptr, &dst, 0.0, nullptr,
+            SDL_RenderCopyExF(R, t, &b, &dstSub, 0.0, nullptr,
                 (SDL_RendererFlip)((el.flipX ? SDL_FLIP_HORIZONTAL : 0) | (el.flipY ? SDL_FLIP_VERTICAL : 0)));
         else
-            SDL_RenderCopy(R, t, nullptr, &dst);
+            SDL_RenderCopyF(R, t, &b, &dstSub);
+    }
+
+    // TEXT STAYS SHARP (GitHub #183): a piece drawn with MergedSharp's even pixels has its
+    // seams blended, which softened the text of message boxes and menus. Its 2D background
+    // layers (the game's text boxes, menus and windows: they do not move with the camera, so
+    // they cannot shimmer) are drawn again over it with nearest pixels, as before 1.6.
+    // Only the crisp 2D BG pixels themselves are hashed and uploaded, so animating 3D frames
+    // behind a static text box hit the cache and empty frames do zero texture uploads or draws.
+    void DrawCrisp(const Element& el, const ScreenImage& src, const SDL_Rect& dst, int slotIndex, bool keyed,
+        bool pieceCacheHit = false, bool canCachePiece = false, uint64_t pieceSig = 0)
+    {
+        const uint8_t keepBg = (uint8_t)(0x0F & ~el.drop);
+        if (!src.flags || el.alpha != 255 || !keepBg) return;
+        if ((int)Crisp.size() <= slotIndex) { Crisp.resize(slotIndex + 1); CrispAny.resize(slotIndex + 1, 0); }
+        Tex& x = Crisp[slotIndex];
+        if (pieceCacheHit && canCachePiece && pieceSig && x.hasPieceSig && x.pieceSig == pieceSig && x.w == el.sw && x.h == el.sh)
+        {
+            if (CrispAny[slotIndex]) BlitCrisp(x, el, dst);
+            return;
+        }
+        uint64_t h = 1469598103934665603ull;
+        auto mix = [&h](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
+        mix((uint64_t)(el.screen + 1) << 48 | (uint64_t)el.sx << 32 | (uint64_t)el.sy << 16 | (uint64_t)el.sw);
+        mix((uint64_t)el.sh << 32 | (uint64_t)el.drop << 16 | (keyed ? 1u : 0u));
+        for (uint32_t k : el.keys) mix(k);
+        mix((uint64_t)el.keyTolerance << 32 | (uint32_t)el.keyRing);
+        mix((uint64_t)(uint32_t)el.keyGrey);
+        const uint64_t keepRep = (uint64_t)keepBg * 0x0101010101010101ull;
+        bool any = false;
+        int minX = el.sw, minY = el.sh, maxX = -1, maxY = -1;
+        for (int y = 0; y < el.sh; y++)
+        {
+            const int sy = el.sy + y;
+            const uint32_t* row = src.pixels + sy * 256 + el.sx;
+            const uint8_t* f = src.flags + sy * 256 + el.sx;
+            int i = 0;
+            while (i + 7 < el.sw)
+            {
+                uint64_t w;
+                memcpy(&w, f + i, 8);
+                if ((w & keepRep) == 0) { i += 8; continue; }
+                const uint64_t hi = (w & 0x8080808080808080ull) | ((w & 0x4040404040404040ull) << 1) |
+                    ((w & 0x1010101010101010ull) << 3);
+                if ((~hi & 0x8080808080808080ull) == 0) { i += 8; continue; }
+                for (int end = i + 8; i < end; i++)
+                {
+                    const uint8_t fv = f[i];
+                    if ((fv & 0xD0) != 0 || (fv & 0x0F) == 0 || ((fv & 0x0F) & el.drop)) continue;
+                    if (el.Skips(el.sx + i, sy)) continue;
+                    const uint32_t c = row[i] & 0xFFFFFF;
+                    if (keyed && MergedKeyed(el, c) &&
+                        (!el.keyRing || std::min({ i, el.sw - 1 - i, y, el.sh - 1 - y }) < el.keyRing))
+                        continue;
+                    mix(((uint64_t)y << 40) | ((uint64_t)i << 24) | c);
+                    if (!any) { minX = maxX = i; minY = maxY = y; any = true; }
+                    else
+                    {
+                        if (i < minX) minX = i;
+                        if (i > maxX) maxX = i;
+                        if (y < minY) minY = y;
+                        if (y > maxY) maxY = y;
+                    }
+                }
+            }
+            for (; i < el.sw; i++)
+            {
+                const uint8_t fv = f[i];
+                if ((fv & 0xD0) != 0 || (fv & 0x0F) == 0 || ((fv & 0x0F) & el.drop)) continue;
+                if (el.Skips(el.sx + i, sy)) continue;
+                const uint32_t c = row[i] & 0xFFFFFF;
+                if (keyed && MergedKeyed(el, c) &&
+                    (!el.keyRing || std::min({ i, el.sw - 1 - i, y, el.sh - 1 - y }) < el.keyRing))
+                    continue;
+                mix(((uint64_t)y << 40) | ((uint64_t)i << 24) | c);
+                if (!any) { minX = maxX = i; minY = maxY = y; any = true; }
+                else
+                {
+                    if (i < minX) minX = i;
+                    if (i > maxX) maxX = i;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+        }
+        if (!any)
+        {
+            x.hasSig = true;
+            x.sig = h;
+            x.hasPieceSig = canCachePiece && pieceSig != 0;
+            x.pieceSig = pieceSig;
+            x.w = el.sw;
+            x.h = el.sh;
+            x.crispBounds = {};
+            CrispAny[slotIndex] = 0;
+            return;
+        }
+        SDL_Texture* t = Make(x, el.sw, el.sh);
+        if (!t) return;
+        if (!x.hasSig || x.sig != h)
+        {
+            const int bw = maxX - minX + 1, bh = maxY - minY + 1;
+            CrispBuf.assign((size_t)bw * bh, 0);
+            for (int y = minY; y <= maxY; y++)
+            {
+                const int sy = el.sy + y;
+                const uint32_t* row = src.pixels + sy * 256 + el.sx;
+                const uint8_t* f = src.flags + sy * 256 + el.sx;
+                uint32_t* dstRow = &CrispBuf[(size_t)(y - minY) * bw];
+                for (int i = minX; i <= maxX; i++)
+                {
+                    const uint8_t fv = f[i];
+                    if ((fv & 0xD0) != 0 || (fv & 0x0F) == 0 || ((fv & 0x0F) & el.drop) || el.Skips(el.sx + i, sy)) continue;
+                    const uint32_t c = row[i] & 0xFFFFFF;
+                    if (keyed && MergedKeyed(el, c) &&
+                        (!el.keyRing || std::min({ i, el.sw - 1 - i, y, el.sh - 1 - y }) < el.keyRing))
+                        continue;
+                    dstRow[i - minX] = 0xFF000000u | c;
+                }
+            }
+            const SDL_Rect sub = { minX, minY, bw, bh };
+            SDL_UpdateTexture(t, &sub, CrispBuf.data(), bw * 4);
+            x.hasSig = true;
+            x.sig = h;
+            x.crispBounds = sub;
+        }
+        x.hasPieceSig = canCachePiece && pieceSig != 0;
+        x.pieceSig = pieceSig;
+        CrispAny[slotIndex] = 1;
+        BlitCrisp(x, el, dst);
     }
 
     void DrawPiece(SDL_Texture* tex, const SDL_Rect& dst, const Element& el, int sharpSlot = -1,
@@ -462,7 +586,8 @@ private:
         uint64_t h = 1469598103934665603ull;
         auto mix = [&h](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
         mix((uint64_t)(el.screen + 1) << 48 | (uint64_t)el.sx << 32 | (uint64_t)el.sy << 16 | (uint64_t)el.sw);
-        mix((uint64_t)el.sh << 32 | (uint64_t)el.alpha << 24 | (uint64_t)el.drop << 16 | (plain ? 1u : 0u) | (nearest ? 2u : 0u));
+        mix((uint64_t)el.sh << 32 | (uint64_t)el.alpha << 24 | (uint64_t)el.drop << 16 |
+            (plain ? 1u : 0u) | (nearest ? 2u : 0u) | (el.whiteBoxText ? 4u : 0u));
         for (uint32_t k : el.keys) mix(k);
         mix((uint64_t)el.keyTolerance << 32 | (uint32_t)el.keyRing);
         mix((uint64_t)(uint32_t)el.keyGrey);

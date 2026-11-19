@@ -626,18 +626,22 @@ public:
         if (!Small) WideGpuBusyNs += (u64)(gpuMs(RepStart, RepCopied) * 1e6);
         T.Fragments += rep[RepFragments][0];
         T.Samples += rep[RepSamples][0];
-        // Where the time goes, now and then in the log (every 240 pictures: a test run of a few
-        // hundred frames gets some).
+        // Where the time goes, now and then in the log when profiling is requested (SSR_WIDE_PROF
+        // or SSR_EMU_PROF); avoid writing to the Switch SD card every 4 seconds during normal play.
+        static const bool profLog = getenv("SSR_WIDE_PROF") != nullptr || getenv("SSR_EMU_PROF") != nullptr;
         if (++T.Pictures == 240)
         {
-            const double n = T.Pictures;
-            fprintf(stderr, "[widegpu] per picture (%dx%d, over %u): copying the data %.2f ms, making the commands %.2f ms, "
-                "waiting for the graphics chip %.2f ms, cache %.2f ms; %u triangles, %u draws; %u texels decoded\n", W, H, T.Pictures,
-                T.Copy / n, T.Record / n, T.Wait / n, T.Flush / n, (u32)(T.Triangles / n), (u32)(T.Draws / n), (u32)(T.Decoded / n));
-            fprintf(stderr, "[widegpu]   on the graphics chip: %.2f ms before it started, %.2f ms from starting to the picture copied: clearing %.2f, "
-                "polygons %.2f, final pass %.2f, copy %.2f ms; %.2f million pixels shaded, %.2f million passed the depth test "
-                "(the picture has %.2f million)\n", T.GpuQueue / n, T.GpuTotal / n, T.GpuClear / n, T.GpuDraw / n, T.GpuFinal / n, T.GpuCopy / n,
-                T.Fragments / n / 1e6, T.Samples / n / 1e6, (double)W * H / 1e6);
+            if (profLog)
+            {
+                const double n = T.Pictures;
+                fprintf(stderr, "[widegpu] per picture (%dx%d, over %u): copying the data %.2f ms, making the commands %.2f ms, "
+                    "waiting for the graphics chip %.2f ms, cache %.2f ms; %u triangles, %u draws; %u texels decoded\n", W, H, T.Pictures,
+                    T.Copy / n, T.Record / n, T.Wait / n, T.Flush / n, (u32)(T.Triangles / n), (u32)(T.Draws / n), (u32)(T.Decoded / n));
+                fprintf(stderr, "[widegpu]   on the graphics chip: %.2f ms before it started, %.2f ms from starting to the picture copied: clearing %.2f, "
+                    "polygons %.2f, final pass %.2f, copy %.2f ms; %.2f million pixels shaded, %.2f million passed the depth test "
+                    "(the picture has %.2f million)\n", T.GpuQueue / n, T.GpuTotal / n, T.GpuClear / n, T.GpuDraw / n, T.GpuFinal / n, T.GpuCopy / n,
+                    T.Fragments / n / 1e6, T.Samples / n / 1e6, (double)W * H / 1e6);
+            }
             T = Times();
         }
     }

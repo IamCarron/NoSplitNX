@@ -2177,7 +2177,7 @@ index 1204741..1165a22 100644
      if (!GeometryEnabled || FlushRequest ||
          (CmdPIPE.IsEmpty() && !(GXStat & (1<<27))))
      {
-@@ -2456,12 +2562,70 @@ bool YSort(Polygon* a, Polygon* b)
+@@ -2456,12 +2562,75 @@ bool YSort(Polygon* a, Polygon* b)
      return a->SortKey < b->SortKey;
  }
  
@@ -2222,7 +2222,12 @@ index 1204741..1165a22 100644
 +    static const bool all = getenv("SSR_INTERP_LOG") != nullptr;
 +    static u32 logged = 0;
 +    InterpSkipped++;
++#ifdef __SWITCH__
++    // On Switch, stderr writes to game.log on the SD card; skip per-vblank spam unless requested.
++    if (!all) return;
++#else
 +    if (!all && logged >= 400) return;
++#endif
 +    logged++;
 +    if (!strcmp(why, "matched"))
 +        fprintf(stderr, "[60fps] vblank %u: no in-between frame: %u of %u polygons found in the frame before\n", VBlankCount, a, b);
@@ -2248,7 +2253,7 @@ index 1204741..1165a22 100644
              if (FlushRequest)
              {
                  if (NumPolygons)
-@@ -2487,6 +2651,71 @@ void GPU3D::VBlank() noexcept
+@@ -2487,6 +2656,71 @@ void GPU3D::VBlank() noexcept
  
                  RenderNumPolygons = NumPolygons;
                  RenderFrameIdentical = false;
@@ -2320,7 +2325,7 @@ index 1204741..1165a22 100644
              }
              else
              {
-@@ -2499,6 +2728,13 @@ void GPU3D::VBlank() noexcept
+@@ -2499,6 +2733,13 @@ void GPU3D::VBlank() noexcept
                      && memcmp(RenderEdgeTable, EdgeTable, 8*2) == 0
                      && memcmp(RenderFogDensityTable + 1, FogDensityTable, 32) == 0
                      && memcmp(RenderToonTable, ToonTable, 32*2) == 0;
@@ -2334,7 +2339,7 @@ index 1204741..1165a22 100644
              }
  
              RenderDispCnt = DispCnt;
-@@ -2535,7 +2771,63 @@ void GPU3D::VBlank() noexcept
+@@ -2535,7 +2776,63 @@ void GPU3D::VBlank() noexcept
  
  void GPU3D::VCount215(GPU& gpu) noexcept
  {

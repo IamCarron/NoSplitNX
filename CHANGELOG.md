@@ -4,6 +4,14 @@
 ## Unreleased
 
 
+## v1.2.6 — Switch Performance Fix, Language Polish & Gen 5 Battle UI
+
+- **Switch performance regression fix (DS compositor & SD logging)**: rewrote crisp 2D text compositing (`DrawCrisp`) to hash and upload only 2D background pixels in their tight bounding rectangle, skip empty masked overworld frames before texture upload and FBO scaling, gate the SoulSilver single-screen 4 MB RAM probe to SoulSilver ROMs, and avoid per-vblank SD-card log spam (`_IOFBF` buffering and gated `[60fps]` / `[widegpu]` profiling).
+- **Launcher language consistency & Spanish translation polish**: synced `list_lang` cleanly across launcher, DS and GBA settings (removing stale legacy `language=` keys), refreshed group previews live when switching languages, improved Spanish/European title and sentence casing (keeping connecting words and filenames/URLs natural), updated the Switch background path to `/switch/nosplitnx/`, and added missing translations for cover downloads, cheat counts, Switch startup messages and GBA ROM hack toasts while unifying Spanish terminology.
+- **Trimmed Switch `.nro` & dead code cleanup**: disabled the unused desktop OpenGL 3.3 3D renderer (`SSR_GPU3D`) and deko3D bring-up probe (`SSR_DEKO_PROBE`) by default on Switch (which renders 3D natively via deko3D), and removed dead Switch clock-boost code (`SetFastForwardBoost`, `cpuBoost`) and obsolete launcher stubs.
+- **Pokémon Black & White battle buttons & classic white Gen 5 dialogue box**: replaced Black & White's raw Poké Ball lens and mismatched slanted octagon crops in the battle strip with clean, uniformly proportioned rounded buttons (crimson FIGHT! with keyed crisp lettering plus gold/blue/green accented BAG, RUN and POKÉMON plates with live press brightness), and rendered Gen 5 battle message boxes (prompts, attack/status messages and Yes/No choices) as a classic double-framed white Pokémon dialogue box with dark ink and soft drop shadow instead of the translucent dark bar.
+
+
 ## v1.2.5 — GBA Dynamic Widescreen, Auto Save State & DS Fixes
 
 - **GBA dynamic widescreen, Zoom & Look-Around (PokeDaisy WIDE)**: integrated PokeDaisy's `WIDE` dynamic overworld/battle/menu rebuild and smooth camera into the built-in GBA player (`PK_WIDE_NO_GUARD`), giving dozens of decomp/expansion GBA ROM hacks without static patches — including *Pokémon SoulGold v1.2.1*, *Heart & Soul*, *Lazarus*, *Seaglass*, *Odyssey*, *Gaia* and *Recharged Yellow* — dynamic 1x widescreen across 16:9 and 16:10 views alongside right-stick-click **Zoom and Look Around** and **Auto Zoom In**.

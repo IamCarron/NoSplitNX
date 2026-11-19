@@ -22,7 +22,6 @@
 #include <sys/stat.h>
 
 #include <chrono>
-#include <cmath>
 #include "ui.h"
 #include "switch_platform.h"
 #include "launcher_font.h"
@@ -83,9 +82,6 @@ struct Game
 
 // The size the larger pictures are kept at (the tiles of the list at 720 lines).
 constexpr int Art = 224;
-
-// Games on their way (none now): kept so a tile can say COMING SOON again.
-inline void AddComingSoon(std::vector<Game>&) {}
 
 // The games this program plays, in the order the list shows them.
 struct KnownGame
@@ -857,16 +853,15 @@ inline void DrawPhysicalCartridge(Canvas& c, int cx, int cy, int cw, int ch, int
                                   const std::string& code, const std::string& name, int s, int iconScale)
 {
     const bool isGba = (platform == GBA);
-    const bool is3ds = false; // (no 3DS games: the 3DS tab was removed)
     const int rad = std::max(3, 3 * s);
 
     // Drop shadow behind cartridge body
     c.ShadowRound(cx, cy, cw, ch, rad, s, 85);
 
-    // Molded cartridge shell (Dark charcoal for DS, Slate purple-grey for GBA, Pearl slate for 3DS)
-    const uint32_t shellTop = isGba ? 0xFF302B40 : is3ds ? 0xFF382C36 : 0xFF2B3548;
-    const uint32_t shellBot = isGba ? 0xFF1E1A2B : is3ds ? 0xFF241B22 : 0xFF1A2230;
-    const uint32_t shellBorder = isGba ? 0xFF564B73 : is3ds ? 0xFF684B58 : 0xFF475874;
+    // Molded cartridge shell (Dark charcoal for DS, Slate purple-grey for GBA)
+    const uint32_t shellTop = isGba ? 0xFF302B40 : 0xFF2B3548;
+    const uint32_t shellBot = isGba ? 0xFF1E1A2B : 0xFF1A2230;
+    const uint32_t shellBorder = isGba ? 0xFF564B73 : 0xFF475874;
     c.FillGradV(cx, cy, cw, ch, shellTop, shellBot, rad);
     c.OutlineRound(cx, cy, cw, ch, rad, 1, shellBorder);
 
@@ -899,9 +894,9 @@ inline void DrawPhysicalCartridge(Canvas& c, int cx, int cy, int cw, int ch, int
 
     // Coloured console header band at the top of the sticker (soft matte tones to avoid colour clashes)
     const int hdrH = std::max(6, 5 * s);
-    const uint32_t hdrCol = isGba ? 0xFF5D538Au : is3ds ? 0xFF9C4B60u : 0xFF2F698Cu;
+    const uint32_t hdrCol = isGba ? 0xFF5D538Au : 0xFF2F698Cu;
     c.FillRound(stX + s, stY + s, stW - 2 * s, hdrH, std::max(1, stRad - 1), hdrCol);
-    const char* hdrText = isGba ? "GAME BOY" : is3ds ? "NINTENDO 3DS" : "NINTENDO DS";
+    const char* hdrText = isGba ? "GAME BOY" : "NINTENDO DS";
     const int hdrFontH = std::max(10, 3 * s + 1);
     const int htw = ModernTextWidth(hdrText, hdrFontH);
     if (htw < stW - 2 * s)
@@ -989,7 +984,6 @@ inline uint32_t GameAccentTint(const std::string& name, int platform)
 inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& g, int s, uint32_t accent, int gameIdx = 0, int totalGames = 0, const float* musicBands = nullptr)
 {
     const bool isGba = (g.platform == GBA);
-    const bool is3ds = false; // (no 3DS games: the 3DS tab was removed)
     const uint32_t gameTint = GameAccentTint(g.name, g.platform);
     const uint32_t baseTheme = accent ? accent : (isGba ? 0xFF8C7DB5u : 0xFF5CA4C9u);
     const uint32_t platAccent = MixArgb(baseTheme, gameTint ? gameTint : baseTheme, 55, 100);
@@ -1031,7 +1025,7 @@ inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& 
     const int rpx = x + w - rightPanelW - 4 * s;
     const int maxTextW = w - (contentX - x) - rightPanelW - 8 * s;
 
-    const std::string subHeader = isGba ? "GAME BOY ADVANCE" : is3ds ? "NINTENDO 3DS" : "NINTENDO DS";
+    const std::string subHeader = isGba ? "GAME BOY ADVANCE" : "NINTENDO DS";
     const int subFontH = std::max(14, 5 * s);
 
     std::string title = TitleCase(g.name);
@@ -1070,7 +1064,7 @@ inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& 
     const uint32_t modeFg = MixArgb(0xFFE2E8F0u, platAccent, 32, 100);
     drawPill(modeTag, modeBg, modeBd, modeFg);
 
-    const std::string serial = (isGba ? "AGB-" : is3ds ? "CTR-" : "NTR-") + g.code;
+    const std::string serial = (isGba ? "AGB-" : "NTR-") + g.code;
     drawPill(serial, 0x441E293B, 0x77384A66, 0xFFCBD5E1);
 
     const std::string rawStatus = g.comingSoon ? UiLang::Tr("COMING SOON") : !g.known ? UiLang::Tr("NOT PLAYABLE") : g.hasSave ? UiLang::Tr("SAVE FOUND") : UiLang::Tr("NEW GAME");
@@ -1130,7 +1124,6 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int tileW, int tileH, int
                               const std::string& code, const std::string& name, int s, bool hasSave = false, bool sel = false)
 {
     const bool isGba = (platform == GBA);
-    const bool is3ds = false; // (no 3DS games: the 3DS tab was removed)
     const uint32_t accent = GameAccentTint(name, platform);
 
     // Unified dark slate glass gradient across platforms so tiles look harmonious side by side
@@ -1147,10 +1140,10 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int tileW, int tileH, int
     c.Fill(x + rad, y + s, tileW - 2 * rad, std::max(1, s / 2 + 1), (accent & 0x00FFFFFFu) | (sel ? 0x88000000u : 0x42000000u));
 
     // Understated frosted platform badge in top-left
-    const char* badge = isGba ? "GBA" : is3ds ? "3DS" : "NDS";
-    const uint32_t badgeBg = isGba ? 0x552E2A4Au : is3ds ? 0x55422432u : 0x551B324Au;
-    const uint32_t badgeBorder = isGba ? 0x997B6FA6u : is3ds ? 0x99A66078u : 0x995B8FB8u;
-    const uint32_t badgeCol = isGba ? 0xFFDCD6F7u : is3ds ? 0xFFFADAE4u : 0xFFD4E8F8u;
+    const char* badge = isGba ? "GBA" : "NDS";
+    const uint32_t badgeBg = isGba ? 0x552E2A4Au : 0x551B324Au;
+    const uint32_t badgeBorder = isGba ? 0x997B6FA6u : 0x995B8FB8u;
+    const uint32_t badgeCol = isGba ? 0xFFDCD6F7u : 0xFFD4E8F8u;
     const int badgeH = 12 * s;
     const int badgeFontH = std::max(14, 5 * s + 1);
     const int badgeW = ModernTextWidth(badge, badgeFontH) + 10 * s;
@@ -1211,7 +1204,7 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int tileW, int tileH, int
     const int nw = ModernTextWidth(cardTitle, nameFontH);
     ModernText(c, x + (tileW - nw) / 2, fy + 3 * s, cardTitle, nameFontH, sel ? 0xFFFFFFFF : 0xFFE2E8F0, true);
 
-    std::string serial = (isGba ? "AGB-" : is3ds ? "CTR-" : "NTR-") +
+    std::string serial = (isGba ? "AGB-" : "NTR-") +
                          (isGba && code.rfind("GBA-", 0) == 0 ? code.substr(4) : code);
     for (char& ch : serial) ch = (char)toupper((unsigned char)ch);
     const int serH = std::max(13, 4 * s + 1);
@@ -1945,7 +1938,7 @@ inline std::vector<Setting> SettingsList()
                   "THE GAME LIST'S COLOUR: ITS LINES, THE FRAME ROUND THE CHOSEN GAME AND THE TABS." });
 #ifdef __SWITCH__
     l.push_back({ "list_background", "BACKGROUND", { { "plain", "PLAIN" }, { "picture", "YOUR PICTURE" } }, "plain",
-                  "YOUR PICTURE: PUT A PICTURE NAMED BACKGROUND.JPG OR BACKGROUND.PNG IN /SWITCH/POKEMON-DS-WIDE/ (WITH YOUR SAVES). BEST AT 1280 X 720 OR 1920 X 1080 (16:9); ANY SIZE WORKS, CUT TO FILL THE SCREEN. IT IS SHOWN DARKENED BEHIND THE GAMES." });
+                  "YOUR PICTURE: PUT A PICTURE NAMED BACKGROUND.JPG OR BACKGROUND.PNG IN /SWITCH/NOSPLITNX/ (WITH YOUR SAVES). BEST AT 1280 X 720 OR 1920 X 1080 (16:9); ANY SIZE WORKS, CUT TO FILL THE SCREEN. IT IS SHOWN DARKENED BEHIND THE GAMES." });
 #else
     l.push_back({ "list_background", "BACKGROUND", { { "plain", "PLAIN" }, { "picture", "YOUR PICTURE" } }, "plain",
                   "YOUR PICTURE: PUT A PICTURE NAMED BACKGROUND.JPG OR BACKGROUND.PNG BESIDE YOUR SAVES FOLDER. BEST AT 1920 X 1080 (16:9); ANY SIZE WORKS, CUT TO FILL THE SCREEN. IT IS SHOWN DARKENED BEHIND THE GAMES." });
@@ -2021,6 +2014,7 @@ struct SettingsPage
     std::vector<Setting> all = SettingsList();
     std::vector<Setting> items; // what is shown: the groups, or one group's options
     int group = -1;             // the group shown, -1: the list of groups
+    int groupLang = -1;         // UiLang::lang when groupText[] was last built
     std::string groupText[8];   // (the groups' lines: their options' names)
     std::vector<std::string> lines; // the file, as it is
     int selected = 0, scroll = 0;
@@ -2065,6 +2059,7 @@ struct SettingsPage
     void ShowGroups(int sel)
     {
         group = -1;
+        groupLang = UiLang::lang;
         items.clear();
         int row = 0;
         for (int g = 0; g < (int)SettingsGroups().size(); g++)
@@ -2177,6 +2172,13 @@ struct SettingsPage
                 found = true;
             }
         if (!found) lines.push_back(line);
+        if (!strcmp(s.key, "list_lang"))
+        {
+            // Drop any legacy language= entry so DS, GBA and launcher always read one canonical value.
+            lines.erase(std::remove_if(lines.begin(), lines.end(), [](const std::string& l) {
+                return l.rfind("language=", 0) == 0;
+            }), lines.end());
+        }
         if (!strcmp(s.key, "wide_lines"))
         {
             // Match the in-game menu: choosing a manual resolution disables automatic
@@ -2288,6 +2290,12 @@ struct SettingsPage
     // what it does below it, kept in view as the choice moves.
     void Draw(Canvas& c, const std::string& hint, const Theme& th = Theme())
     {
+        if (group < 0 && groupLang != UiLang::lang && !items.empty())
+        {
+            const int selGroup = (selected >= 0 && selected < (int)items.size() && items[selected].key &&
+                                  !strncmp(items[selected].key, "!group", 6)) ? atoi(items[selected].key + 6) : 0;
+            ShowGroups(selGroup);
+        }
         const int s = std::max(1, std::min(c.w, c.h) / 240);
 #ifdef __ANDROID__
         // Phone settings use readable touch targets in either orientation.

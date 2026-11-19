@@ -105,7 +105,7 @@ static unsigned PortableOverlaySize(int) { return 0; }
 #endif
 #include "bw1.h" // Pokemon Black and White's own layouts
 #include "bw2map.h" // Black 2 and White 2: more of the map loaded beside the player
-#if defined(__SWITCH__) && defined(SSR_DEKO3D)
+#if defined(__SWITCH__) && defined(SSR_DEKO3D) && defined(SSR_DEKO_PROBE)
 #include "dekoprobe.h"
 #endif
 
@@ -1624,7 +1624,7 @@ struct Settings
     bool autoState = false, autoResume = false;
     bool switchFastForward = false; // Switch only: experimental fast forward (OFF by default; no clock changes)
     std::string listColour, listBackground, listLang; // (GAME LIST: COLOUR, BACKGROUND; LANGUAGE)
-    bool cpuBoost = true; // Switch only: the processor's boost mode (see SwitchPlatform)
+    bool hasListLang = false; // prefer list_lang over legacy language= if both appear in settings.cfg
     bool jit = true;      // Switch, games that are not recompiled: melonDS's JIT (read at start-up)
     bool fastMem = true;  // ... and its fast memory (also read at start-up)
     bool cgearOff = true; // Black 2: answer its C-Gear question on starting (cgear_start=off|ask)
@@ -1705,7 +1705,8 @@ struct Settings
             // pause menu's colour too.)
             else if (k == "list_colour") { listColour = v; Menu::Accent = AccentNamed(v); }
             else if (k == "list_background") listBackground = v;
-            else if (k == "list_lang" || k == "language") { listLang = v; UiLang::Set(v); }
+            else if (k == "list_lang") { listLang = v; hasListLang = true; UiLang::Set(v); }
+            else if (k == "language" && !hasListLang) { listLang = v; UiLang::Set(v); }
             else if (k == "ff_low_res") ffLowRes = v == "1";
             else if (k == "fast_button") fastButtonToggle = v == "toggle";
             else if (k == "fast_lock") fastLock = v == "1";
@@ -1713,7 +1714,7 @@ struct Settings
             else if (k == "auto_resume") autoResume = v == "1";
             else if (k == "switch_ff") switchFastForward = v == "1";
             else if (k == "start_button") startMenu = v != "ds";
-            else if (k == "cpu_boost") cpuBoost = v == "1";
+            else if (k == "cpu_boost") {} // legacy key ignored; NoSplitNX never overclocks clocks
             else if (k == "jit") jit = v == "1";
             else if (k == "fastmem") fastMem = v == "1";
             else if (k == "cgear_start") cgearOff = v != "ask";
@@ -1792,11 +1793,12 @@ struct Settings
         if (!lastGame.empty()) f << "last_game=" << lastGame << "\n";
 #ifdef SSR_GPU3D
         f << "gpu3d_test=" << (gpu3d ? 1 : 0) << "\n";
+#endif
+#if defined(SSR_GPU3D) || defined(SSR_DEKO3D)
         f << "wide_gpu=" << (wideGpu ? 1 : 0) << "\n";
         f << "ds3d_gpu=" << (ds3dGpu ? 1 : 0) << "\n";
 #endif
 #ifdef __SWITCH__
-        f << "cpu_boost=" << (cpuBoost ? 1 : 0) << "\n";
         f << "jit=" << (jit ? 1 : 0) << "\n";
         f << "fastmem=" << (fastMem ? 1 : 0) << "\n";
         f << "cgear_start=" << (cgearOff ? "off" : "ask") << "\n";
@@ -2508,7 +2510,7 @@ int main(int argc, char** argv)
 #endif
         if (opt.dekoProbe)
         {
-#if defined(__SWITCH__) && defined(SSR_DEKO3D)
+#if defined(__SWITCH__) && defined(SSR_DEKO3D) && defined(SSR_DEKO_PROBE)
             // (Beside SDL's OpenGL, which has drawn a frame by now.)
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
             SDL_RenderClear(renderer);
@@ -2516,7 +2518,7 @@ int main(int argc, char** argv)
             DekoProbe::Run(1280, 720);
             DekoProbe::Run(960, 540);
 #else
-            fprintf(stderr, "[deko] not in this build (Switch builds with deko3d and uam only)\n");
+            fprintf(stderr, "[deko] not in this build (enable -DSSR_DEKO_PROBE=ON on Switch)\n");
 #endif
         }
         for (int i = 0; i < 2; i++)
@@ -3572,10 +3574,21 @@ int main(int argc, char** argv)
                 if (cfg.battleButtons == 1 || cfg.battleButtons == 3 || cfg.battleButtons == 4)
                 {
                     const Scene cut = sc;
-                    if (Gen5Strip::ChoiceBars(sc, (wideView ? 128 + viewWidth / 2 : 256.0f) - 2, screens, 147, 42))
+                    float availRoom = -1.0f;
+                    const bool fadingChoice = topScreenFaded();
+                    if (wideView && !fadingChoice)
+                    {
+                        float promptRight = viewLeft + 4.0f, usedBtnW = 113.0f;
+                        if (AdaptGen5BattlePrompt(sc, viewWidth, screens, 92.5f, 113.0f, 115.5f, promptRight, usedBtnW))
+                            availRoom = std::max(84.0f, viewRight - 2.0f - (promptRight + 5.0f));
+                    }
+                    if (Gen5Strip::ChoiceBars(sc, (wideView ? 128 + viewWidth / 2 : 256.0f) - 2, screens, 147, 42, availRoom))
                         bw2ChoiceMissing = 0;
-                    else if (++bw2ChoiceMissing > 30)
-                        sc = cut;
+                    else
+                    {
+                        if (++bw2ChoiceMissing > 30) sc = cut;
+                        else if (!fadingChoice) { sc = cut; AdaptGen5BattleMessage(sc, viewWidth, screens); }
+                    }
                 }
             }
         }
@@ -3758,9 +3771,15 @@ int main(int argc, char** argv)
                         promptRight, targetBtnW);
                     availRoom = std::max(84.0f, viewRight - 2.0f - (promptRight + 5.0f));
                 }
+                else if (!fading)
+                    AdaptGen5BattleMessage(sc, viewWidth, screens);
                 Gen5Strip::Black2(sc, wideView ? viewRight : 256, screens, gridArg, party, availRoom, style == 1);
             }
-            else if (stripStyle) {} // (STRIP / STANDARD / SUNMOON between two menus: nothing)
+            else if (stripStyle)
+            {
+                if (!bw1.on && screens && !fading)
+                    AdaptGen5BattleMessage(sc, viewWidth, screens);
+            }
             else
             {
                 float promptRight = viewLeft + 4.0f;
@@ -3773,6 +3792,8 @@ int main(int argc, char** argv)
                     AdaptGen5BattlePrompt(sc, viewWidth, screens, minBtnW, idealBtnW, maxBtnW,
                         promptRight, targetBtnW);
                 }
+                else if (!bw1.on && screens && !fading && !(moves || command || target))
+                    AdaptGen5BattleMessage(sc, viewWidth, screens);
                 const float availBtnW = std::max(84.0f,
                     std::min(wideView ? maxBtnW : 128.0f, viewRight - 2.0f - (promptRight + 5.0f)));
                 if ((moves || command || target) && style == 2)
@@ -6428,6 +6449,7 @@ int main(int argc, char** argv)
                 fprintf(stderr, "[perf] input %.2f  emulate %.2f  scene %.2f  compose %.2f  present %.2f  wait %.2f ms; worst frame %.1f ms%s\n",
                     perfAcc[0] / perfN, (pipelined ? perfEmu : perfAcc[1]) / perfN, perfAcc[2] / perfN, perfAcc[3] / perfN, perfAcc[4] / perfN,
                     perfAcc[5] / perfN, perfWorst, tail.c_str());
+                fflush(stderr);
                 for (double& a : perfAcc) a = 0;
                 timingWait3D = timingWaitWide = 0;
                 perfEmu = 0;
@@ -7603,7 +7625,8 @@ int main(int argc, char** argv)
         // A decompilation build with SINGLE_SCREEN puts everything on the engine of the touch
         // screen. It carries a tag, searched for in main memory once the game has unpacked itself,
         // and a flag next to it that the game sets while a scene needs both screens (the intro).
-        if (!singleScreenRom && !opt.layoutGiven && frame % 30 == 15 && frame < 1800)
+        // Only SoulSilver decompilation builds carry this tag; skip the 4 MB RAM scan for other games.
+        if (soulSilverRom && !singleScreenRom && !opt.layoutGiven && frame % 30 == 15 && frame < 1800)
         {
             static const char tag[] = "SSRECOMP-SINGLE-SCREEN-1";
             const uint8_t* ram = nds->MainRAM;
@@ -8552,7 +8575,13 @@ int main(int argc, char** argv)
         {
             // (Not emulating, as while paused: the waiting pictures shown in turn.)
             while (aheadCount)
-                if (!presentDue(false)) std::this_thread::sleep_for(std::chrono::duration<double>(std::max(0.0002, secondsToTick())));
+            {
+                if (!presentDue(false))
+                {
+                    std::this_thread::sleep_for(std::chrono::duration<double>(std::max(0.0002, secondsToTick())));
+                    perfMark(5);
+                }
+            }
         }
         perfMark(1);
         sceneMark(-1);

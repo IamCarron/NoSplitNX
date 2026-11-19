@@ -279,7 +279,11 @@ public:
             // ("¿Qué debería hacer ...?") and the buttons never overlap on wide screens.
             if (buttons == BUTTONS_CORNER || buttons == BUTTONS_PANEL)
             {
-                if (!wideView || !(moves || command || target)) return;
+                if (!wideView || !(moves || command || target))
+                {
+                    if (!topFaded) AdaptGen5BattleMessage(sc, viewWidth, screens);
+                    return;
+                }
                 std::vector<Element> cornerKeep, keep;
                 for (const Element& e : sc.items)
                 {
@@ -336,7 +340,11 @@ public:
             // co-sizing, and 4-frame stability across transitions on both wide and 4:3 views.
             const bool strip = (buttons == BUTTONS_STRIP || buttons == BUTTONS_STANDARD || buttons == BUTTONS_SUNMOON) &&
                 (Fw->Ran(moveMenu, 4) || Fw->Ran(commandMenu, 4) || Fw->Ran(targetMenu, 4));
-            if (!strip) return;
+            if (!strip)
+            {
+                if (!topFaded) AdaptGen5BattleMessage(sc, viewWidth, screens);
+                return;
+            }
             std::vector<Element> keep;
             for (const Element& e : sc.items)
                 if (e.screen != 1 && !(e.screen == -1 && e.border)) keep.push_back(e);
@@ -372,6 +380,8 @@ public:
                     promptRight, targetBtnW);
                 availRoom = std::max(84.0f, viewRight - 2.0f - (promptRight + 5.0f));
             }
+            else if (!topFaded)
+                AdaptGen5BattleMessage(sc, viewWidth, screens);
             BattleStrip(sc, wideView ? viewRight : 256, screens, gridArg, party, availRoom, buttons == BUTTONS_STRIP);
             return;
         }
@@ -392,8 +402,20 @@ public:
             if (boxesAge < 600 && !topFaded) Gen5Strip::KeepBoxes(sc, boxesTop, boxes, 1);
             if (battleButtons != BUTTONS_STRIP && battleButtons != BUTTONS_STANDARD && battleButtons != BUTTONS_SUNMOON) return;
             const Scene cut = sc;
-            if (Gen5Strip::ChoiceBars(sc, (wideView ? viewRight : 256) - 2, screens, 147, 42)) choiceMissing = 0;
-            else if (++choiceMissing > 30) sc = cut;
+            float availRoom = -1.0f;
+            if (wideView && !topFaded)
+            {
+                float promptRight = viewLeft + 4.0f, usedBtnW = 113.0f;
+                if (AdaptGen5BattlePrompt(sc, viewWidth, screens, 92.5f, 113.0f, 115.5f, promptRight, usedBtnW))
+                    availRoom = std::max(84.0f, viewRight - 2.0f - (promptRight + 5.0f));
+            }
+            if (Gen5Strip::ChoiceBars(sc, (wideView ? viewRight : 256) - 2, screens, 147, 42, availRoom))
+                choiceMissing = 0;
+            else
+            {
+                if (++choiceMissing > 30) sc = cut;
+                else if (!topFaded) { sc = cut; AdaptGen5BattleMessage(sc, viewWidth, screens); }
+            }
             return;
         }
         if (!strcmp(sc.name, "pokedex-list"))

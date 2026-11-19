@@ -91,21 +91,31 @@ int main()
         assert(fadedBag.items[0].screen == 1 && !fadedBag.items[0].border);
     }
 
-    // Gen 5 battle prompt adaptation: moves bottom prompt into a framed left box on a dark tray
-    // across wide screens, mutually co-sized with right-hand buttons so both halves meet evenly.
+    // Gen 5 battle prompt adaptation: moves bottom prompt into a classic white Pokémon dialogue box
+    // on a calm dark tray across wide screens, mutually co-sized with right-hand buttons, converting
+    // white text to crisp dark ink with a 1-px soft shadow and ignoring translucent 3D arena pixels.
     {
         constexpr uint32_t darkTray = 0xFF1A2024u, crimson = 0xFF682428u, arena = 0xFF103020u;
         std::fill(top.begin(), top.end(), arena);
         std::fill(bottom.begin(), bottom.end(), 0xFF202028u);
+        std::vector<uint8_t> topFlags(256 * 192, LAYER_3D);
         for (int x = 0; x < 256; x++)
         {
-            for (int y = 147; y < 150; y++) top[y * 256 + x] = crimson;
-            for (int y = 150; y < 192; y++) top[y * 256 + x] = darkTray;
+            for (int y = 147; y < 150; y++) { top[y * 256 + x] = crimson; topFlags[y * 256 + x] = LAYER_BG1; }
+            for (int y = 150; y < 192; y++) { top[y * 256 + x] = darkTray; topFlags[y * 256 + x] = LAYER_BG1; }
         }
         // Prompt glyphs spanning x=16..180 (similar to "¿Qué debería hacer Latios?").
         for (int y = 158; y < 174; y++)
             for (int x = 16; x < 180; x++)
                 top[y * 256 + x] = white;
+        // Bright 3D flash in the right half must be ignored when flags mark LAYER_3D.
+        for (int y = 158; y < 174; y++)
+            for (int x = 210; x < 236; x++)
+            {
+                top[y * 256 + x] = white;
+                topFlags[y * 256 + x] = LAYER_3D;
+            }
+        ScreenImage flaggedScreens[2] = { { top.data(), topFlags.data() }, { bottom.data(), nullptr } };
 
         Scene battle;
         battle.name = "battle";
@@ -117,24 +127,33 @@ int main()
         const float viewRight = 128.0f + viewW / 2.0f;
         float minBtnW = 0.0f, idealBtnW = 0.0f, maxBtnW = 0.0f;
         Gen5BattleButtonBounds(0, false, false, 110, minBtnW, idealBtnW, maxBtnW);
-        assert(AdaptGen5BattlePrompt(battle, viewW, screens, minBtnW, idealBtnW, maxBtnW, promptRight, usedBtnW));
+        assert(AdaptGen5BattlePrompt(battle, viewW, flaggedScreens, minBtnW, idealBtnW, maxBtnW, promptRight, usedBtnW));
         assert(battle.items[0].holeCount == 1);
         assert(battle.items[0].holes[0][1] == 147 && battle.items[0].holes[0][3] == 192);
         const Element& textBox = battle.items.back();
         const Element& frame = battle.items[3];
-        assert(frame.screen == -1 && frame.border);
-        assert(textBox.screen == 0 && textBox.stretchX == 1.0f && textBox.scale >= 0.99f);
+        assert(frame.screen == -1 && frame.border && frame.borderColor == 0x2B3446u);
+        assert(textBox.screen == 0 && textBox.whiteBoxText && textBox.stretchX == 1.0f && textBox.scale >= 0.99f);
+        assert(textBox.sx + textBox.sw < 205); // Ignored the 3D flash at x=210..236
         assert(frame.dx < 0.0f && frame.dx <= viewLeft + 4.5f); // shifted into widescreen left margin
         const float trayGap = (viewRight - 2.0f - usedBtnW) - promptRight;
         assert(trayGap >= 4.0f && trayGap <= 6.5f); // mutually meets right-hand buttons cleanly
 
         std::vector<uint32_t> cpu;
-        MergedCompose(battle, screens, 1280, 720, cpu, false, nullptr);
+        MergedCompose(battle, flaggedScreens, 1280, 720, cpu, false, nullptr);
         const MergedView mv = MergedMakeView(1280, 720);
-        const int gx = (int)(mv.originX + (textBox.dx + 12.0f) * mv.unit);
-        const int gy = (int)(mv.originY + 166.0f * mv.unit);
+        // Inside glyph -> classic dark charcoal ink (#282E3A).
+        const int gx = (int)(mv.originX + (textBox.dx + (16 - textBox.sx) + 4.0f) * mv.unit);
+        const int gy = (int)(mv.originY + (textBox.dy + (158 - textBox.sy) + 4.0f) * mv.unit);
+        // 1 source pixel below glyph -> soft grey drop shadow (#C4CCD8).
+        const int syShadow = (int)(mv.originY + (textBox.dy + (174 - textBox.sy) + 0.5f) * mv.unit);
+        // Clean interior margin to the right of the text -> crisp off-white card (#F8FAFC).
+        const int wx = (int)(mv.originX + (frame.dx + frame.sw - 4.0f) * mv.unit);
+        const int wy = (int)(mv.originY + (frame.dy + 6.0f) * mv.unit);
         assert(gx >= 0 && gx < 1280 && gy >= 0 && gy < 720);
-        assert((cpu[gy * 1280 + gx] & 0xFFFFFF) == (white & 0xFFFFFF));
+        assert((cpu[gy * 1280 + gx] & 0xFFFFFF) == 0x282E3Au);
+        assert((cpu[syShadow * 1280 + gx] & 0xFFFFFF) == 0xC4CCD8u);
+        assert((cpu[wy * 1280 + wx] & 0xFFFFFF) == 0xF8FAFCu);
 
         SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 1280, 720, 32, SDL_PIXELFORMAT_ARGB8888);
         assert(surface);
@@ -142,14 +161,41 @@ int main()
         assert(renderer);
         {
             GpuCompositor compositor(renderer);
-            compositor.Draw(battle, screens, 1280, 720, false, nullptr);
+            compositor.Draw(battle, flaggedScreens, 1280, 720, false, nullptr);
             SDL_RenderPresent(renderer);
             const auto* row = reinterpret_cast<const uint32_t*>(
                 static_cast<const uint8_t*>(surface->pixels) + gy * surface->pitch);
-            assert((row[gx] & 0xFFFFFF) == (white & 0xFFFFFF));
+            const auto* shadowRow = reinterpret_cast<const uint32_t*>(
+                static_cast<const uint8_t*>(surface->pixels) + syShadow * surface->pitch);
+            const auto* paperRow = reinterpret_cast<const uint32_t*>(
+                static_cast<const uint8_t*>(surface->pixels) + wy * surface->pitch);
+            assert((row[gx] & 0xFFFFFF) == 0x282E3Au);
+            assert((shadowRow[gx] & 0xFFFFFF) == 0xC4CCD8u);
+            assert((paperRow[wx] & 0xFFFFFF) == 0xF8FAFCu);
         }
         SDL_DestroyRenderer(renderer);
         SDL_FreeSurface(surface);
+
+        // Standalone battle message adaptation: turns on for live 2D battle bar with 3D arena above,
+        // and stays strictly off during 3D-only animations, full-screen 2D menus, or uniform fades.
+        Scene standalone;
+        standalone.name = "battle";
+        standalone.wide = true;
+        standalone.items = { FullScreen(0) };
+        assert(AdaptGen5BattleMessage(standalone, viewW, flaggedScreens));
+        assert(standalone.items.back().whiteBoxText && standalone.items[0].holeCount == 1);
+
+        std::vector<uint8_t> pure3dFlags(256 * 192, LAYER_3D);
+        ScreenImage pure3d[2] = { { top.data(), pure3dFlags.data() }, { bottom.data(), nullptr } };
+        Scene noBox;
+        noBox.items = { FullScreen(0) };
+        assert(!AdaptGen5BattleMessage(noBox, viewW, pure3d));
+
+        std::vector<uint8_t> fullMenuFlags(256 * 192, LAYER_BG1);
+        ScreenImage fullMenu[2] = { { top.data(), fullMenuFlags.data() }, { bottom.data(), nullptr } };
+        Scene menuSc;
+        menuSc.items = { FullScreen(0) };
+        assert(!AdaptGen5BattleMessage(menuSc, viewW, fullMenu));
     }
 
     // Black 1 bottom arrow banner detector must match real 2D strips and ignore bright 3D map snow/water.
@@ -440,20 +486,24 @@ int main()
             const float avail2 = std::max(84.0f, viewRight - 2.0f - (pr2 + 5.0f));
             Gen5Strip::Black2(sc2, viewRight, sBw2, isMoves, party, avail2, true);
 
-            for (const auto& pair : { std::make_pair(&sc1, pr1), std::make_pair(&sc2, pr2) })
+            for (int which = 0; which < 2; which++)
             {
-                const Scene& sc = *pair.first;
-                const float pr = pair.second;
-                int balls = 0, cmdPlates = 0, hexagons = 0, curBrackets = 0;
+                const Scene& sc = which == 0 ? sc1 : sc2;
+                const float pr = which == 0 ? pr1 : pr2;
+                int balls = 0, cmdPlates = 0, cleanPlates = 0, keyedLabels = 0, hexagons = 0, curBrackets = 0;
                 for (const Element& e : sc.items)
                 {
                     if (e.screen == 1 && e.drop == (LAYER_BG0 | LAYER_BG1 | LAYER_BG2 | LAYER_BG3 | LAYER_BACKDROP)
                         && (e.sw == 49 || e.sw == 50 || e.sw == 94))
                         balls++;
+                    if (e.screen == -1 && e.border && e.borderRadius > 0 && e.dx >= pr + 4.9f && e.dy >= 146.0f)
+                        cleanPlates++;
                     if (e.screen == 1 && e.alpha > 0 && e.dy >= 146.0f)
                     {
                         if (e.drop == LAYER_BACKDROP && e.sw == 256 && e.sh == 96) hexagons++;
-                        else if (e.drop == LAYER_BACKDROP || e.sw == 92 || e.sw == 148) cmdPlates++;
+                        else if (e.drop == LAYER_BACKDROP || e.sw == 92) cmdPlates++;
+                        else if (e.sw != 16 && (e.keys[0] != 0xFFFFFFFF || e.keyGrey > 0)) keyedLabels++;
+                        assert(e.sw != 148); // BW1 never crops the raw circular Poké Ball lens
                         assert(e.dx >= pr + 4.9f || e.sw == 16); // cursor brackets overhang slightly left
                         assert(e.dx + e.sw * e.scale <= viewRight + 0.01f);
                     }
@@ -463,7 +513,13 @@ int main()
                 assert(balls == 2); // Both foe and player Poke Ball rows rendered
                 if (!isMoves)
                 {
-                    assert(cmdPlates == 4); // Authentic FIGHT! banner + BAG/RUN/POKEMON plates
+                    if (which == 0)
+                    {
+                        assert(cleanPlates == 4); // BW1 sleek uniform coloured rounded plates
+                        assert(keyedLabels == 4); // Keyed FIGHT!/BAG/RUN/POKEMON labels
+                    }
+                    else
+                        assert(cmdPlates == 4); // B2W2 authentic FIGHT! banner + BAG/RUN/POKEMON plates
                     assert(curBrackets == 4);
                 }
                 else

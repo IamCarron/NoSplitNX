@@ -84,7 +84,8 @@ inline void KeepBoxes(Scene& sc, const Element& battleTop, const std::vector<Ele
 // their places (the bars' insides in the middle below their words, the backdrop between them and
 // beside them): not the Ball turning into them, before. False when they are not in their places
 // (the scene then has no pieces of the touch screen).
-inline bool ChoiceBars(Scene& sc, float right, const ScreenImage* screens, float bandTop, float bandHeight)
+inline bool ChoiceBars(Scene& sc, float right, const ScreenImage* screens, float bandTop, float bandHeight,
+    float availRoom = -1.0f)
 {
     sc.items.erase(std::remove_if(sc.items.begin(), sc.items.end(), [](const Element& e) { return e.screen == 1; }),
         sc.items.end());
@@ -93,7 +94,8 @@ inline bool ChoiceBars(Scene& sc, float right, const ScreenImage* screens, float
     if (!fl || layer(128, 70) != LAYER_BG1 || layer(128, 118) != LAYER_BG1 || layer(128, 80) != LAYER_BACKDROP ||
         layer(0, 80) != LAYER_BACKDROP || layer(255, 80) != LAYER_BACKDROP)
         return false;
-    const float s = std::max(0.36f, std::min(0.44f, (right - (MessageEnd(screens[0]) + 4)) / 256));
+    const float room = availRoom > 0.0f ? availRoom : (right - (MessageEnd(screens[0]) + 4));
+    const float s = std::max(0.36f, std::min(0.44f, room / 256));
     Element bars = Crop(1, 0, 32, 256, 96);
     bars.scale = s;
     bars.dx = right - 256 * s;
@@ -150,6 +152,8 @@ struct RoundButton
     float labelScale;        // the label's size, times the grid's
     uint32_t key;            // a colour of the label's surroundings not drawn either (0: none)
     bool plain;              // the label drawn whole (the dark around it is the inside's colour)
+    uint32_t plateFill = 0;  // optional clean styled body colour (0: sample directly from touch screen)
+    uint32_t plateAccent = 0; // optional crisp accent border colour (0: sample/outlineColour)
 };
 
 // Averages a 4 x 4 pixel patch on the touch screen so fill tones follow button press/dim animations.
@@ -186,26 +190,57 @@ inline float Round(Scene& sc, const ScreenImage& touch, const RoundButton& b, fl
     const uint8_t* fl = touch.flags;
     unsigned r = 0, g = 0, bl = 0;
     SampleFillRGB(px, b.fill, r, g, bl);
-    Element e = MakePlateRect(x, y, w, h, (r << 16) | (g << 8) | bl);
+    uint32_t bodyRgb = (r << 16) | (g << 8) | bl;
+    unsigned br = r, bg = g, bbl = bl;
+    if (b.plateFill)
+    {
+        // Modulate the clean styled body gently with live touch-screen brightness so button press
+        // flashes and dimmed states remain responsive without exposing BW1's muddy lens texture.
+        const int delta = std::clamp((int)((r + g + bl) / 3) - 56, -24, 42);
+        br = (unsigned)std::clamp((int)((b.plateFill >> 16) & 0xFF) + delta, 0, 255);
+        bg = (unsigned)std::clamp((int)((b.plateFill >> 8) & 0xFF) + delta, 0, 255);
+        bbl = (unsigned)std::clamp((int)(b.plateFill & 0xFF) + delta, 0, 255);
+        bodyRgb = (br << 16) | (bg << 8) | bbl;
+    }
+    Element e = MakePlateRect(x, y, w, h, bodyRgb);
     e.border = true;
     const int o = b.outline[1] * 256 + b.outline[0];
-    e.borderColor = fl && LayerClass(fl[o]) == LAYER_OBJ ? b.outlineColour : px[o] & 0xFFFFFF;
-    e.borderRadius = 2.5f;
+    e.borderColor = b.plateAccent ? b.plateAccent
+        : (fl && LayerClass(fl[o]) == LAYER_OBJ ? b.outlineColour : px[o] & 0xFFFFFF);
+    e.borderRadius = b.plateFill ? 2.8f : 2.5f;
+    if (b.plateFill) e.borderWidth = 6;
     sc.items.push_back(e);
     if (authentic)
     {
-        // Subtle metallic bevel + B2W2 horizontal accent trim framing a dark high-contrast center band.
-        const uint32_t bevel = (((std::min(255u, r + 28)) << 16) | (std::min(255u, g + 28) << 8) | std::min(255u, bl + 28));
-        Element topHi = MakePlateRect(x + 2.0f, y + 1.5f, std::max(1.0f, w - 4.0f), std::max(0.6f, h * 0.04f), bevel);
-        topHi.borderRadius = 0.5f;
-        sc.items.push_back(topHi);
-        if (b.outlineColour != 0xFBFBFB && b.outlineColour != 0xF3F3FB)
+        if (b.plateFill)
         {
-            const uint32_t barCol = b.key ? b.key : b.outlineColour;
-            const float barH = std::max(1.2f, h * 0.08f);
-            const float barW = std::max(2.0f, w - 3.0f);
-            sc.items.push_back(MakePlateRect(x + 1.5f, y + h * 0.22f, barW, barH, barCol));
-            sc.items.push_back(MakePlateRect(x + 1.5f, y + h * 0.78f - barH, barW, barH, barCol));
+            // Clean modern Pokémon bevel: subtle top specular sheen + bottom depth lip.
+            const uint32_t topCol = (((std::min(255u, br + 34)) << 16) | (std::min(255u, bg + 34) << 8) | std::min(255u, bbl + 34));
+            const uint32_t botCol = (((br > 24 ? br - 24 : 0u) << 16) | ((bg > 24 ? bg - 24 : 0u) << 8) | (bbl > 24 ? bbl - 24 : 0u));
+            const float padX = std::min(2.0f, w * 0.06f);
+            const float barW = std::max(1.0f, w - 2.0f * padX);
+            Element topHi = MakePlateRect(x + padX, y + 1.0f, barW, std::max(1.0f, h * 0.14f), topCol);
+            topHi.borderRadius = 0.8f;
+            sc.items.push_back(topHi);
+            Element botShade = MakePlateRect(x + padX, y + h - std::max(1.2f, h * 0.14f) - 0.6f, barW, std::max(1.0f, h * 0.12f), botCol);
+            botShade.borderRadius = 0.6f;
+            sc.items.push_back(botShade);
+        }
+        else
+        {
+            // Subtle metallic bevel + B2W2 horizontal accent trim framing a dark high-contrast center band.
+            const uint32_t bevel = (((std::min(255u, r + 28)) << 16) | (std::min(255u, g + 28) << 8) | std::min(255u, bl + 28));
+            Element topHi = MakePlateRect(x + 2.0f, y + 1.5f, std::max(1.0f, w - 4.0f), std::max(0.6f, h * 0.04f), bevel);
+            topHi.borderRadius = 0.5f;
+            sc.items.push_back(topHi);
+            if (b.outlineColour != 0xFBFBFB && b.outlineColour != 0xF3F3FB)
+            {
+                const uint32_t barCol = b.key ? b.key : b.outlineColour;
+                const float barH = std::max(1.2f, h * 0.08f);
+                const float barW = std::max(2.0f, w - 3.0f);
+                sc.items.push_back(MakePlateRect(x + 1.5f, y + h * 0.22f, barW, barH, barCol));
+                sc.items.push_back(MakePlateRect(x + 1.5f, y + h * 0.78f - barH, barW, barH, barCol));
+            }
         }
     }
     // (At most as large as leaves it 3 grid pixels clear of the button's sides. Expand single-line
@@ -244,6 +279,17 @@ inline float Round(Scene& sc, const ScreenImage& touch, const RoundButton& b, fl
         // any outlines of its letters.)
         l.keyGrey = (int)std::max({ r, g, bl }) + 40;
         if (b.key) l.keys[0] = b.key;
+    }
+    else if (b.plateFill)
+    {
+        // Key out BW1's reddish-brown Poké Ball lens fill behind FIGHT! / ¡LUCHAR! while keeping
+        // both the crisp white letters and their 1-px black outline intact on the clean crimson plate.
+        l.keys[0] = (r << 16) | (g << 8) | bl;
+        l.keyTolerance = 34;
+        const int fx = std::clamp(b.fill[0], 0, 255);
+        l.keys[1] = px[std::clamp(ly, 0, 191) * 256 + fx] & 0xFFFFFF;
+        l.keys[2] = px[std::clamp(ly + lh / 2, 0, 191) * 256 + fx] & 0xFFFFFF;
+        l.keys[3] = px[std::clamp(ly + lh - 1, 0, 191) * 256 + fx] & 0xFFFFFF;
     }
     sc.items.push_back(l);
     return l.dx;
@@ -295,6 +341,7 @@ struct CommandLook
     RoundButton button[4];
     int art[4][4];           // authentic DS crops (x, y, w, h): FIGHT! banner, BAG, RUN, POKEMON
     uint32_t cursor;         // the colour of the cursor's brackets
+    bool cleanPlates = false; // draw uniform styled rounded plates instead of raw Poké Ball crops (BW1)
 };
 
 // The four buttons for `look`, the grid's touch-screen pixel (x, y) at (left + x * s, top + y * s).
@@ -345,7 +392,7 @@ inline void Commands(Scene& sc, const ScreenImage& touch, const CommandLook& loo
         float x, y, w, h;
         rect(i, x, y, w, h);
         drawnRect[i][0] = x; drawnRect[i][1] = y; drawnRect[i][2] = w; drawnRect[i][3] = h;
-        if (authentic && i == 0)
+        if (authentic && !look.cleanPlates && i == 0)
         {
             unsigned r = 0, g = 0, bl = 0;
             SampleFillRGB(px, look.button[0].fill, r, g, bl);
@@ -393,7 +440,7 @@ inline void Commands(Scene& sc, const ScreenImage& touch, const CommandLook& loo
                 sc.items.push_back(banner);
             }
         }
-        else if (authentic)
+        else if (authentic && !look.cleanPlates)
         {
             const int* a = look.art[i];
             const float scA = std::min(w / a[2], h / a[3]);
@@ -419,16 +466,17 @@ inline void Commands(Scene& sc, const ScreenImage& touch, const CommandLook& loo
             const RoundButton& b = look.button[0];
             const float ls = s * b.labelScale;
             const int iw = ix1 - ix0 + 1, ih = iy1 - iy0 + 1, gap = 10;
-            const float labelX = Round(sc, touch, b, x, y, w, h, s, -(gap + iw) * ls / 2);
+            const float labelX = Round(sc, touch, b, x, y, w, h, s, -(gap + iw) * ls / 2, authentic);
+            const Element& lbl = sc.items.back();
             Element e = Crop(1, ix0, iy0, iw, ih);
-            e.scale = ls;
-            e.dx = labelX + (b.label[2] + gap) * ls;
-            e.dy = y + (h - ih * ls) / 2;
+            e.scale = std::min(ls, (h - 2.0f) / ih);
+            e.dx = labelX + lbl.sw * lbl.scale + gap * s;
+            e.dy = y + (h - ih * e.scale) / 2;
             e.drop = LAYER_BG0 | LAYER_BG1 | LAYER_BG2 | LAYER_BG3 | LAYER_BACKDROP;
             sc.items.push_back(e);
         }
         else
-            Round(sc, touch, look.button[i], x, y, w, h, s);
+            Round(sc, touch, look.button[i], x, y, w, h, s, 0, authentic);
     }
     // The cursor's box: FIGHT!'s is the whole upper part of the screen (the only one that tall);
     // BAG's, RUN's and POKEMON's are below row 120, left, middle and right.
@@ -520,45 +568,46 @@ inline const BelowButton& Black2Back()
     return b;
 }
 
-// Black and White's command menu (Commands): the FIGHT! lens (x 51-204, rows 63-112, inside
-// 0x413030, its label x 101-154, rows 82-92, outlined in black on it: drawn whole) and the octagons
-// of BAG, RUN and POKEMON (the dotted grey, 0x383838 to 0x494949, outlined in white, 0xFBFBFB, as
-// the moves are; FIGHT! too).
+// Black and White's command menu (Commands): clean uniformly-proportioned rounded Pokémon buttons
+// instead of raw crops of BW1's circular Poké Ball lens and mismatched slanted octagons. FIGHT!
+// sits on a rich crimson plate (keying out the dark reddish lens while keeping white letters and
+// their black outline) and BAG, RUN and POKÉMON sit on sleek dark-slate plates accented in their
+// label colours (gold, blue, green).
 inline const CommandLook& BlackCommands()
 {
     static const CommandLook look = {
         { { 2, 34, 252, 44 }, { 2, 82, 80, 44 }, { 88, 82, 80, 44 }, { 174, 82, 80, 44 } },
         {
-            { { 100, 81, 56, 13 }, { 70, 70, 116, 36 }, { 73, 84 }, { 40, 135 }, 0xFBFBFB, 1.2f, 0, true },
-            { { 29, 163, 22, 10 }, { 12, 145, 56, 40 }, { 38, 148 }, { 40, 135 }, 0xFBFBFB, 1.2f, 0, false },
-            { { 116, 173, 23, 10 }, { 100, 158, 56, 30 }, { 126, 160 }, { 128, 151 }, 0xFBFBFB, 1.2f, 0, false },
-            { { 195, 160, 52, 13 }, { 188, 145, 56, 40 }, { 214, 148 }, { 216, 135 }, 0xFBFBFB, 1.2f, 0, false },
+            { { 100, 81, 56, 13 }, { 70, 70, 116, 36 }, { 73, 84 }, { 40, 135 }, 0xFBFBFB, 1.45f, 0, true, 0xA62434u, 0xEE5864u },
+            { { 29, 163, 22, 10 }, { 12, 145, 56, 40 }, { 38, 148 }, { 40, 135 }, 0xFBFBFB, 1.35f, 0, false, 0x222A38u, 0xF4BE2Au },
+            { { 116, 173, 23, 10 }, { 100, 158, 56, 30 }, { 126, 160 }, { 128, 151 }, 0xFBFBFB, 1.35f, 0, false, 0x222A38u, 0x2FA8FAu },
+            { { 195, 160, 52, 13 }, { 188, 145, 56, 40 }, { 214, 148 }, { 216, 135 }, 0xFBFBFB, 1.35f, 0, false, 0x222A38u, 0x4ED85Cu },
         },
         { { 54, 70, 148, 34 }, { 3, 134, 72, 52 }, { 91, 150, 74, 40 }, { 180, 134, 72, 52 } },
         0xFB0092,
+        true,
     };
     return look;
 }
 
-// Black and White's buttons below the moves (Below), octagons as BAG, RUN and POKEMON are: SHIFT
-// (x 0-77, its label x 25-55, rows 164-171), the rotation's (x 2-77 and 82-157, grey icons x 26-53,
-// rows 160-190) and back (x 178-255, its blue arrow x 203-225, rows 154-173).
+// Black and White's buttons below the moves (Below): clean rounded plates matching BlackCommands'
+// styling — SHIFT (gold accent), rotation turns (silver-slate), and back (blue accent).
 inline const BelowButton& BlackShift()
 {
-    static const BelowButton b = { { { 24, 163, 33, 10 }, { 12, 145, 56, 40 }, { 38, 148 }, { 40, 135 }, 0xFBFBFB, 1.5f, 0, false }, 0, 77, 64 };
+    static const BelowButton b = { { { 24, 163, 33, 10 }, { 12, 145, 56, 40 }, { 38, 148 }, { 40, 135 }, 0xFBFBFB, 1.5f, 0, false, 0x222A38u, 0xF4BE2Au }, 0, 77, 64 };
     return b;
 }
 inline const BelowButton& BlackTurn(int which)
 {
     static const BelowButton b[2] = {
-        { { { 25, 160, 31, 31 }, { 14, 155, 52, 34 }, { 57, 170 }, { 40, 151 }, 0xFBFBFB, 1.5f, 0, false }, 2, 77, 56 },
-        { { { 105, 160, 31, 31 }, { 94, 155, 52, 34 }, { 137, 170 }, { 120, 151 }, 0xFBFBFB, 1.5f, 0, false }, 82, 157, 56 },
+        { { { 25, 160, 31, 31 }, { 14, 155, 52, 34 }, { 57, 170 }, { 40, 151 }, 0xFBFBFB, 1.5f, 0, false, 0x222A38u, 0x94A3B8u }, 2, 77, 56 },
+        { { { 105, 160, 31, 31 }, { 94, 155, 52, 34 }, { 137, 170 }, { 120, 151 }, 0xFBFBFB, 1.5f, 0, false, 0x222A38u, 0x94A3B8u }, 82, 157, 56 },
     };
     return b[which];
 }
 inline const BelowButton& BlackBack()
 {
-    static const BelowButton b = { { { 202, 153, 25, 22 }, { 190, 145, 56, 40 }, { 214, 148 }, { 216, 135 }, 0xFBFBFB, 1.5f, 0, false }, 178, 255, 56 };
+    static const BelowButton b = { { { 202, 153, 25, 22 }, { 190, 145, 56, 40 }, { 214, 148 }, { 216, 135 }, 0xFBFBFB, 1.5f, 0, false, 0x222A38u, 0x2FA8FAu }, 178, 255, 56 };
     return b;
 }
 

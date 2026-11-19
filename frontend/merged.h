@@ -81,6 +81,9 @@ struct Element
     int holeCount = 0;
     int holes[4][4] = {};
     bool wideOnly = false;
+    // Extracts Gen 5's light/coloured battle text from its dark translucent bar and renders it
+    // as classic Pokémon dark ink with a 1-px soft drop shadow over a crisp white dialogue box.
+    bool whiteBoxText = false;
 
     // Whether source pixel (x, y) is left out by the cut corner or a hole.
     bool Skips(int x, int y) const
@@ -877,9 +880,64 @@ inline void CoSizeGen5BattleTray(float viewWidth, float naturalPromptW,
     outPromptBoxW = std::max(80.0f, budget - outButtonsW);
 }
 
-// Moves Gen 5's bottom battle prompt ("What will X do?" / "¿Qué debería hacer X?") into a framed
-// box anchored on the left of a full-width dark tray, mutually resized with the right-hand buttons
-// so both halves meet evenly without wasting space or stretching text glyphs.
+// Classifies a single pixel inside Gen 5's dark translucent battle message bar as a bright text
+// glyph (recoloured to classic Pokémon dark charcoal ink) or a coloured highlight/symbol (♂, ♀,
+// status accent, advance arrow, gently darkened for legibility on white). Translucent box and 3D
+// arena pixels return false so the clean white card shows through without bleed.
+inline bool MergedWhiteBoxIsGlyph(const ScreenImage& src, int sx, int sy, uint32_t& outRgb)
+{
+    if (sx < 0 || sx >= 256 || sy < 0 || sy >= 192 || !src.pixels) return false;
+    const int si = sy * 256 + sx;
+    if (src.flags)
+    {
+        const uint8_t lc = LayerClass(src.flags[si]);
+        if (lc == LAYER_3D || lc == LAYER_BACKDROP) return false;
+    }
+    const uint32_t c = src.pixels[si] & 0xFFFFFF;
+    const int r = (int)((c >> 16) & 0xFF);
+    const int g = (int)((c >> 8) & 0xFF);
+    const int b = (int)(c & 0xFF);
+    const int mx = std::max({ r, g, b });
+    const int mn = std::min({ r, g, b });
+    const int sat = mx - mn;
+    const int lum = (r + g + b) / 3;
+    if (lum >= 184 && sat < 48)
+    {
+        outRgb = 0x282E3Au;
+        return true;
+    }
+    if (sat >= 52 && mx >= 168)
+    {
+        const int dr = (r * 200) >> 8;
+        const int dg = (g * 200) >> 8;
+        const int db = (b * 200) >> 8;
+        outRgb = (uint32_t)((dr << 16) | (dg << 8) | db);
+        return true;
+    }
+    return false;
+}
+
+// Converts a Gen 5 translucent battle text pixel into classic Pokémon white-box typography: dark
+// charcoal ink for glyphs, preserved darkened colour for symbols, and a crisp 1-px soft grey drop
+// shadow to the right/below/bottom-right of every glyph pixel. Returns false for background pixels.
+inline bool MergedWhiteBoxPixel(const ScreenImage& src, int sx, int sy, int minX, int minY, uint32_t& outRgb)
+{
+    if (MergedWhiteBoxIsGlyph(src, sx, sy, outRgb))
+        return true;
+    uint32_t dummy = 0;
+    if ((sx > minX && MergedWhiteBoxIsGlyph(src, sx - 1, sy, dummy)) ||
+        (sy > minY && MergedWhiteBoxIsGlyph(src, sx, sy - 1, dummy)) ||
+        (sx > minX && sy > minY && MergedWhiteBoxIsGlyph(src, sx - 1, sy - 1, dummy)))
+    {
+        outRgb = 0xC4CCD8u;
+        return true;
+    }
+    return false;
+}
+
+// Moves Gen 5's bottom battle prompt ("What will X do?" / "¿Qué debería hacer X?") into a classic
+// crisp white Pokémon dialogue box anchored on the left of a calm dark tray, mutually resized with
+// the right-hand buttons so both halves meet evenly without translucent arena bleed or stretching.
 inline bool AdaptGen5BattlePrompt(Scene& sc, float viewWidth, const ScreenImage* screens,
     float minButtonsWidth, float idealButtonsWidth, float maxButtonsWidth,
     float& outPromptRight, float& outButtonsWidth, float gutter = 5.0f)
@@ -890,42 +948,6 @@ inline bool AdaptGen5BattlePrompt(Scene& sc, float viewWidth, const ScreenImage*
     if (sc.items.empty() || !screens || !screens[0].pixels || IsUniformScreen(screens[0].pixels))
         return false;
 
-    const uint32_t* px = screens[0].pixels;
-    auto rgb = [](uint32_t c, int& r, int& g, int& b) {
-        r = (c >> 16) & 0xFF;
-        g = (c >> 8) & 0xFF;
-        b = c & 0xFF;
-    };
-    auto lum = [&](int x, int y) {
-        int r, g, b;
-        rgb(px[y * 256 + x], r, g, b);
-        return (r + g + b) / 3;
-    };
-
-    const uint32_t fillPx = px[158 * 256 + 4] & 0xFFFFFF;
-    int fr, fg, fb;
-    rgb(fillPx, fr, fg, fb);
-    const int fillLum = (fr + fg + fb) / 3;
-
-    // Sample the prompt bar's top border row (y=147..149) for a matching accent colour.
-    uint32_t bestBorder = fillPx;
-    int bestDiff = 0;
-    for (int y = 147; y <= 149; y++)
-    {
-        const uint32_t bc = px[y * 256 + 4] & 0xFFFFFF;
-        int br, bgc, bb;
-        rgb(bc, br, bgc, bb);
-        const int diff = std::abs(br - fr) + std::abs(bgc - fg) + std::abs(bb - fb);
-        if (diff > bestDiff) { bestDiff = diff; bestBorder = bc; }
-    }
-
-    auto scaleRgb = [](uint32_t c, float k, int floorMin) -> uint32_t {
-        const int r = std::clamp((int)(((c >> 16) & 0xFF) * k) + floorMin, 0, 255);
-        const int g = std::clamp((int)(((c >> 8) & 0xFF) * k) + floorMin, 0, 255);
-        const int b = std::clamp((int)((c & 0xFF) * k) + floorMin, 0, 255);
-        return (uint32_t)((r << 16) | (g << 8) | b);
-    };
-
     Element& top = sc.items[0];
     if (top.holeCount < 4)
     {
@@ -933,21 +955,19 @@ inline bool AdaptGen5BattlePrompt(Scene& sc, float viewWidth, const ScreenImage*
         std::copy(h, h + 4, top.holes[top.holeCount++]);
     }
 
-    const uint32_t trayBg = scaleRgb(fillPx, 0.55f, 0);
-    const uint32_t hairlineCol = bestDiff > 24 ? bestBorder : scaleRgb(fillPx, 1.4f, 44);
-    const uint32_t boxBorder = bestDiff > 24 ? scaleRgb(bestBorder, 1.15f, 22) : scaleRgb(fillPx, 1.5f, 52);
+    // Calm dark-slate bottom tray keeps high contrast for both the white card and right buttons
+    // without flickering with the 3D battle arena behind Gen 5's translucent bar.
+    sc.items.push_back(FillRect(viewLeft - 2.0f, 147.0f, (int)std::ceil(viewWidth) + 4, 46, 0x141924u));
+    sc.items.push_back(FillRect(viewLeft - 2.0f, 147.0f, (int)std::ceil(viewWidth) + 4, 1, 0x334155u));
 
-    sc.items.push_back(FillRect(viewLeft - 2.0f, 147.0f, (int)std::ceil(viewWidth) + 4, 46, trayBg));
-    sc.items.push_back(FillRect(viewLeft - 2.0f, 147.0f, (int)std::ceil(viewWidth) + 4, 1, hairlineCol));
-
-    // Find tight span of the bright prompt text inside rows 150..186.
+    // Find tight span of the 2D prompt glyphs inside rows 150..186.
     int minX = 256, maxX = -1, minY = 192, maxY = -1;
-    const int thresh = std::min(190, fillLum + 55);
+    uint32_t dummy = 0;
     for (int y = 150; y <= 186; y++)
     {
         for (int x = 4; x < 252; x++)
         {
-            if (lum(x, y) > thresh)
+            if (MergedWhiteBoxIsGlyph(screens[0], x, y, dummy))
             {
                 minX = std::min(minX, x);
                 maxX = std::max(maxX, x);
@@ -965,58 +985,39 @@ inline bool AdaptGen5BattlePrompt(Scene& sc, float viewWidth, const ScreenImage*
     const bool insideInner = minY >= 151 && maxY <= 185;
     const int sy = insideInner ? 151 : 150;
     const int sh = insideInner ? 35 : 37;
-    const float frameY = 150.0f;
-    const int frameH = 38;
+    const float frameY = 149.0f;
+    const int frameH = 40;
 
     float promptBoxW = 0.0f;
-    CoSizeGen5BattleTray(viewWidth, (float)(cropW + 4), minButtonsWidth, idealButtonsWidth,
+    CoSizeGen5BattleTray(viewWidth, (float)(cropW + 8), minButtonsWidth, idealButtonsWidth,
         maxButtonsWidth, promptBoxW, outButtonsWidth, gutter);
     const float boxLeft = viewLeft + 4.0f;
     const int boxIntW = std::max(64, (int)std::floor(promptBoxW));
 
-    // Single rounded outer frame owns the outline across both the text region and gradient fill.
-    Element frame = FillRect(boxLeft, frameY, boxIntW, frameH, fillPx);
+    // Classic Pokémon double-framed white dialogue box: dark navy-charcoal outer rim (#2B3446),
+    // crisp 1-px silver-blue inner trim (#CBD5E1), and spotless off-white paper (#F8FAFC).
+    Element frame = FillRect(boxLeft, frameY, boxIntW, frameH, 0xCBD5E1u);
     frame.border = true;
     frame.borderRadius = 3.0f;
     frame.borderWidth = 8;
-    frame.borderColor = boxBorder;
+    frame.borderColor = 0x2B3446u;
     sc.items.push_back(frame);
 
-    const float innerLeft = boxLeft + 2.0f;
-    const float innerW = std::max(12.0f, (float)boxIntW - 4.0f);
+    Element paper = FillRect(boxLeft + 1.0f, frameY + 1.0f, std::max(4, boxIntW - 2), frameH - 2, 0xF8FAFCu);
+    paper.borderRadius = 2.0f;
+    sc.items.push_back(paper);
+
+    const float innerLeft = boxLeft + 3.0f;
+    const float innerW = std::max(12.0f, (float)boxIntW - 6.0f);
     const float textScale = std::min(1.0f, innerW / (float)cropW);
     const float textDy = frameY + (frameH - sh * textScale) * 0.5f;
-
-    // Pick a clean 2-pixel background column strip (without text) so extended width preserves the
-    // box's exact vertical gradient without ever stretching font glyphs.
-    int cleanX = -1;
-    auto isCleanPair = [&](int x) {
-        if (x < 4 || x + 1 >= 252) return false;
-        for (int y = sy; y < sy + sh; y++)
-            if (lum(x, y) > thresh || lum(x + 1, y) > thresh) return false;
-        return true;
-    };
-    for (int x = std::min(248, maxX + 6); x + 1 < 252 && cleanX < 0; x++)
-        if (isCleanPair(x)) cleanX = x;
-    for (int x = minX - 8; x >= 4 && cleanX < 0; x--)
-        if (isCleanPair(x)) cleanX = x;
-
-    if (cleanX >= 0 && innerW > cropW * textScale + 0.5f)
-    {
-        Element ext = Crop(0, cleanX, sy, 2, sh);
-        ext.dx = innerLeft;
-        ext.dy = textDy;
-        ext.scale = textScale;
-        ext.stretchX = innerW / (2.0f * textScale);
-        ext.crisp = textScale >= 0.99f;
-        sc.items.push_back(ext);
-    }
 
     Element box = Crop(0, sx, sy, cropW, sh);
     box.dx = innerLeft;
     box.dy = textDy;
     box.scale = textScale;
     box.crisp = textScale >= 0.99f;
+    box.whiteBoxText = true;
     sc.items.push_back(box);
     outPromptRight = boxLeft + (float)boxIntW;
     return true;
@@ -1028,6 +1029,80 @@ inline bool AdaptGen5BattlePrompt(Scene& sc, float viewWidth, const ScreenImage*
     float usedButtons = fixedButtonsWidth;
     return AdaptGen5BattlePrompt(sc, viewWidth, screens, fixedButtonsWidth, fixedButtonsWidth,
         fixedButtonsWidth, outPromptRight, usedButtons);
+}
+
+// Replaces Gen 5's dark translucent standalone battle message bar (attack/status/intro messages
+// when no command buttons are active) with a floating classic white Pokémon dialogue box. Stays
+// strictly off during animations, fades, and full-screen overlays where no battle box is shown.
+inline bool AdaptGen5BattleMessage(Scene& sc, float viewWidth, const ScreenImage* screens)
+{
+    (void)viewWidth;
+    if (sc.items.empty() || !screens || !screens[0].pixels || IsUniformScreen(screens[0].pixels))
+        return false;
+
+    const ScreenImage& topImg = screens[0];
+    const uint32_t* px = topImg.pixels;
+    const uint8_t* fl = topImg.flags;
+    auto lumAt = [&](int x, int y) {
+        const uint32_t c = px[y * 256 + x];
+        return (int)(((c >> 16) & 0xFF) + ((c >> 8) & 0xFF) + (c & 0xFF)) / 3;
+    };
+
+    // Confirm the bottom bar has Gen 5's dark translucent fill at the outer margins (not a white
+    // flash or bright cutscene), and when layer flags are present verify a 2D BG bar is drawn
+    // across rows 154..184 while the arena directly above (row 144) is not a full-screen 2D menu.
+    const int marginLum = (lumAt(4, 154) + lumAt(251, 154) + lumAt(4, 184) + lumAt(251, 184)) / 4;
+    if (marginLum > 140) return false;
+
+    if (fl)
+    {
+        for (int y : { 154, 184 })
+            for (int x : { 4, 128, 251 })
+                if ((LayerClass(fl[y * 256 + x]) & 0x0F) == 0)
+                    return false;
+        bool arenaAbove = false;
+        for (int x : { 4, 64, 128 })
+        {
+            const uint8_t lc = LayerClass(fl[144 * 256 + x]);
+            if (lc == LAYER_3D || lc == LAYER_BACKDROP) { arenaAbove = true; break; }
+        }
+        if (!arenaAbove) return false;
+    }
+
+    int glyphPixels = 0;
+    uint32_t dummy = 0;
+    for (int y = 150; y <= 186 && glyphPixels < 12; y++)
+        for (int x = 4; x < 252 && glyphPixels < 12; x++)
+            if (MergedWhiteBoxIsGlyph(topImg, x, y, dummy))
+                glyphPixels++;
+    if (!fl && glyphPixels < 8) return false;
+
+    Element& top = sc.items[0];
+    if (top.holeCount < 4)
+    {
+        const int h[4] = { 0, 147, 256, 192 };
+        std::copy(h, h + 4, top.holes[top.holeCount++]);
+    }
+
+    Element frame = FillRect(2.0f, 148.0f, 252, 42, 0xCBD5E1u);
+    frame.border = true;
+    frame.borderRadius = 3.0f;
+    frame.borderWidth = 8;
+    frame.borderColor = 0x2B3446u;
+    sc.items.push_back(frame);
+
+    Element paper = FillRect(3.0f, 149.0f, 250, 40, 0xF8FAFCu);
+    paper.borderRadius = 2.0f;
+    sc.items.push_back(paper);
+
+    Element box = Crop(0, 4, 150, 248, 37);
+    box.dx = 4.0f;
+    box.dy = 150.5f;
+    box.scale = 1.0f;
+    box.crisp = true;
+    box.whiteBoxText = true;
+    sc.items.push_back(box);
+    return true;
 }
 
 // A screen played on the touch screen: the touch screen at full height on its right, the
@@ -1666,7 +1741,7 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
                 const int* col = p.col.data();
                 const bool keyed = el.keys[0] != 0xFFFFFFFF || el.keyGrey;
                 const bool spriteKey = el.dropSpriteCorner > 0 && src.flags;
-                const bool plain = !(el.drop && src.flags) && !keyed && !spriteKey && el.alpha == 255 && el.cutX >= 256 && !el.holeCount;
+                const bool plain = !(el.drop && src.flags) && !keyed && !spriteKey && !el.whiteBoxText && el.alpha == 255 && el.cutX >= 256 && !el.holeCount;
                 for (int oy = oya; oy < oyb; oy++)
                 {
                     int sy = (int)((oy - y0 + 0.5f) / s);
@@ -1690,6 +1765,10 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
                             (widePxRaw[(size_t)((int64_t)oy * wide->h / outH) * wide->w + wcol[x0 + x]] >> 24))
                             continue;
                         uint32_t c = row[sx];
+                        if (el.whiteBoxText)
+                        {
+                            if (!MergedWhiteBoxPixel(src, sx, sy, el.sx, el.sy, c)) continue;
+                        }
                         if (spriteKey && LayerClass(frow[sx]) == LAYER_OBJ &&
                             std::min(sx - el.sx, el.sx + el.sw - 1 - sx) < el.dropSpriteCorner &&
                             std::min(sy - el.sy, el.sy + el.sh - 1 - sy) < el.dropSpriteCorner)
@@ -1766,6 +1845,10 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
                             MergedWideCovers(*wide, v, outW, outH, srcX, srcY))
                             continue;
                         uint32_t c = src.pixels[si];
+                        if (el.whiteBoxText)
+                        {
+                            if (!MergedWhiteBoxPixel(src, srcX, srcY, el.sx, el.sy, c)) continue;
+                        }
                         // (As in the nearest-pixel path and the GPU compose.)
                         if (el.dropSpriteCorner > 0 && src.flags && LayerClass(src.flags[si]) == LAYER_OBJ &&
                             std::min(srcX - el.sx, el.sx + el.sw - 1 - srcX) < el.dropSpriteCorner &&
