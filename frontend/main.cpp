@@ -52,6 +52,9 @@
 #include "SPU.h"
 #include "RTC.h"
 #include "Savestate.h"
+#include "CRC32.h"
+#include "state_slots.h"
+#include "auto_state.h"
 #include "host.h"
 #include "layout.h"
 #include "ui.h"
@@ -1509,7 +1512,7 @@ static PadState RemapPad(const PadState& p, const Controls::Bindings& b, bool by
         if (in < 0) continue;
         used[in] = true;
         if (a == Controls::FAST) o.rt = in == Controls::IN_RT ? p.rt : on(in) ? 1.0f : 0.0f;
-        else if (a == Controls::SAVE || a == Controls::LOAD) {} // (a press, beside this)
+        else if (a == Controls::SAVE || a == Controls::LOAD || a == Controls::RESET) {} // (a press, beside this)
         else
         {
             const int dest = Controls::DefaultPad(a, byLabel);
@@ -1540,6 +1543,16 @@ static bool InputHeld(const PadState& p, int in)
     if (in == Controls::IN_LT) return p.lt > 0.5f;
     if (in == Controls::IN_RT) return p.rt > 0.5f;
     return false;
+}
+
+// Zoom belongs to the physical right-stick click, not SWAP's remapped output. The default
+// SWAP binding lends its click to zoom when the touch cursor is off; an explicit binding
+// (including another action taking R3) must keep its assigned meaning.
+static bool ZoomPressed(const PadState& now, const PadState& before, const Controls::Bindings& b, bool byLabel)
+{
+    const int action = b.ActionOfPad(Controls::IN_RS, byLabel);
+    const bool available = action < 0 || (action == Controls::SWAP && b.pad[Controls::SWAP] == -1);
+    return available && now.btn[PAD_RS] && !before.btn[PAD_RS];
 }
 
 // DS buttons from the controller. With byLabel the button printed "A" is A on any pad;
@@ -1608,6 +1621,7 @@ struct Settings
     bool ffMute = false;
     bool fastButtonToggle = false;
     bool fastLock = false; // pause-menu FAST FORWARD, retained for the next launch
+    bool autoState = false, autoResume = false;
     bool switchFastForward = false; // Switch only: experimental fast forward (OFF by default; no clock changes)
     std::string listColour, listBackground, listLang; // (GAME LIST: COLOUR, BACKGROUND; LANGUAGE)
     bool cpuBoost = true; // Switch only: the processor's boost mode (see SwitchPlatform)
@@ -1695,6 +1709,8 @@ struct Settings
             else if (k == "ff_low_res") ffLowRes = v == "1";
             else if (k == "fast_button") fastButtonToggle = v == "toggle";
             else if (k == "fast_lock") fastLock = v == "1";
+            else if (k == "auto_state") autoState = v == "1";
+            else if (k == "auto_resume") autoResume = v == "1";
             else if (k == "switch_ff") switchFastForward = v == "1";
             else if (k == "start_button") startMenu = v != "ds";
             else if (k == "cpu_boost") cpuBoost = v == "1";
@@ -1750,6 +1766,8 @@ struct Settings
         f << "ff_low_res=" << (ffLowRes ? 1 : 0) << "\n";
         f << "fast_button=" << (fastButtonToggle ? "toggle" : "hold") << "\n";
         f << "fast_lock=" << (fastLock ? 1 : 0) << "\n";
+        f << "auto_state=" << (autoState ? 1 : 0) << "\n";
+        f << "auto_resume=" << (autoResume ? 1 : 0) << "\n";
         f << "switch_ff=" << (switchFastForward ? 1 : 0) << "\n";
         f << "volume=" << volume << "\n";
         f << "ultrawide_notice=" << (ultraNoticeSeen ? 1 : 0) << "\n";
@@ -1829,10 +1847,9 @@ static bool WriteSnapshot(NDS& nds, const std::string& path, uint32_t frame)
     st.Finish();
     FILE* f = fopen(path.c_str(), "wb");
     if (!f) return false;
-    fwrite(&frame, 4, 1, f);
-    fwrite(st.Buffer(), 1, st.Length(), f);
-    fclose(f);
-    return true;
+    const bool ok = fwrite(&frame, 4, 1, f) == 1 && fwrite(st.Buffer(), 1, st.Length(), f) == st.Length();
+    const bool closed = fclose(f) == 0;
+    return ok && closed;
 }
 
 // Snapshot file: 4-byte frame number, then the core's savestate.
@@ -1998,6 +2015,18 @@ int main(int argc, char** argv)
     }
     // (RETROACHIEVEMENTS finds the game's set by the ROM's fingerprint: taken while the ROM is here.)
     const std::string romFingerprint = !opt.headless && !opt.lockstep ? Achievements::Fingerprint(rom) : std::string();
+    // Automatic states must not load into a changed dump or hack sharing the same save name.
+    // Sample 4 KB every 256 KB plus the RA fingerprint to avoid hashing 512 MB on every Switch boot.
+    const size_t autoRomBytes = rom.size();
+    uint32_t autoRomCrc = 0;
+    if (!opt.headless && !opt.lockstep)
+    {
+        std::vector<u8> probe(romFingerprint.begin(), romFingerprint.end());
+        for (size_t at = 0; at < rom.size(); at += 256 * 1024)
+            probe.insert(probe.end(), rom.begin() + at, rom.begin() + std::min(rom.size(), at + 4096));
+        if (rom.size() > 4096) probe.insert(probe.end(), rom.end() - 4096, rom.end());
+        autoRomCrc = CRC32(probe.data(), (int)probe.size());
+    }
     // The cartridge has its own copy now; Black 2's ROM is about 300 MB, which counts on the Switch.
     rom.clear();
     rom.shrink_to_fit();
@@ -2113,6 +2142,11 @@ int main(int argc, char** argv)
     std::string dir = slash == std::string::npos ? "." : opt.save.substr(0, slash);
     if (opt.config.empty()) opt.config = dir + "/ssrecomp.cfg";
     const std::string quickState = opt.save + ".state";
+    const std::string autoStatePath = AutoState::Path(quickState, autoRomCrc, autoRomBytes);
+    const bool autoStateAllowed = !opt.headless && !opt.lockstep && !opt.noSave;
+    bool autoStateBlocked = false;
+    std::string autoStateNote;
+    AutoState::Timer autoStateTimer;
     if (!opt.noSave) BackupSave(opt.save);
 
     Settings cfg;
@@ -2157,6 +2191,47 @@ int main(int argc, char** argv)
 #endif
     for (const std::string& kv : opt.sets) cfg.Apply(kv);
     if (!opt.sets.empty() || opt.keepSettings) cfg.readOnly = true;
+    if (autoStateAllowed && cfg.autoResume && opt.stateLoad.empty() && AutoState::Present(autoStatePath))
+    {
+        std::vector<u8> keep;
+        if (const u8* cur = nds->GetNDSSave(); cur && nds->GetNDSSaveLength())
+            keep.assign(cur, cur + nds->GetNDSSaveLength());
+        Savestate before;
+        if (!nds->DoSavestate(&before) || before.Error)
+        {
+            autoStateBlocked = true;
+            autoStateNote = "AUTO RESUME SKIPPED - COULD NOT KEEP RECOVERY STATE";
+        }
+        else
+        {
+            before.Finish();
+            bool touched = false;
+            const uint32_t oldFrame = frame;
+            const bool loaded = ReadSnapshot(*nds, autoStatePath, &frame, &touched);
+            if (!loaded)
+            {
+                frame = oldFrame;
+                if (touched)
+                {
+                    Savestate recovery(before.Buffer(), before.Length(), false);
+                    if (recovery.Error || !nds->DoSavestate(&recovery) || recovery.Error)
+                    {
+                        fprintf(stderr, "[auto-state] invalid state and recovery failed; stopping without saving\n");
+                        return 1;
+                    }
+                }
+                // Keep the damaged state for inspection instead of overwriting it on exit.
+                autoStateBlocked = true;
+                autoStateNote = "INVALID AUTO STATE - STARTING NORMALLY; AUTO SAVE PAUSED";
+            }
+            else autoStateNote = "AUTO STATE RESUMED - IN-GAME SAVE KEPT";
+            if (!keep.empty()) nds->SetNDSSave(keep.data(), (u32)keep.size());
+            rc_reset();
+            Achievements::Reset();
+            SetClock(*nds, false);
+        }
+        fprintf(stderr, "[auto-state] %s\n", autoStateNote.c_str());
+    }
     exclusives.on = cfg.bothVersions && exclusives.Supported();
 #ifdef __SWITCH__
     // One wide screen always: a layout or large screen saved by an older version is ignored.
@@ -5207,7 +5282,7 @@ int main(int argc, char** argv)
     {
         M_RESUME, M_LAYOUT, M_LARGE, M_FPS60, M_FULLSCREEN, M_SMOOTH, M_WIDE, M_WIDEMAP, M_BATTLEBUTTONS, M_ZOOM, M_ZOOM_TEXT,
         M_WIDELINES, M_AUTODETAIL, M_WIDEGPU, M_GPU3D, M_SHOWFPS, M_BUTTONS, M_PADTOUCH, M_EMULATION,
-        M_CONTROLS, M_STARTBTN, M_FAST, M_FASTBTN, M_FFLOWRES, M_SWITCH_FF, M_SAVESTATE, M_LOADSTATE, M_RESET, M_QUIT,
+        M_CONTROLS, M_STARTBTN, M_FAST, M_FASTBTN, M_FFLOWRES, M_SWITCH_FF, M_SAVESTATE, M_LOADSTATE, M_AUTO_STATE, M_AUTO_RESUME, M_RESET, M_QUIT,
         M_SETTINGS, M_DISPLAY, M_LANGUAGE, M_SOUND, M_GRAPHICS, M_CONTROLMENU, M_BACK, M_CHEATS, M_NOTHING,
         M_VOLUME, M_FFMUTE, M_ASPECT, M_RA, M_RA_ON, M_RA_ACCOUNT, M_RA_GAME, M_RA_BANNER, M_RA_LOGIN, M_RA_TYPED, M_RA_CANCEL, M_BOTHVER,
         M_RA_LIST, M_ACH_POINTS, M_ACH_STATUS, M_ACH_RARITY,
@@ -5282,7 +5357,7 @@ int main(int argc, char** argv)
     bool captureReleased = false;
     bool navHoldOff = false; // (the button just given: ignored by the menu until let go)
     PadState physPad, prevPhysPad; // the controller as it is, before RemapPad
-    bool saveEdge = false, loadEdge = false; // (SAVE STATE / LOAD STATE: the button just pressed)
+    bool saveEdge = false, loadEdge = false, resetEdge = false, zoomEdge = false; // physical shortcut presses
     const int ctlRow0 = ctlHasKeyboard ? 1 : 0; // the first action's row
     const int ctlRowReset = ctlRow0 + Controls::COUNT, ctlRowBack = ctlRowReset + 1;
     auto buildMenu = [&]() {
@@ -5539,6 +5614,8 @@ int main(int argc, char** argv)
         {
             add(M_CONTROLS, "KEYS AND BUTTONS", "");
             add(M_FASTBTN, "FAST FORWARD BUTTON", cfg.fastButtonToggle ? "TOGGLE" : "HOLD");
+            add(M_AUTO_STATE, "AUTO SAVE STATE", onOff(cfg.autoState));
+            add(M_AUTO_RESUME, "RESUME ON START", onOff(cfg.autoResume));
             add(M_BACK, "BACK", "");
         }
     };
@@ -5619,7 +5696,23 @@ int main(int argc, char** argv)
     };
     // The quick slot (SAVE STATE / LOAD STATE in the pause menu, and their keys and buttons).
     auto saveQuick = [&]() {
-        say(WriteSnapshot(*nds, quickState, frame) ? "STATE SAVED" : "SAVE STATE FAILED");
+        const bool saved = StateSlots::Save(quickState, [&](const std::string& temporary) {
+            return WriteSnapshot(*nds, temporary, frame);
+        });
+        say(saved ? "STATE SAVED" : "SAVE STATE FAILED - PREVIOUS STATE KEPT");
+    };
+    auto saveAutomatic = [&]() {
+        if (!autoStateAllowed || !cfg.autoState || autoStateBlocked || !frame) return;
+        const bool saved = StateSlots::Save(autoStatePath, [&](const std::string& temporary) {
+            return WriteSnapshot(*nds, temporary, frame);
+        });
+        autoStateTimer.Saved(SDL_GetTicks());
+        fprintf(stderr, "[auto-state] %s frame=%u\n", saved ? "saved" : "failed; prior state kept", frame);
+        if (!saved)
+        {
+            autoStateBlocked = true;
+            say("AUTO STATE FAILED - PREVIOUS STATE KEPT");
+        }
     };
     auto resetGame = [&]() {
         nds->Reset(); nds->SetupDirectBoot("game.nds"); nds->Start();
@@ -6451,6 +6544,7 @@ int main(int argc, char** argv)
                 else if (ev.type == SDL_APP_WILLENTERBACKGROUND || ev.type == SDL_APP_TERMINATING)
                 {
                     // A phone may close the app at any time once it is in the background.
+                    saveAutomatic();
                     if (!opt.noSave) FlushSave(opt.save);
                     cfg.Save(opt.config);
                 }
@@ -6515,6 +6609,7 @@ int main(int argc, char** argv)
                     else if (act == Controls::SWAP) focus.manualFlip = !focus.manualFlip;
                     else if (act == Controls::SAVE) saveQuick();
                     else if (act == Controls::LOAD) loadQuick();
+                    else if (act == Controls::RESET) { resetGame(); say("GAME RESET"); }
                     else if (act >= 0) {} // (a DS button, or fast forward: read as held, below)
                     else if (k == SDLK_TAB) layout = LayoutNext(layout);
                     else if (k == SDLK_F2) focus.mode = (focus.mode + 1) % 3;
@@ -6794,13 +6889,15 @@ int main(int argc, char** argv)
             nav = MenuInput();
             ps = PadState();
         }
-        // Save and load state: the button given in KEYS AND BUTTONS, once as it goes down.
-        // Read here, before this frame's buttons are remembered.
+        // Save, load and reset shortcuts: read from the physical controller, once on press.
         {
             const int saveIn = cfg.controls.Pad(Controls::SAVE, cfg.byLabel);
             const int loadIn = cfg.controls.Pad(Controls::LOAD, cfg.byLabel);
+            const int resetIn = cfg.controls.Pad(Controls::RESET, cfg.byLabel);
             saveEdge = !menu.open && InputHeld(physPad, saveIn) && !InputHeld(prevPhysPad, saveIn);
             loadEdge = !menu.open && InputHeld(physPad, loadIn) && !InputHeld(prevPhysPad, loadIn);
+            resetEdge = fastInputFocused && !menu.open && InputHeld(physPad, resetIn) && !InputHeld(prevPhysPad, resetIn);
+            zoomEdge = !menu.open && ZoomPressed(physPad, prevPhysPad, cfg.controls, cfg.byLabel);
         }
         prevPhysPad = physPad;
         if (navHoldOff)
@@ -7271,6 +7368,14 @@ int main(int argc, char** argv)
                 cfg.Save(opt.config);
                 fastButton.Block();
                 break;
+            case M_AUTO_STATE:
+                cfg.autoState = !cfg.autoState;
+                cfg.Save(opt.config);
+                break;
+            case M_AUTO_RESUME:
+                cfg.autoResume = !cfg.autoResume;
+                cfg.Save(opt.config);
+                break;
             case M_VOLUME:
                 // (Left goes down, right and A up; past 100 it comes round to OFF, and back. A
                 // tap on the bar sets it to the block tapped.)
@@ -7343,6 +7448,7 @@ int main(int argc, char** argv)
         {
             if (saveEdge) saveQuick();
             if (loadEdge) loadQuick();
+            if (resetEdge) { resetGame(); say("GAME RESET"); }
             PadState toGame = ps;
             if (cfg.startMenu && ctrlStart) toGame.btn[PAD_START] = touchStart; // (START is the menu's)
             keys |= PadKeys(toGame, cfg.byLabel);
@@ -7358,7 +7464,7 @@ int main(int argc, char** argv)
             if (!padTouchNow && cfg.controls.pad[Controls::SWAP] >= 0 && pressed(PAD_RS)) focus.manualFlip = !focus.manualFlip;
             // (ZOOM: a click of the right stick steps it, the right stick looks around; not while the
             // stick is the touch cursor, nor when the click is SWAP SCREENS.)
-            if (!padTouchNow && cfg.controls.pad[Controls::SWAP] < 0 && pressed(PAD_RS)) dsZoomCycle = true;
+            if (!padTouchNow && zoomEdge) dsZoomCycle = true;
             if (!padTouchNow)
             {
                 if (fabsf(ps.rx) > fabsf(dsZoomSX)) dsZoomSX = ps.rx;
@@ -7435,6 +7541,30 @@ int main(int argc, char** argv)
             ffHiddenMs = 0;
         }
 #endif
+        // Fast forward where the game's 3D runs at 30 pictures a second (the gen 4 overworld: a
+        // new 3D frame every second display frame): an odd number of frames a picture (3x, as
+        // the measure above often chose) showed the world 1 and 2 frames on by turns, a judder
+        // that looked like 30 fps (GitHub #178). There it runs an even number (3 becomes 2).
+        // Told by the 3D frames' spacing: always an even number of display frames apart.
+        {
+            static uint64_t lastFlush = 0;
+            static int evenRun = 0, still = 0;
+            const uint64_t lf = nds->GPU.GPU3D.LastFlushVBlank;
+            if (lf == lastFlush) { if (++still >= 4) evenRun = 0; }
+            else
+            {
+                const uint64_t d = lf - lastFlush;
+                still = 0;
+                evenRun = (d % 2 == 0) ? std::min(evenRun + 1, 100) : 0;
+                lastFlush = lf;
+            }
+            static bool told = false;
+            if (speed > 2 && (speed & 1) && evenRun >= 4)
+            {
+                speed--;
+                if (!told) { told = true; fprintf(stderr, "[ff] the 3D runs at half rate: fast forward in even steps (%d)\n", speed); }
+            }
+        }
         // A direction just pressed outside uninterrupted overworld walking runs at normal speed
         // for a brief moment (120ms) so a quick tap in a menu, dialogue or battle lands cleanly.
         auto overworldDialogueOpen = [&]() {
@@ -9196,6 +9326,8 @@ int main(int argc, char** argv)
                 if (selId == M_STARTBTN) menuHint = cfg.startMenu ? "START OPENS THIS MENU" : "START IS THE DS START";
                 if (selId == M_CONTROLS) menuHint = "SAVE, LOAD, FAST FORWARD, SWAP";
                 if (selId == M_FASTBTN) menuHint = "HOLD: RELEASE TO STOP. TOGGLE: PRESS ONCE TO START AND AGAIN TO STOP. APPLIES TO KEYBOARD, CONTROLLER AND ON-SCREEN FAST FORWARD.";
+                if (selId == M_AUTO_STATE) menuHint = "KEEPS AN AUTOMATIC STATE EVERY MINUTE AND ON EXIT (SEPARATE FROM MANUAL SLOTS)";
+                if (selId == M_AUTO_RESUME) menuHint = "LOADS THE AUTOMATIC STATE AT LAUNCH WHILE KEEPING YOUR IN-GAME SAVE";
                 if (selId == M_BOTHVER) menuHint = "WILD POKEMON OF BOTH VERSIONS";
                 if (selId == M_CHEATS) menuHint = cheats.items.empty() ? "NONE FOUND: SEE THE README" : "ACTION REPLAY CODES";
                 if (selId == M_NOTHING && menuPage == PAGE_CHEATS && cheats.items.empty()) menuHint = "DATABASE INFO EXPLAINS WHAT WAS FOUND";
@@ -9648,6 +9780,8 @@ int main(int argc, char** argv)
             if (!WriteSnapshot(*nds, opt.stateSave, scriptClock)) fprintf(stderr, "snapshot failed\n");
         }
 
+        if (!autoStateNote.empty()) { say(autoStateNote); autoStateNote.clear(); }
+        if (autoStateTimer.Due(SDL_GetTicks(), autoStateAllowed && cfg.autoState && !autoStateBlocked, paused)) saveAutomatic();
         if (!opt.noSave && frame % 120 == 0 && !FlushSave(opt.save))
             say("SAVE FAILED - CHECK DISK SPACE AND SAVE FOLDER");
         if (!opt.noSave && frame && frame % (60 * 60 * 30) == 0) BackupSave(opt.save); // (about every half hour)
@@ -9670,6 +9804,7 @@ int main(int argc, char** argv)
         fflush(stderr);
     };
     exitStep("saving");
+    saveAutomatic();
     if (!opt.noSave && !FlushSave(opt.save) && !opt.headless)
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FullDex save failed",
             "Your latest progress could not be written reliably. Check disk space and save-folder permissions. Keep the save and .tmp files for recovery.", window);

@@ -196,7 +196,7 @@ Action Replay codes, turned on and off from **Cheats** in the pause menu:
 ![Emerald: a wild Rayquaza appears at the top of Sky Pillar](docs/screenshots/gba-emerald-rayquaza-battle.gif)
 
 - Emerald, FireRed, LeafGreen, Ultra Violet and Generation 3 Evolved, on a built-in widescreen GBA player: wider overworlds, extended battle backgrounds, and weather across the whole screen.
-- **GBA ROM hacks** play too, with saves of their own. A hack without its own widescreen patch uses one made for a similar game when its code still matches; otherwise it plays at the GBA's normal size.
+- **GBA ROM hacks** play too, with saves of their own. Hacks with a static widescreen patch (or compatible base engine) use it; dozens of decomp hacks without static patches (including *SoulGold*, *Heart & Soul*, *Lazarus*, *Seaglass*, *Odyssey*, *Gaia* and *Recharged Yellow*) get dynamic 1x overworld widescreen plus **Zoom and Look-Around** via [PokeDaisy](https://github.com/lidor30/pokedaisy) **WIDE**, while remaining unmapped hacks play at the GBA's normal size.
 - The pause menu matches the game list's look and language.
 
 ---
@@ -231,6 +231,7 @@ NoSplitNX started as a Switch fork of [mamesj/pokemon-fulldex](https://github.co
 - [ClickingMaster/ssrecomp](https://github.com/ClickingMaster/ssrecomp): the original single-screen SoulSilver project.
 - [melonDS](https://melonds.kuribo64.net): DS emulation.
 - [mGBA](https://mgba.io) and Pokémon GBA Widescreen: GBA emulation and widescreen patches.
+- [PokeDaisy](https://github.com/lidor30/pokedaisy) by Lidor Itzhari: based on PokeDaisy for dynamic GBA widescreen rebuild (`WIDE`), Zoom and Look-Around (`GPL-3.0`).
 - [sphaira](https://github.com/ITotalJustice/sphaira): HOME Menu forwarder generation.
 - DeadSkullzJr and libretro-database: cheat databases. Libretro Thumbnails and SteamGridDB: cover art.
 

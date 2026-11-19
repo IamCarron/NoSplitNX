@@ -6,6 +6,7 @@
 
 #include "games.h"
 #include "gba_games.h"
+#include "gba_host_ui.h"
 #include "launcher.h"
 #include "cover_fetch.h"
 
@@ -448,6 +449,44 @@ int main(int argc, char** argv)
         assert(list[0].art.size() == (size_t)Launcher::Art * Launcher::Art);
         assert(list[1].art.size() == (size_t)Launcher::Art * Launcher::Art);
         assert(fs::exists(fetchDir / "icons/Pokemon_SoulGold_v1_2_1.png"));
+    }
+
+    // 10. Unified NoSplitNX logo and GbaHostUi native DS-style GBA pause menu & slider rendering.
+    {
+        Canvas lc;
+        lc.Resize(1280, 720);
+        lc.Clear();
+        Launcher::DrawDsLogo(lc, 30, 10, 3, 0xFFE8EEFF);
+        bool hasCyan = false, hasCoral = false, hasBallRed = false, hasBallWhite = false;
+        for (uint32_t px : lc.px)
+        {
+            if (px == 0xFF00B8E6u) hasCyan = true;
+            if (px == 0xFFFF4B55u) hasCoral = true;
+            if (px == 0xFFEF3B45u) hasBallRed = true;
+            if (px == 0xFFF4F6FBu) hasBallWhite = true;
+        }
+        assert(hasCyan && hasCoral && hasBallRed && hasBallWhite);
+
+        UiLang::Set("es");
+        const GbaWide::UiHost* uiHost = GbaHostUi::Api();
+        assert(uiHost && uiHost->drawOverlay);
+        std::vector<uint32_t> px;
+        GbaWide::MenuHostState drawn;
+        std::vector<GbaWide::MenuHostItem> items = {
+            { "GRAPHICS", "", false, -1 },
+            { "VOLUME", "80%", false, 8 },
+            { "BACK", "", false, -1 },
+        };
+        uiHost->drawOverlay(uiHost->ud, px, 1280, 720, true, items, 1,
+                            "SOUND", "A: CHANGE   B: BACK", "THE GAME'S SOUND.",
+                            "SAVED", 255, 60, true, "purple", drawn);
+        assert(px.size() == (size_t)1280 * 720);
+        assert(Menu::Accent == AccentNamed("purple"));
+        assert(drawn.boxW > 300 && drawn.boxH > 120 && drawn.shown == 3);
+        assert(drawn.ItemAt(drawn.boxX - 10, drawn.boxY) == -2);
+        assert(drawn.ItemAt(drawn.boxX + 30, drawn.firstY + drawn.lineH + 2) == 1);
+        assert(drawn.barStep > 0 && drawn.SliderAt(drawn.barX + 4 * drawn.barStep + 1) == 5);
+        UiLang::Set("en");
     }
 
     std::puts("GBA ROM hacks test OK: unrestricted detection, UPS/BPS/IPS32 patching, PatchCantTry, Spanish patches, and card UI");

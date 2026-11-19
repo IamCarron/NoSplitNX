@@ -1719,6 +1719,7 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
                 if (fy < 0) fy = 0;
                 int iy = (int)fy;
                 float wy = fy - iy;
+                const float wyNear = wy; // (before MergedSharp: which source row is nearest)
                 if (p.sharp) wy = std::clamp((wy - 0.5f) * s + 0.5f, 0.0f, 1.0f);
                 int iy1 = iy + 1 < el.sh ? iy + 1 : iy;
                 for (int x = 0; x < w; x++)
@@ -1729,13 +1730,31 @@ inline void MergedCompose(const Scene& scene, const ScreenImage screens[2], int 
                     if (fx < 0) fx = 0;
                     int ix = (int)fx;
                     float wx = fx - ix;
+                    const float wxNear = wx;
                     if (p.sharp) wx = std::clamp((wx - 0.5f) * sX + 0.5f, 0.0f, 1.0f);
                     int ix1 = ix + 1 < el.sw ? ix + 1 : ix;
+                    // TEXT STAYS SHARP (GitHub #183): MergedSharp's blended seams softened the
+                    // text of message boxes and menus. Where the nearest source pixel is one of
+                    // the 2D background layers (the game's text boxes, menus and windows: they do
+                    // not move with the camera, so they cannot shimmer), it is taken whole, as
+                    // before 1.6.
+                    float wyHere = wy;
+                    if (p.sharp && src.flags)
+                    {
+                        const int nx = wxNear < 0.5f ? ix : ix1, ny = wyNear < 0.5f ? iy : iy1;
+                        const int nsx = el.sx + (el.flipX ? el.sw - 1 - nx : nx), nsy = el.sy + (el.flipY ? el.sh - 1 - ny : ny);
+                        const uint8_t lc = LayerClass(src.flags[nsy * 256 + nsx]);
+                        if (lc >= 1 && lc <= 0x0F)
+                        {
+                            wx = wxNear < 0.5f ? 0.0f : 1.0f;
+                            wyHere = wyNear < 0.5f ? 0.0f : 1.0f;
+                        }
+                    }
 
                     float acc[3] = { 0, 0, 0 }, cover = 0;
                     const int px[4] = { ix, ix1, ix, ix1 };
                     const int py[4] = { iy, iy, iy1, iy1 };
-                    const float wt[4] = { (1 - wx) * (1 - wy), wx * (1 - wy), (1 - wx) * wy, wx * wy };
+                    const float wt[4] = { (1 - wx) * (1 - wyHere), wx * (1 - wyHere), (1 - wx) * wyHere, wx * wyHere };
                     for (int k = 0; k < 4; k++)
                     {
                         int srcX = el.sx + (el.flipX ? el.sw - 1 - px[k] : px[k]);

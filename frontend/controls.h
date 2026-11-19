@@ -34,6 +34,7 @@ enum Action
     SWAP,  // swaps which screen is large (with STICK TOUCH CURSOR on a controller)
     SAVE,  // quick save state (one slot per game)
     LOAD,  // quick load state
+    RESET, // restart immediately; unassigned until explicitly chosen
     COUNT
 };
 
@@ -53,14 +54,14 @@ enum
 inline const char* ActionKey(int a)
 {
     static const char* k[COUNT] = { "a", "b", "x", "y", "l", "r", "start", "select", "up", "down", "left", "right",
-                                    "menu", "fast", "swap", "save", "load" };
+                                    "menu", "fast", "swap", "save", "load", "reset" };
     return a >= 0 && a < COUNT ? k[a] : "";
 }
 
 inline const char* ActionName(int a)
 {
     static const char* n[COUNT] = { "A", "B", "X", "Y", "L", "R", "START", "SELECT", "UP", "DOWN", "LEFT", "RIGHT",
-                                    "PAUSE MENU", "FAST FORWARD", "SWAP SCREENS", "SAVE STATE", "LOAD STATE" };
+                                    "PAUSE MENU", "FAST FORWARD", "SWAP SCREENS", "SAVE STATE", "LOAD STATE", "RESET GAME" };
     return a >= 0 && a < COUNT ? n[a] : "";
 }
 
@@ -177,6 +178,7 @@ inline const char* ActionHint(int a)
     case SWAP: return "SWAPS WHICH SCREEN IS LARGE";
     case SAVE: return "SAVES TO THE QUICK SLOT";
     case LOAD: return "LOADS THE QUICK SLOT";
+    case RESET: return "RESTARTS NOW; UNSAVED PROGRESS IS LOST";
     default: return nullptr;
     }
 }
@@ -294,6 +296,11 @@ struct Bindings
             }
         pad[a] = in;
     }
+    // No key or button at all (CONTROLS' CLEAR BINDING; only Fulldex's own shortcuts: FAST, SWAP,
+    // SAVE, LOAD, RESET). A key of 0 is SDL's unknown one, never pressed, shown as "-".
+    static bool Clearable(int a) { return a == FAST || a == SWAP || a == SAVE || a == LOAD || a == RESET; }
+    void ClearKey(int a) { if (Clearable(a)) key[a] = 0; }
+    void ClearPad(int a) { if (Clearable(a)) pad[a] = PAD_NONE; }
     void SetKey(int a, int sc)
     {
         const int old = Key(a);
@@ -314,7 +321,7 @@ struct Bindings
                 if (isKey)
                 {
                     const int sc = atoi(v.c_str());
-                    key[a] = sc > 0 && sc < SDL_NUM_SCANCODES ? sc : -1;
+                    key[a] = v == "0" && Clearable(a) ? 0 : sc > 0 && sc < SDL_NUM_SCANCODES ? sc : -1;
                 }
                 else if (v == "none") pad[a] = PAD_NONE;
                 else pad[a] = InputFromKey(v);

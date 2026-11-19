@@ -2,7 +2,9 @@
 // Widescreen's: CMake with GBAW_EMBEDDED, the library gbawide): its GBA games and their
 // pictures for that program's list, and playing one in a window of its own until QUIT.
 #pragma once
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -62,6 +64,49 @@ struct AchievementsHost
 };
 #define GBAW_HOST_HAS_CHEATS 1
 
+struct MenuHostItem
+{
+    std::string label, value;
+    bool info = false;
+    int slider = -1;
+};
+
+struct MenuHostState
+{
+    int boxX = 0, boxY = 0, boxW = 0, boxH = 0;
+    int lineH = 0, firstY = 0, shown = 0, scroll = 0;
+    int barX = 0, barStep = 0;
+    int count = 0;
+
+    int ItemAt(int x, int y) const
+    {
+        if (boxW <= 0 || x < boxX || x >= boxX + boxW || y < boxY || y >= boxY + boxH) return -2;
+        if (lineH <= 0 || y < firstY) return -1;
+        const int rel = (y - firstY) / lineH;
+        if (rel < 0 || (shown > 0 && rel >= shown)) return -1;
+        const int i = scroll + rel;
+        return i < count ? i : -1;
+    }
+
+    int SliderAt(int x) const
+    {
+        if (barStep <= 0 || x >= barX + 10 * barStep + barStep / 2) return -1;
+        if (x < barX) return x >= barX - 2 * barStep ? 0 : -1;
+        return std::min(10, (x - barX) / barStep + 1);
+    }
+};
+
+// Optional host-rendered overlay (pause menu, toast and FPS counter) using NoSplitNX's Canvas/Menu.
+struct UiHost
+{
+    void (*drawOverlay)(void* ud, std::vector<uint32_t>& outPx, int outW, int outH,
+                        bool menuOpen, const std::vector<MenuHostItem>& items, int selected,
+                        const std::string& title, const std::string& hint, const std::string& note,
+                        const std::string& toast, int toastAlpha, int fpsShown, bool showFps,
+                        const std::string& accentName, MenuHostState& drawn) = nullptr;
+    void* ud = nullptr;
+};
+
 struct Options
 {
     std::string roms, saves; // as for Find
@@ -69,6 +114,8 @@ struct Options
     bool fullscreen = true;  // else a window of w x h
     int w = 1280, h = 720;
     const AchievementsHost* achievements = nullptr; // null: no RetroAchievements
+    const UiHost* ui = nullptr;                     // null: draw GBA's built-in pause menu
+    std::string accent;                             // launcher list_colour theme name
 };
 
 // Plays the game found as `file` (Find) in a window of its own until QUIT GAME in its pause

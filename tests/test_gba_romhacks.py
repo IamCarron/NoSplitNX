@@ -150,6 +150,7 @@ class GbaRomHackTests(unittest.TestCase):
 
     def test_no_looks_like_pokemon_filter_and_switch_gba_enabled(self):
         gba_main = (ROOT / 'gba/frontend/main.cpp').read_text(encoding='utf-8')
+        gba_hacks = (ROOT / 'gba/frontend/hack_names.h').read_text(encoding='utf-8')
         build_game = (ROOT / 'tools/switch/build_game.sh').read_text(encoding='utf-8')
         sw_plat = (ROOT / 'frontend/switch_platform.cpp').read_text(encoding='utf-8')
         self.assertNotIn('LooksLikePokemon', gba_main)
@@ -159,14 +160,24 @@ class GbaRomHackTests(unittest.TestCase):
         # Switch/embedded GBA defaults START button to PAUSE MENU, syncs start_button, and keeps forced hack names.
         self.assertIn('"menu",', gba_main)
         self.assertIn('!strcmp(key, "gba_start")', gba_main)
-        self.assertIn('if (!g.forced && g.patch == n.patch) l.name = n.name;', gba_main)
-        self.assertIn('"gen3evolved"', gba_main)
+        self.assertIn('HackNames::IsThatHack', gba_main)
+        self.assertIn('pk_wide_knows(g.crc)', gba_main)
+        self.assertIn('DynamicWide1x()', gba_main)
+        self.assertIn('"gen3evolved"', gba_hacks)
         self.assertIn('ApplyUiLanguage(', gba_main)
         # HOME Menu forwarders include ROM hacks cleanly and generate fallback icons via DrawCartridgeCase.
         self.assertIn('ForwarderKey(', sw_plat)
         self.assertNotIn('!Playable(g) || g.hack', sw_plat)
         self.assertIn('Launcher::DrawCartridgeCase(card,', sw_plat)
         self.assertIn('CoverFetch::DownloadMissing(', sw_plat)
+        self.assertIn('ADDED', sw_plat)
+        self.assertIn('SOME FAILED (SEE GAME.LOG)', sw_plat)
+        # Unified NoSplitNX emblem and host-rendered DS-matching GBA pause menu.
+        self.assertIn('DrawNoSplitLogo(', (ROOT / 'frontend/ui.h').read_text(encoding='utf-8'))
+        self.assertIn('DrawNoSplitLogo(', (ROOT / 'frontend/launcher.h').read_text(encoding='utf-8'))
+        self.assertIn('GbaHostUi::Api()', sw_plat)
+        self.assertIn('P_SETTINGS', gba_main)
+        self.assertIn('uiHost->drawOverlay', gba_main)
         # Upstream HG/SS battle Yes/No + RetroAchievements unlock banner ported.
         main_cpp = (ROOT / 'frontend/main.cpp').read_text(encoding='utf-8')
         self.assertIn('shownName == "battle-yesno" && pendingName == "battle"', main_cpp)

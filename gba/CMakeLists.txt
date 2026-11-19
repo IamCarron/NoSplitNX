@@ -128,7 +128,11 @@ else()
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_art.py" ${GBAW_ART}
         VERBATIM)
 endif()
-set(GBAW_SOURCES frontend/main.cpp frontend/third_party/xbrz/xbrz.cpp "${CMAKE_CURRENT_BINARY_DIR}/gen/patches.h" "${CMAKE_CURRENT_BINARY_DIR}/gen/art.h")
+# PokeDaisy's WIDE (frontend/pokedaisy, GPL-3.0): dynamic overworld rebuild from memory for Zoom,
+# Look-Around and ROM hacks without static widescreen patches (built with PK_WIDE_NO_GUARD on Switch).
+set(GBAW_PK_WIDE frontend/pokedaisy/pk_wide.c frontend/pokedaisy/pk_wide_gb_none.c)
+set_source_files_properties(${GBAW_PK_WIDE} PROPERTIES COMPILE_DEFINITIONS PK_WIDE_NO_GUARD)
+set(GBAW_SOURCES frontend/main.cpp frontend/third_party/xbrz/xbrz.cpp ${GBAW_PK_WIDE} "${CMAKE_CURRENT_BINARY_DIR}/gen/patches.h" "${CMAKE_CURRENT_BINARY_DIR}/gen/art.h")
 get_target_property(GBAW_MGBA_DEFS mgba COMPILE_DEFINITIONS)
 if(GBAW_EMBEDDED)
     # The library for the launcher: the player without its own list (embed.h), on the

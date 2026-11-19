@@ -1,0 +1,7 @@
+Based on PokeDaisy by Lidor Itzhari - https://github.com/lidor30/pokedaisy
+Copyright (C) 2026 Lidor Itzhari. GNU GPL version 3.
+pk_wide.c, pk_wide.h, pk_wide_games.h, pk_cheats.h and pk_coop_emerald.h imported from commit
+0040e61fcb129d7313e3941771572c93d6722816 (ZOOM and the look-around for the GBA games). FullDex's changes:
+pk_wide.c's two mGBA names (GBA_SIZE_EWRAM, GBA_BASE_PALETTE_RAM) for the newer mGBA and Windows' far / near
+macros undone, the field's 512-wide BGs (FullDex's widescreen patches) read in its tilemap check, built with
+PK_WIDE_NO_GUARD; pk_wide_gb_none.c stands in for the Game Boy half (FullDex plays no Game Boy games).

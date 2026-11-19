@@ -660,6 +660,60 @@ struct Canvas
 
 };
 
+// Compact NoSplitNX emblem: one 16:9 widescreen with a Poké Ball framed by Switch Joy-Con sides.
+inline void DrawNoSplitLogo(Canvas& c, int x, int y, int s, uint32_t frameColor = 0xFFE8EEFF)
+{
+    const int u = std::max(1, s);
+    const int w = 13 * u, h = 9 * u;
+    const int jw = std::max(2, 2 * u);
+    const int rOuter = std::max(1, u);
+    c.FillRound(x, y, jw, h, rOuter, 0xFF00B8E6);
+    c.FillRound(x + w - jw, y, jw, h, rOuter, 0xFFFF4B55);
+    if (u >= 2)
+    {
+        const int dot = std::max(1, u / 2 + 1);
+        c.FillRound(x + (jw - dot) / 2, y + 2 * u, dot, dot, dot / 2, 0x900B1122);
+        c.FillRound(x + w - jw + (jw - dot) / 2, y + h - 2 * u - dot, dot, dot, dot / 2, 0x900B1122);
+    }
+    const int sx = x + jw - std::max(1, u / 3);
+    const int sw = w - 2 * (sx - x);
+    c.FillRound(sx, y, sw, h, rOuter, 0xFF0E1729);
+    const int inset = std::max(1, u / 2);
+    const int ix = sx + inset, iy = y + inset, iw = sw - 2 * inset, ih = h - 2 * inset;
+    if (iw > 2 && ih > 2)
+    {
+        const int skyH = (ih * 62) / 100;
+        c.Fill(ix, iy, iw, skyH, 0xFF4CA8EB);
+        c.Fill(ix, iy + skyH, iw, ih - skyH, 0xFF3E9A54);
+        const int cx = ix + iw / 2, cy = iy + ih / 2;
+        const int ballR = std::max(2, (std::min(iw, ih) - 2) / 2);
+        const int bw = std::max(1, u / 2);
+        const int beltH = std::max(0, (ballR >= 6) ? 1 : 0);
+        const int btnR = std::max(1, ballR / 3);
+        const int btnCore = std::max(1, btnR / 2);
+        const int r2Out = ballR * ballR;
+        const int r2In = std::max(1, (ballR - bw) * (ballR - bw));
+        const int r2Btn = btnR * btnR;
+        const int r2Core = btnCore * btnCore;
+        for (int dy = -ballR; dy <= ballR; dy++)
+        {
+            for (int dx = -ballR; dx <= ballR; dx++)
+            {
+                const int d2 = dx * dx + dy * dy;
+                if (d2 > r2Out) continue;
+                uint32_t col;
+                if (d2 > r2In) col = 0xFF141B2B;
+                else if (d2 <= r2Core) col = 0xFFF4F6FB;
+                else if (d2 <= r2Btn) col = 0xFF141B2B;
+                else if (std::abs(dy) <= beltH) col = 0xFF141B2B;
+                else col = dy < 0 ? 0xFFEF3B45 : 0xFFF4F6FB;
+                c.Fill(cx + dx, cy + dy, 1, 1, col);
+            }
+        }
+    }
+    c.OutlineRound(sx, y, sw, h, rOuter, 1, frameColor);
+}
+
 // The accent colours of COLOUR (the game list's settings, GAME LIST): the game list's lines and
 // frame (launcher.h, ThemeNamed) and the pause menu's chosen row, its box and text shaded from it.
 inline uint32_t AccentNamed(const std::string& name)
@@ -996,17 +1050,13 @@ struct Menu
             const int hdrH = lineH + 3 * scale;
             c.FillGradV(bx + scale, by + scale, boxW - 2 * scale, hdrH, headerCol + 0x0006080C, headerCol, std::max(1, rad - scale));
             c.Fill(bx + 6 * scale, by + hdrH, boxW - 12 * scale, std::max(1, scale / 2), 0xFF26354A);
-            const int sw = 8 * scale, sh = 5 * scale, gap = scale;
+            const int logoW = 13 * scale, logoH = 9 * scale;
             const int titleFontH = std::max(22, 13 * scale);
             const int titleW = c.ModernTextWidth(niceTitle, titleFontH);
-            const int contentW = sw + 6 * scale + titleW;
+            const int contentW = logoW + 6 * scale + titleW;
             const int startX = bx + (boxW - contentW) / 2;
-            const int logoX = startX, logoY = by + scale + (hdrH - (sh * 2 + gap)) / 2;
-            c.OutlineRound(logoX, logoY, sw, sh, scale, 1, 0xFFFFFFFF);
-            c.FillBlend(logoX + scale, logoY + scale, sw - 2 * scale, sh - 2 * scale, 0x33FFFFFF);
-            c.OutlineRound(logoX, logoY + sh + gap, sw, sh, scale, 1, 0xFFFFFFFF);
-            c.FillBlend(logoX + scale, logoY + sh + gap + scale, sw - 2 * scale, sh - 2 * scale, 0x66FFFFFF);
-            c.ModernText(startX + sw + 6 * scale, by + scale + (hdrH - titleFontH) / 2, niceTitle, titleFontH, 0xFFFFFFFF);
+            DrawNoSplitLogo(const_cast<Canvas&>(c), startX, by + scale + (hdrH - logoH) / 2, scale, 0xFFE8EEFF);
+            c.ModernText(startX + logoW + 6 * scale, by + scale + (hdrH - titleFontH) / 2, niceTitle, titleFontH, 0xFFFFFFFF);
         }
 
         int y = by + (hasTitle ? lineH : 0) + 5 * scale;

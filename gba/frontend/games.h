@@ -395,6 +395,7 @@ struct Game
     std::string patch;     // the widescreen patch it takes, "" for none
     std::string why;       // why it has none
     uint32_t colour = 0xFF505A70;
+    uint32_t crc = 0;      // CRC-32 of the ROM before any widescreen patch (for PokeDaisy WIDE)
     bool known = false;
     bool hasSave = false;
     // A hack whose widescreen patch doesn't fit (why says what is in the way): tried all the same,
@@ -516,6 +517,7 @@ inline bool SameFamily(const char* patchName, const char* codeBase)
 inline void Identify(Game& g, const std::vector<uint8_t>& rom)
 {
     g.sha1 = Sha1(rom);
+    g.crc = doCrc32(rom.data(), rom.size());
     for (const Known& k : KnownGames())
         if (g.sha1 == k.sha1)
         {
@@ -642,9 +644,8 @@ struct ScanCache
                 if (t == std::string::npos) break;
                 a = t + 1;
             }
-            // (An older list's lines: looked at again. Version 5: hooked-entry fallback detection
-            // across sibling patches including Generation 3 Evolved.)
-            if (f.size() != 13 || f[12] != "5") continue;
+            // (An older list's lines: looked at again. Version 6 also stores pre-wide CRC-32 for PokeDaisy WIDE.)
+            if (f.size() != 14 || f[13] != "6") continue;
             Game g;
             g.rom = f[1];
             g.ips = f[2];
@@ -657,6 +658,7 @@ struct ScanCache
             g.colour = (uint32_t)strtoul(f[9].c_str(), nullptr, 16);
             g.known = f[10] == "1";
             g.forced = f[11] == "1";
+            g.crc = (uint32_t)strtoul(f[12].c_str(), nullptr, 16);
             entries.push_back({ f[0], g });
             used.push_back(false);
         }
@@ -694,11 +696,12 @@ struct ScanCache
             if (!used[i]) continue;
             const auto& e = entries[i];
             const Game& g = e.second;
-            char colour[16];
+            char colour[16], crcHex[16];
             snprintf(colour, sizeof colour, "%08X", (unsigned)g.colour);
+            snprintf(crcHex, sizeof crcHex, "%08X", (unsigned)g.crc);
             out += clean(e.first) + "\t" + clean(g.rom) + "\t" + clean(g.ips) + "\t" + clean(g.fileName) + "\t" + clean(g.key) +
                    "\t" + clean(g.name) + "\t" + g.sha1 + "\t" + g.patch + "\t" + clean(g.why) + "\t" + colour + "\t" +
-                   (g.known ? "1" : "0") + "\t" + (g.forced ? "1" : "0") + "\t5\n";
+                   (g.known ? "1" : "0") + "\t" + (g.forced ? "1" : "0") + "\t" + crcHex + "\t6\n";
         }
         WriteFile(path, std::vector<uint8_t>(out.begin(), out.end()));
         changed = false;

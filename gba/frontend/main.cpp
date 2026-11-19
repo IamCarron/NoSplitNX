@@ -24,8 +24,15 @@
 #include "art.h"
 #include "fast_forward_button.h"
 #include "fast_forward_audio.h"
+#include "state_file.h"
+#include "hack_names.h"
+extern "C" {
+#include "pokedaisy/pk_wide.h"
+}
+#include "pokedaisy/wide_camera.h"
 #ifdef GBAW_EMBEDDED
 #include "embed.h"
+#include "auto_state.h"
 // Cheats (CHEATS in the pause menu): Fulldex's, from its frontend folder (on the include path when
 // built into it). All off until the player turns one on.
 #if __has_include("gba_cheats.h")
@@ -149,6 +156,10 @@ const std::vector<Setting>& SettingsList()
         { "colour", "COLOUR CORRECTION", onOff, "0",
           "ON: THE COLOURS AS THEY LOOKED ON A GBA'S SCREEN (THE GAMES WERE MADE EXTRA BRIGHT FOR IT). "
           "OFF: THE GAME'S OWN COLOURS." },
+        { "zoom", "ZOOM AND LOOK AROUND", onOff, "1",
+          "CLICK THE RIGHT STICK OR PRESS C ON THE OVERWORLD TO STEP THE ZOOM OUT; MOVE THE RIGHT STICK TO LOOK AROUND." },
+        { "zoom_text", "AUTO ZOOM IN", onOff, "1",
+          "PULL IN TO 1X ON THE PLAYER WHILE TEXT BOXES ARE UP ON THE OVERWORLD." },
         { "show_fps", "FPS COUNTER", onOff, "0", "SHOWS THE FRAMES A SECOND IN A CORNER." },
         { "volume", "VOLUME",
           { { "0", "OFF" }, { "10", "10%" }, { "20", "20%" }, { "30", "30%" }, { "40", "40%" }, { "50", "50%" },
@@ -171,6 +182,12 @@ const std::vector<Setting>& SettingsList()
 #endif
         { "fast_button", "FAST FORWARD BUTTON", { { "hold", "HOLD" }, { "toggle", "TOGGLE" } }, "hold",
           "HOLD: RELEASE TO STOP. TOGGLE: PRESS ONCE TO START AND AGAIN TO STOP. FOR THE KEYBOARD AND A CONTROLLER; THE >> BUTTON ON THE SCREEN IS ALWAYS A TAP ON, A TAP OFF." },
+#ifdef GBAW_EMBEDDED
+        { "auto_state", "AUTO SAVE STATE", onOff, "0",
+          "KEEP A SEPARATE STATE EVERY MINUTE, WHEN BACKGROUNDED AND ON EXIT. MANUAL SLOTS STAY AS THEY ARE. KEEP SAVING IN THE GAME TOO." },
+        { "auto_resume", "RESUME ON START", onOff, "0",
+          "RESUME THIS ROM'S AUTOMATIC STATE ON THE NEXT START, KEEPING ITS NORMAL SAVE. TURN OFF TO START NORMALLY." },
+#endif
         { "ff_speed", "FAST FORWARD SPEED", { { "2", "2X" }, { "3", "3X" }, { "4", "4X" }, { "8", "8X" } }, "3",
 #if defined(GBAW_PHONE)
           "HOW FAST FAST FORWARD GOES (THE >> BUTTON ON THE SCREEN, OR HOLD A CONTROLLER'S RIGHT TRIGGER)." },
@@ -242,6 +259,26 @@ struct Settings
         }
         ApplyUiLanguage(lang);
     }
+    std::string HostValue(const char* key) const
+    {
+        auto h = values.find("host_settings");
+        if (h == values.end() || h->second.empty() || !key) return "";
+        std::vector<uint8_t> hd;
+        if (!Games::ReadFile(h->second, hd, 1 << 20)) return "";
+        const std::string prefix = std::string(key) + "=";
+        std::string line;
+        hd.push_back('\n');
+        for (uint8_t c : hd)
+        {
+            if (c == '\n' || c == '\r')
+            {
+                if (!line.compare(0, prefix.size(), prefix)) return line.substr(prefix.size());
+                line.clear();
+            }
+            else line += (char)c;
+        }
+        return "";
+    }
     void Save() const
     {
         std::string s;
@@ -278,7 +315,9 @@ struct Settings
         const std::string v = Get(key);
         std::string hk, hv;
         if (!strcmp(key, "scaling")) { hk = "smooth"; hv = v == "smooth" ? "1" : "0"; }
-        else if (!strcmp(key, "show_fps") || !strcmp(key, "volume") || !strcmp(key, "buttons") || !strcmp(key, "ff_mute") || !strcmp(key, "fast_lock") || !strcmp(key, "fast_button")) { hk = key; hv = v; }
+        else if (!strcmp(key, "show_fps") || !strcmp(key, "volume") || !strcmp(key, "buttons") || !strcmp(key, "ff_mute") ||
+                 !strcmp(key, "fast_lock") || !strcmp(key, "fast_button") || !strcmp(key, "zoom") || !strcmp(key, "zoom_text") ||
+                 !strcmp(key, "auto_state") || !strcmp(key, "auto_resume")) { hk = key; hv = v; }
         else if (!strcmp(key, "lcd")) { hk = "gba_lcd"; hv = v; }
         else if (!strcmp(key, "gba_start")) { hk = "start_button"; hv = v == "start" ? "ds" : "menu"; }
         else if (!strcmp(key, "widescreen")) { hk = "aspect"; hv = v == "off" ? "3:2" : v; }
@@ -521,10 +560,13 @@ struct App
     SDL_Window* win = nullptr;
     SDL_Renderer* ren = nullptr;
     SDL_Texture* gameTex = nullptr;   // the GBA picture, MaxW x 160
+    SDL_Texture* zoomTex = nullptr;   // ZOOM / LOOK AROUND / dynamic WIDE: the rendered window
+    SDL_Texture* zoomHdTex = nullptr; // ... scaled through xBRZ
+    int zoomHdW = 0, zoomHdH = 0;
     SDL_Texture* bigTex = nullptr;    // the same scaled up by a whole number (SCALING: SHARP)
     SDL_Texture* hdTex = nullptr;     // HD FILTER: the picture redrawn by xBRZ, HdFactor times as big
     SDL_Texture* lcdTex = nullptr;    // LCD EFFECT: the grid, the size the picture is drawn at
-    int lcdW = 0, lcdH = 0, lcdCols = 0;
+    int lcdW = 0, lcdH = 0, lcdCols = 0, lcdRows = 0;
     std::vector<uint32_t> fxSrc, fxOut, colourLut;
     // Helpers for HD FILTER: xBRZ shares the picture out among the processor's cores by rows.
     struct Workers
@@ -643,9 +685,20 @@ struct App
     struct mCore* core = nullptr;
     Games::Game game;
     std::vector<uint32_t> video = std::vector<uint32_t>((size_t)MaxW * GbaH);
+    // PokeDaisy WIDE (pokedaisy/): dynamic widescreen rebuild and Zoom/Look-Around for hacks and vanilla games.
+    bool pkWide = false;
+    PkWideCamera::Camera camera;
+    std::vector<uint32_t> frame240 = std::vector<uint32_t>((size_t)GbaW * GbaH);
+    std::vector<uint32_t> zoomBuf = std::vector<uint32_t>((size_t)PkWideCamera::Camera::MaxW * PkWideCamera::Camera::MaxH);
+    PkWideCamera::Window zoomWin;
+    bool zoomShown = false;
+    bool zoomRefresh = false;
     int wideExtra = -1;
     bool paused = false;
     Menu pause;
+    bool pauseTouchDown = false, pauseTouchMoved = false;
+    SDL_FingerID pauseTouchId = 0;
+    int pauseTouchX0 = 0, pauseTouchY0 = 0, pauseTouchLastY = 0;
     bool fastToggle = false;
     FastForwardButton fastButton;
     bool fastInputFocused = true;
@@ -659,12 +712,24 @@ struct App
     // RetroAchievements, from the program this is built into (embed.h). None in the standalone game.
     const GbaWide::AchievementsHost* ra = nullptr;
     bool raReady = false;
-    enum PausePage { P_ROOT, P_RA, P_LIST, P_LOGIN, P_CHEATS, P_DISPLAY, P_SOUND, P_CONTROLS } pausePage = P_ROOT;
+    enum PausePage { P_ROOT, P_SETTINGS, P_RA, P_LIST, P_LOGIN, P_CHEATS, P_DISPLAY, P_SOUND, P_CONTROLS } pausePage = P_ROOT;
+    PausePage pauseTouchPage = P_ROOT;
+    std::string autoStatePath;
+    bool autoStateBlocked = false, autoStatePlayed = false;
+    AutoState::Timer autoStateTimer;
     std::vector<const Setting*> pageSettings; // the settings on the DISPLAY, SOUND or CONTROLS page, row by row
     bool typing = false;
     int raField = 0; // 0 the user name, 1 the password
     std::string raUser, raPass;
     std::vector<std::string> achDesc; // the achievements list's descriptions, beside its rows
+    const GbaWide::UiHost* uiHost = nullptr;
+    std::string hostAccent;
+    GbaWide::MenuHostState hostMenu{};
+    std::vector<uint32_t> hostPx;
+    SDL_Texture* hostTex = nullptr;
+    int hostTexW = 0, hostTexH = 0;
+    uint64_t builtHostSig = 0;
+    bool usingHostMenu = false;
 #endif
 #ifdef GBAW_CHEATS
     GbaCheats::Engine cheats;
@@ -912,13 +977,13 @@ struct App
         const bool wantRa = ra && ra->begin;
 #else
         const bool wantRa = false;
-        (void)sold;
 #endif
         // (A hack whose widescreen patch doesn't fit: tried anyway, unless the GBA's own shape
         // was chosen, which is how to play it as it is when it glitches.)
         const std::string shape = set.Get("widescreen");
         const bool ownShape = shape == "off" || shape == "3:2" || shape == "4:3";
-        if (!Games::Prepare(g, rom, error, wantRa ? &sold : nullptr, !ownShape))
+        // Always keep the pre-widescreen ROM copy for PokeDaisy WIDE CRC lookup and RetroAchievements.
+        if (!Games::Prepare(g, rom, error, &sold, !ownShape))
         {
             Toast(error, 5000);
             return false;
@@ -939,7 +1004,8 @@ struct App
         opts.audioBuffers = 4096;
         mCoreConfigLoadDefaults(&core->config, &opts);
         mCoreConfigSetDefaultValue(&core->config, "idleOptimization", "detect");
-        wideExtra = WantedExtra();
+        // Without a static IPS widescreen patch, keep mGBA at 240x160 so pk_wide rebuilds wide views cleanly.
+        wideExtra = !g.patch.empty() ? WantedExtra() : 0;
         mCoreConfigSetIntValue(&core->config, "gba.wideExtra", wideExtra);
         mCoreLoadConfig(core);
         core->setVideoBuffer(core, video.data(), MaxW);
@@ -961,6 +1027,13 @@ struct App
         }
         if (struct VFile* sv = VFileOpen(save.c_str(), O_CREAT | O_RDWR)) core->loadSave(core, sv);
         core->reset(core);
+        pkWide = pk_wide_configure(doCrc32(sold.data(), sold.size())) != 0;
+        camera.Reset();
+        camera.level = 0;
+        zoomShown = false;
+        zoomRefresh = false;
+        fprintf(stderr, "[gba] pk_wide: %s (patch='%s', crc=%08X)\n",
+                pkWide ? "active" : "none", g.patch.c_str(), (unsigned)doCrc32(sold.data(), sold.size()));
 #ifdef GBAW_CHEATS
         cheatBus.core = core;
         cheatsFile = GbaCheats::FolderFor(saves) + "/" + g.key + "-on.txt";
@@ -984,9 +1057,14 @@ struct App
             SDL_ClearQueuedAudio(audio);
             SDL_PauseAudioDevice(audio, 0);
         }
-        if (g.patch.empty()) Toast("NO WIDESCREEN FOR THIS ROM: " + g.why, 4000);
+        if (g.patch.empty() && !pkWide) Toast("NO WIDESCREEN FOR THIS ROM: " + g.why, 4000);
         else if (g.forced && !ownShape) Toast("ROM HACK: GLITCHY SIDES? TRY ASPECT RATIO 3:2", 6000);
 #ifdef GBAW_EMBEDDED
+        autoStatePath = AutoState::Path(states + "/" + g.key + ".ss", doCrc32(rom.data(), rom.size()), rom.size());
+        autoStateBlocked = false;
+        autoStatePlayed = false;
+        autoStateTimer = {};
+        if (!ResumeAutomatic()) { Stop(); return false; }
         // The ROM RetroAchievements knows is the one sold (sold), not the widescreen patch.
         if (wantRa)
         {
@@ -1000,12 +1078,17 @@ struct App
     void Stop()
     {
         if (!core) return;
+        CancelPauseTouch();
 #ifdef GBAW_EMBEDDED
+        SaveAutomatic();
         if (raReady && ra->end) ra->end(ra->ud);
         raReady = false;
         if (typing) SDL_StopTextInput();
         typing = false;
 #endif
+        pk_wide_reset();
+        pkWide = false;
+        zoomShown = false;
         if (audio)
         {
             SDL_PauseAudioDevice(audio, 1);
@@ -1057,7 +1140,11 @@ struct App
         for (auto& kv : artTex)
             if (kv.second) SDL_DestroyTexture(kv.second);
         artTex.clear();
-        for (SDL_Texture** t : { &uiTex, &bigTex, &gameTex, &hdTex, &lcdTex })
+        for (SDL_Texture** t : { &uiTex, &bigTex, &gameTex, &hdTex, &lcdTex, &zoomTex, &zoomHdTex
+#ifdef GBAW_EMBEDDED
+                                 , &hostTex
+#endif
+                               })
             if (*t)
             {
                 SDL_DestroyTexture(*t);
@@ -1089,17 +1176,28 @@ struct App
         core->reloadConfigOption(core, "volume", nullptr);
     }
 
-    std::string StatePath() const { return states + "/" + game.key + ".ss"; }
-    void SaveState()
+    void CancelPauseTouch()
     {
-        struct VFile* vf = VFileOpen(StatePath().c_str(), O_CREAT | O_TRUNC | O_RDWR);
-        const bool ok = vf && mCoreSaveStateNamed(core, vf, SAVESTATE_RTC);
-        if (vf) vf->close(vf);
+        pauseTouchDown = false;
+        pauseTouchMoved = false;
+    }
+    std::string StatePath(int slot = 0) const
+    {
+        return states + "/" + game.key + (slot > 0 ? "." + std::to_string(slot + 1) : std::string()) + ".ss";
+    }
+    void SaveState(int slot = 0)
+    {
+        const bool ok = core && GbaStateFile::Save(StatePath(slot), [&](const std::string& pending) {
+            struct VFile* vf = VFileOpen(pending.c_str(), O_CREAT | O_TRUNC | O_RDWR);
+            const bool saved = vf && mCoreSaveStateNamed(core, vf, SAVESTATE_RTC);
+            const bool closed = vf ? vf->close(vf) : false;
+            return saved && closed;
+        });
         Toast(ok ? "STATE SAVED" : "COULDN'T SAVE THE STATE");
     }
-    void LoadState()
+    void LoadState(int slot = 0)
     {
-        struct VFile* vf = VFileOpen(StatePath().c_str(), O_RDONLY);
+        struct VFile* vf = VFileOpen(StatePath(slot).c_str(), O_RDONLY);
         if (!vf)
         {
             Toast("NO SAVED STATE FOR THIS GAME YET");
@@ -1107,6 +1205,12 @@ struct App
         }
         const bool ok = mCoreLoadStateNamed(core, vf, SAVESTATE_RTC);
         vf->close(vf);
+        if (ok && (DynamicWide1x() || ZoomOn()))
+        {
+            camera.Reset();
+            pk_wide_jump(core, frame240.data());
+            zoomShown = false;
+        }
 #ifdef GBAW_CHEATS
         if (ok) cheats.Reset();
 #endif
@@ -1115,26 +1219,178 @@ struct App
         if (ok && raReady && ra->reset) ra->reset(ra->ud);
 #endif
     }
+#ifdef GBAW_EMBEDDED
+    void SaveAutomatic()
+    {
+        if (!core || autoStatePath.empty() || set.Get("auto_state") != "1" || autoStateBlocked || !autoStatePlayed) return;
+        const bool ok = GbaStateFile::Save(autoStatePath, [&](const std::string& pending) {
+            struct VFile* vf = VFileOpen(pending.c_str(), O_CREAT | O_TRUNC | O_RDWR);
+            const bool saved = vf && mCoreSaveStateNamed(core, vf, SAVESTATE_RTC);
+            const bool closed = vf ? vf->close(vf) : false;
+            return saved && closed;
+        });
+        autoStateTimer.Saved(SDL_GetTicks());
+        fprintf(stderr, "[auto-state gba] %s frame=%llu\n", ok ? "saved" : "failed; previous kept", gameFrames);
+        if (!ok)
+        {
+            autoStateBlocked = true;
+            Toast("AUTO STATE FAILED - PREVIOUS STATE KEPT");
+        }
+    }
+    bool ResumeAutomatic()
+    {
+        if (set.Get("auto_resume") != "1" || autoStatePath.empty() || !AutoState::Present(autoStatePath)) return true;
+        VFile* before = VFileMemChunk(nullptr, 0);
+        if (!before || !mCoreSaveStateNamed(core, before, SAVESTATE_RTC))
+        {
+            if (before) before->close(before);
+            autoStateBlocked = true;
+            Toast("AUTO RESUME SKIPPED - COULD NOT KEEP RECOVERY STATE");
+            return true;
+        }
+        VFile* state = VFileOpen(autoStatePath.c_str(), O_RDONLY);
+        // RTC only: leave the normal SRAM/flash save intact, as manual LoadState does.
+        const bool loaded = state && mCoreLoadStateNamed(core, state, SAVESTATE_RTC);
+        if (state) state->close(state);
+        if (!loaded)
+        {
+            autoStateBlocked = true;
+            const bool recovered = before->seek(before, 0, SEEK_SET) == 0 && mCoreLoadStateNamed(core, before, SAVESTATE_RTC);
+            before->close(before);
+            fprintf(stderr, "[auto-state gba] invalid automatic state; recovery %s\n", recovered ? "succeeded" : "failed");
+            Toast("INVALID AUTO STATE - STARTING NORMALLY; AUTO SAVE PAUSED");
+            return recovered;
+        }
+        before->close(before);
+        autoStatePlayed = true;
+        camera.Reset();
+        if (DynamicWide1x() || ZoomOn()) { pk_wide_jump(core, frame240.data()); zoomShown = false; }
+#ifdef GBAW_CHEATS
+        cheats.Reset();
+#endif
+        fprintf(stderr, "[auto-state gba] resumed; normal save kept\n");
+        Toast("AUTO STATE RESUMED - IN-GAME SAVE KEPT");
+        return true;
+    }
+#endif
 
-    // How many columns the picture gets on each side: the window's shape, or WIDESCREEN.
-    int WantedExtra() const
+    // Target aspect ratio when ASPECT RATIO is wider than GBA's 3:2.
+    double WantedAspect() const
     {
         const std::string w = set.Get("widescreen");
-        double aspect;
-        if (w == "off" || w == "3:2" || w == "4:3") return 0;
+        if (w == "off" || w == "3:2" || w == "4:3") return 0.0;
         if (w == "auto")
         {
             int ow = 16, oh = 9;
             if (ren) SDL_GetRendererOutputSize(ren, &ow, &oh);
-            aspect = oh > 0 ? (double)ow / oh : 16.0 / 9;
+            return oh > 0 ? (double)ow / oh : 16.0 / 9;
+        }
+        const size_t c = w.find(':');
+        return c == std::string::npos ? 16.0 / 9 : atof(w.c_str()) / std::max(0.001, atof(w.c_str() + c + 1));
+    }
+
+    // How many columns the picture gets on each side: the window's shape, or WIDESCREEN.
+    int WantedExtra() const
+    {
+        const double aspect = WantedAspect();
+        if (aspect <= 0.0) return 0;
+        const int e = (int)lround((GbaH * aspect - GbaW) / 2);
+        return std::max(0, std::min(MaxExtra, e));
+    }
+
+    bool DynamicWide1x() const { return game.patch.empty() && pkWide && WantedExtra() > 0; }
+    bool ZoomOn() const { return pkWide && set.Get("zoom") == "1"; }
+
+    // ZOOM: the next step out (back to 1x after the last), said in a toast.
+    void ZoomCycle()
+    {
+        if (!ZoomOn())
+        {
+#ifdef GBAW_EMBEDDED
+            Toast(!pkWide ? "ZOOM ISN'T AVAILABLE FOR THIS GAME YET"
+                          : (uiHost ? "ZOOM AND LOOK AROUND IS OFF (GRAPHICS)" : "ZOOM AND LOOK AROUND IS OFF (DISPLAY)"));
+#else
+            Toast(!pkWide ? "ZOOM ISN'T AVAILABLE FOR THIS GAME YET" : "ZOOM AND LOOK AROUND IS OFF (DISPLAY)");
+#endif
+            return;
+        }
+        const int l = camera.Cycle();
+        char t[48];
+        snprintf(t, sizeof t, "ZOOM %.1fX", camera.Factor(l));
+        Toast(l == 0 ? "ZOOM 1X" : t, 1200);
+    }
+
+    // PokeDaisy WIDE frame: handles Zoom/Look-Around for all known games plus dynamic 1x
+    // widescreen for unpatched hacks (e.g. SoulGold v1.2.1) when a wide aspect is active.
+    void ZoomFrame(bool shown)
+    {
+        zoomShown = false;
+        const bool dyn1x = DynamicWide1x();
+        const bool zoomOn = ZoomOn();
+        if (!dyn1x && !zoomOn) return;
+        const int e = std::max(0, wideExtra);
+        for (int y = 0; y < GbaH; y++)
+            memcpy(frame240.data() + (size_t)y * GbaW, video.data() + (size_t)y * MaxW + e, GbaW * 4);
+        int ow = 0, oh = 0;
+        if (ren) SDL_GetRendererOutputSize(ren, &ow, &oh);
+        if (!zoomOn)
+        {
+            camera.level = 0;
+            camera.lookAround = false;
+            camera.zoomOnText = false;
+            camera.walking = false;
+            camera.stickX = camera.stickY = 0;
         }
         else
         {
-            const size_t c = w.find(':');
-            aspect = c == std::string::npos ? 16.0 / 9 : atof(w.c_str()) / atof(w.c_str() + c + 1);
+            camera.lookAround = true;
+            camera.zoomOnText = set.Get("zoom_text") == "1";
+            const int dirs = pads.Dirs();
+            camera.walking = !paused && ((GameKeys() & 0xF0) != 0 || dirs);
+            float sx = pads.Axis(SDL_CONTROLLER_AXIS_RIGHTX) / 32767.0f, sy = pads.Axis(SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0f;
+            if (key[SDL_SCANCODE_J]) sx = -1;
+            if (key[SDL_SCANCODE_L]) sx = 1;
+            if (key[SDL_SCANCODE_I]) sy = -1;
+            if (key[SDL_SCANCODE_K]) sy = 1;
+            camera.stickX = paused ? 0 : sx;
+            camera.stickY = paused ? 0 : sy;
         }
-        const int e = (int)lround((GbaH * aspect - GbaW) / 2);
-        return std::max(0, std::min(MaxExtra, e));
+        const bool panIdle = camera.level == 0 && std::fabs(camera.stickX) < 0.2f && std::fabs(camera.stickY) < 0.2f;
+        const double aspect = WantedAspect();
+        const int capW = (dyn1x && panIdle && aspect > 0.0 && oh > 0)
+            ? std::min(ow, std::max(1, (int)lround(oh * aspect))) : ow;
+        camera.viewW = capW;
+        camera.viewH = oh;
+        PkWideCamera::Window w = camera.Frame(pk_wide_scene(),
+            (int64_t)SDL_GetPerformanceCounter() * 1000000000LL / (int64_t)SDL_GetPerformanceFrequency());
+        if (capW < ow) w.offX += (ow - capW) * 0.5f;
+        const bool inside = w.valid && w.x >= -e && w.y >= 0 && w.x + w.w <= GbaW + e && w.y + w.h <= GbaH;
+        if (!shown || !w.valid || (!dyn1x && panIdle && camera.Plain()))
+        {
+            pk_wide_skip(core, frame240.data());
+            return;
+        }
+        if (!dyn1x && (camera.Plain() || inside))
+        {
+            uint32_t px = 0;
+            struct PkWideView one = { 0, 0, 1, 1 };
+            pk_wide_view(core, frame240.data(), &px, one, nullptr);
+            return;
+        }
+        struct PkWideView v = { w.x, w.y, w.w, w.h };
+        pk_wide_view(core, frame240.data(), zoomBuf.data(), v, nullptr);
+        if (e > 0)
+        {
+            const int trim = std::min(8, e);
+            const int x0 = std::max(w.x, -e + trim), x1 = std::min(w.x + w.w, GbaW + e - trim);
+            const int y0 = std::max(w.y, 0), y1 = std::min(w.y + w.h, GbaH);
+            if (x1 > x0)
+                for (int y = y0; y < y1; y++)
+                    memcpy(zoomBuf.data() + (size_t)(y - w.y) * w.w + (x0 - w.x),
+                           video.data() + (size_t)y * MaxW + x0 + e, (size_t)(x1 - x0) * 4);
+        }
+        zoomWin = w;
+        zoomShown = true;
     }
 
     // Keys held for the game.
@@ -1191,10 +1447,10 @@ struct App
         return fastButton.Requested(set.Get("fast_button") == "toggle", FastDown(), fastToggle);
     }
 
-    // Runs one GBA frame, with sound if `sound`.
-    void RunFrame(bool sound, bool ff = false)
+    // Runs one GBA frame, with sound if `sound` and dynamic wide/zoom work if `shown`.
+    void RunFrame(bool sound, bool ff = false, bool shown = true)
     {
-        const int e = WantedExtra();
+        const int e = !game.patch.empty() ? WantedExtra() : 0;
         if (e != wideExtra)
         {
             wideExtra = e;
@@ -1209,11 +1465,13 @@ struct App
         }
         core->setKeys(core, keys);
         core->runFrame(core);
+        ZoomFrame(shown);
 #ifdef GBAW_CHEATS
         cheats.Frame(cheatBus, keys);
 #endif
 #ifdef GBAW_EMBEDDED
         if (raReady && ra->frame) ra->frame(ra->ud);
+        autoStatePlayed = true;
 #endif
         if (touchTapFrames > 0 && --touchTapFrames == 0) touchTap = 0;
         Sound(sound, ff);
@@ -1290,11 +1548,13 @@ struct App
 #endif
         if (pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_CONTROLS)
         {
-            static const char* const display[] = { "widescreen", "fullscreen", "scaling", "hd_filter", "lcd", "colour", "show_fps" };
+            static const char* const display[] = { "widescreen", "fullscreen", "scaling", "hd_filter", "lcd", "colour", "zoom", "zoom_text", "show_fps" };
             static const char* const sound[] = { "volume", "ff_mute" };
-            static const char* const controls[] = { "gba_start", "buttons", "ff_speed", "fast_button" };
+            static const char* const controls[] = { "gba_start", "buttons", "ff_speed", "fast_button", "auto_state", "auto_resume" };
             const char* const* keys = pausePage == P_DISPLAY ? display : pausePage == P_SOUND ? sound : controls;
-            const int count = pausePage == P_DISPLAY ? 7 : pausePage == P_SOUND ? 2 : 4;
+            const int count = pausePage == P_DISPLAY ? (int)(sizeof(display) / sizeof(*display))
+                            : pausePage == P_SOUND ? (int)(sizeof(sound) / sizeof(*sound))
+                            : (int)(sizeof(controls) / sizeof(*controls));
             pageSettings.clear();
             for (int i = 0; i < count; i++)
                 for (const Setting& s : SettingsList())
@@ -1306,6 +1566,16 @@ struct App
 #ifdef GBAW_PHONE
             if (pausePage == P_CONTROLS) pause.items.push_back({ "TOUCH CONTROLS", "EDIT LAYOUT" });
 #endif
+            pause.items.push_back({ "BACK", "" });
+            return;
+        }
+        if (pausePage == P_SETTINGS)
+        {
+            const bool on = ra && ra->on && ra->on(ra->ud);
+            pause.items.push_back({ "GRAPHICS", "" });
+            pause.items.push_back({ "SOUND", "" });
+            pause.items.push_back({ "CONTROLS", "" });
+            if (raReady) pause.items.push_back({ "RETROACHIEVEMENTS", on ? "ON" : "OFF" });
             pause.items.push_back({ "BACK", "" });
             return;
         }
@@ -1327,21 +1597,37 @@ struct App
         pause.items.push_back({ "LOAD STATE", "" });
         pause.items.push_back({ "FAST FORWARD", fastToggle ? "ON" : "OFF" });
 #ifdef GBAW_EMBEDDED
-        // (As the DS games' pause menu: its settings by group, then CHEATS.)
-        pause.items.push_back({ "DISPLAY", "" });
-        pause.items.push_back({ "SOUND", "" });
-        pause.items.push_back({ "CONTROLS", "" });
+        // Match the DS pause menu: host UI groups display/sound/controls/RA under SETTINGS.
+        if (uiHost) pause.items.push_back({ "SETTINGS", "" });
+        else
+        {
+            pause.items.push_back({ "DISPLAY", "" });
+            pause.items.push_back({ "SOUND", "" });
+            pause.items.push_back({ "CONTROLS", "" });
+        }
 #else
         pause.items.push_back({ "SETTINGS", "" });
 #endif
 #ifdef GBAW_CHEATS
-        if (cheats.Active()) pause.items.push_back({ "CHEATS", cheats.OnCount() ? std::to_string(cheats.OnCount()) + " ON" : "" });
+        if (cheats.Active())
+        {
+#ifdef GBAW_EMBEDDED
+            if (uiHost)
+            {
+                const int nOn = cheats.OnCount();
+                const std::string val = nOn == 1 ? std::string("1 ENABLED") : nOn ? std::to_string(nOn) + " ACTIVE" : "";
+                pause.items.push_back({ "CHEATS", val, true });
+            }
+            else
+#endif
+                pause.items.push_back({ "CHEATS", cheats.OnCount() ? std::to_string(cheats.OnCount()) + " ON" : "" });
+        }
 #endif
 #if defined(GBAW_PHONE) && !defined(GBAW_EMBEDDED)
         pause.items.push_back({ "TOUCH CONTROLS", "" });
 #endif
 #ifdef GBAW_EMBEDDED
-        if (raReady) pause.items.push_back({ "RETROACHIEVEMENTS", "" });
+        if (raReady && !uiHost) pause.items.push_back({ "RETROACHIEVEMENTS", "" });
 #endif
         pause.items.push_back({ "RESET GAME", "" });
 #ifdef GBAW_EMBEDDED
@@ -1354,8 +1640,11 @@ struct App
     void OpenPause()
     {
         paused = true;
+        CancelPauseTouch();
 #ifdef GBAW_EMBEDDED
         pausePage = P_ROOT;
+        hostMenu.scroll = 0;
+        builtHostSig = 0;
 #endif
         pause.selected = 0;
         BuildPause();
@@ -1367,6 +1656,7 @@ struct App
     }
     void Resume()
     {
+        CancelPauseTouch();
 #ifdef GBAW_EMBEDDED
         if (typing) SDL_StopTextInput();
         typing = false;
@@ -1452,6 +1742,20 @@ struct App
     }
 #endif
 
+#ifdef GBAW_EMBEDDED
+    void ReturnToPausePage(PausePage page, const char* selectLabel = nullptr)
+    {
+        CancelPauseTouch();
+        pausePage = page;
+        hostMenu.scroll = 0;
+        BuildPause();
+        pause.selected = 0;
+        if (selectLabel)
+            for (size_t j = 0; j < pause.items.size(); j++)
+                if (pause.items[j].label == selectLabel) { pause.selected = (int)j; break; }
+    }
+#endif
+
 #ifdef GBAW_CHEATS
     // The achievements host is told whether any cheat is on (achievements pause while one is).
     void CheatsToHost()
@@ -1470,10 +1774,9 @@ struct App
             Resume();
             return;
         }
-        if (in.back || (in.accept && pause.selected == GbaCheats::COUNT))
+        if (in.back || (in.accept && pause.items[pause.selected].label == "BACK"))
         {
-            pausePage = P_ROOT;
-            pause.selected = 0;
+            ReturnToPausePage(P_ROOT, "CHEATS");
             return;
         }
         if (!in.accept && !in.left && !in.right) return;
@@ -1488,7 +1791,7 @@ struct App
 
 #ifdef GBAW_EMBEDDED
     // DISPLAY, SOUND and CONTROLS: a row a setting (left and right, or A, change it: kept at once,
-    // in Fulldex's settings too), then BACK to the pause menu, on the row that opened the page.
+    // in Fulldex's settings too), then BACK to SETTINGS (or root in standalone), selecting its row.
     void SettingsPageInput(const MenuIn& in)
     {
         const int n = (int)pause.items.size();
@@ -1503,12 +1806,16 @@ struct App
         const int i = pause.selected;
         if (in.back || (in.accept && pause.items[i].label == "BACK"))
         {
-            const char* from = pausePage == P_DISPLAY ? "DISPLAY" : pausePage == P_SOUND ? "SOUND" : "CONTROLS";
-            pausePage = P_ROOT;
-            BuildPause();
-            pause.selected = 0;
-            for (size_t j = 0; j < pause.items.size(); j++)
-                if (pause.items[j].label == from) pause.selected = (int)j;
+            if (uiHost)
+            {
+                const char* from = pausePage == P_DISPLAY ? "GRAPHICS" : pausePage == P_SOUND ? "SOUND" : "CONTROLS";
+                ReturnToPausePage(P_SETTINGS, from);
+            }
+            else
+            {
+                const char* from = pausePage == P_DISPLAY ? "DISPLAY" : pausePage == P_SOUND ? "SOUND" : "CONTROLS";
+                ReturnToPausePage(P_ROOT, from);
+            }
             return;
         }
 #ifdef GBAW_PHONE
@@ -1531,6 +1838,8 @@ struct App
             if (want != full) SDL_SetWindowFullscreen(win, want ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
         }
         if (!strcmp(s.key, "volume")) SetVolume();
+        if (!strcmp(s.key, "zoom") && !ZoomOn()) { camera.Reset(); camera.level = 0; }
+        if (!strcmp(s.key, "widescreen") || !strcmp(s.key, "zoom") || !strcmp(s.key, "zoom_text")) zoomRefresh = true;
         pause.items[i].value = set.Shown(s);
     }
 #endif
@@ -1568,11 +1877,13 @@ struct App
             }
             if (in.back)
             {
-                pausePage = pausePage == P_LIST ? P_RA : P_ROOT;
-                pause.selected = 0;
+                if (pausePage == P_LIST) ReturnToPausePage(P_RA, "ACHIEVEMENTS");
+                else if (pausePage == P_RA && uiHost) ReturnToPausePage(P_SETTINGS, "RETROACHIEVEMENTS");
+                else if (pausePage == P_SETTINGS) ReturnToPausePage(P_ROOT, "SETTINGS");
+                else ReturnToPausePage(P_ROOT);
                 return;
             }
-            const bool turn = pausePage == P_RA && (in.left || in.right);
+            const bool turn = (pausePage == P_RA || pausePage == P_SETTINGS) && (in.left || in.right);
             if (!in.accept && !turn) return;
             if (pause.selected < 0 || pause.selected >= n) return;
             const std::string item = pause.items[pause.selected].label;
@@ -1582,13 +1893,18 @@ struct App
                 return;
             }
             if (!in.accept) return;
+            if (pausePage == P_SETTINGS)
+            {
+                if (item == "GRAPHICS") ReturnToPausePage(P_DISPLAY);
+                else if (item == "SOUND") ReturnToPausePage(P_SOUND);
+                else if (item == "CONTROLS") ReturnToPausePage(P_CONTROLS);
+                else if (item == "RETROACHIEVEMENTS") ReturnToPausePage(P_RA);
+                else if (item == "BACK") ReturnToPausePage(P_ROOT, "SETTINGS");
+                return;
+            }
             if (item == "RETROACHIEVEMENTS" && ra && ra->setOn && ra->on)
                 ra->setOn(ra->ud, ra->on(ra->ud) ? 0 : 1);
-            else if (item == "ACHIEVEMENTS")
-            {
-                pausePage = P_LIST;
-                pause.selected = 0;
-            }
+            else if (item == "ACHIEVEMENTS") ReturnToPausePage(P_LIST);
             else if (item == "LOG IN")
             {
                 pausePage = P_LOGIN;
@@ -1603,10 +1919,7 @@ struct App
                 if (ra && ra->logout) ra->logout(ra->ud);
             }
             else if (item == "BACK")
-            {
-                pausePage = P_ROOT;
-                pause.selected = 0;
-            }
+                ReturnToPausePage(uiHost ? P_SETTINGS : P_ROOT, "RETROACHIEVEMENTS");
             return;
         }
 #endif
@@ -1650,35 +1963,29 @@ struct App
         }
         else if (item == "SETTINGS")
         {
-            settingsBack = PLAY;
-            screen = SETTINGS;
-            settingsSel = 0;
+#ifdef GBAW_EMBEDDED
+            if (uiHost) ReturnToPausePage(P_SETTINGS);
+            else
+#endif
+            {
+                settingsBack = PLAY;
+                screen = SETTINGS;
+                settingsSel = 0;
+            }
         }
 #ifdef GBAW_EMBEDDED
         else if (item == "DISPLAY" || item == "SOUND" || item == "CONTROLS")
-        {
-            pausePage = item == "DISPLAY" ? P_DISPLAY : item == "SOUND" ? P_SOUND : P_CONTROLS;
-            BuildPause();
-            pause.selected = 0;
-        }
+            ReturnToPausePage(item == "DISPLAY" ? P_DISPLAY : item == "SOUND" ? P_SOUND : P_CONTROLS);
+        else if (item == "RETROACHIEVEMENTS") ReturnToPausePage(P_RA);
 #endif
-#ifdef GBAW_EMBEDDED
-        else if (item == "RETROACHIEVEMENTS")
-        {
-            pausePage = P_RA;
-            pause.selected = 0;
-        }
-#endif
-#ifdef GBAW_CHEATS
-        else if (item == "CHEATS")
-        {
-            pausePage = P_CHEATS;
-            pause.selected = 0;
-        }
+#if defined(GBAW_CHEATS) && defined(GBAW_EMBEDDED)
+        else if (item == "CHEATS") ReturnToPausePage(P_CHEATS);
 #endif
         else if (item == "RESET GAME")
         {
             core->reset(core);
+            camera.Reset();
+            if (DynamicWide1x() || ZoomOn()) { pk_wide_jump(core, frame240.data()); zoomShown = false; }
 #ifdef GBAW_CHEATS
             cheats.Reset();
 #endif
@@ -1775,16 +2082,17 @@ struct App
 
     // LCD EFFECT: a grid along the edges of the GBA's pixels, at the size the picture is drawn
     // (so its lines fall exactly between them), laid over the picture to darken.
-    void DrawLcd(const SDL_Rect& dst, int w)
+    void DrawLcd(const SDL_Rect& dst, int w, int h = GbaH)
     {
-        const double sx = (double)dst.w / w, sy = (double)dst.h / GbaH;
+        const double sx = (double)dst.w / w, sy = (double)dst.h / h;
         if (std::min(sx, sy) < 2) return; // (too small for a grid)
-        if (!lcdTex || lcdW != dst.w || lcdH != dst.h || lcdCols != w)
+        if (!lcdTex || lcdW != dst.w || lcdH != dst.h || lcdCols != w || lcdRows != h)
         {
             if (lcdTex) SDL_DestroyTexture(lcdTex);
             lcdW = dst.w;
             lcdH = dst.h;
             lcdCols = w;
+            lcdRows = h;
             const int t = std::max(1, (int)std::lround(std::min(sx, sy) / 5));
             std::vector<uint8_t> colEdge(lcdW), rowEdge(lcdH);
             for (int x = 0; x < lcdW; x++) colEdge[x] = (int)((int)(x / sx + 1e-9) * sx + sx) - x <= t;
@@ -1812,8 +2120,85 @@ struct App
 #else
     static constexpr int HdFactor = 4;
 #endif
+    void DrawZoom()
+    {
+        const PkWideCamera::Window& w = zoomWin;
+        const bool hd = set.Get("hd_filter") == "1", colour = set.Get("colour") == "1", lcd = set.Get("lcd") == "1";
+        const SDL_Rect src = { 0, 0, w.w, w.h };
+        const SDL_Rect dst = { (int)std::floor(w.offX), (int)std::floor(w.offY), (int)std::ceil(w.w * w.scale), (int)std::ceil(w.h * w.scale) };
+        if (hd || colour)
+        {
+            if (colour && colourLut.empty()) BuildColourLut();
+            fxSrc.resize((size_t)w.w * w.h);
+            for (size_t i = 0; i < fxSrc.size(); i++)
+            {
+                uint32_t p = zoomBuf[i]; // (ABGR: R in the low byte)
+                if (colour) p = colourLut[((p >> 3) & 31) | (((p >> 11) & 31) << 5) | (((p >> 19) & 31) << 10)];
+                if (hd) p = (p & 0xFF00FF00u) | (p & 0xFF) << 16 | ((p >> 16) & 0xFF);
+                fxSrc[i] = p;
+            }
+        }
+        if (hd)
+        {
+            const int f = std::max(2, std::min(HdFactor, (int)std::ceil(w.scale - 0.01)));
+            const int ow = w.w * f, oh = w.h * f;
+            if (!workersStarted)
+            {
+                workersStarted = true;
+#if defined(__SWITCH__)
+                workers.Start(2);
+#else
+                const unsigned cores = std::thread::hardware_concurrency();
+                workers.Start((int)std::min(3u, cores > 1 ? cores - 1 : 0u));
+#endif
+            }
+            fxOut.resize((size_t)ow * oh);
+            const int slices = 8;
+            workers.Run(slices, [&](int i) {
+                xbrz::scale(f, fxSrc.data(), fxOut.data(), w.w, w.h, xbrz::ColorFormat::RGB, xbrz::ScalerCfg(),
+                            w.h * i / slices, w.h * (i + 1) / slices);
+            });
+            if (!zoomHdTex || zoomHdW < ow || zoomHdH < oh)
+            {
+                if (zoomHdTex) SDL_DestroyTexture(zoomHdTex);
+                zoomHdW = std::max(zoomHdW, ow);
+                zoomHdH = std::max(zoomHdH, oh);
+                zoomHdTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, zoomHdW, zoomHdH);
+                if (zoomHdTex) SDL_SetTextureScaleMode(zoomHdTex, SDL_ScaleModeLinear);
+            }
+            if (zoomHdTex)
+            {
+                const SDL_Rect r = { 0, 0, ow, oh };
+                SDL_UpdateTexture(zoomHdTex, &r, fxOut.data(), ow * 4);
+                SDL_RenderCopy(ren, zoomHdTex, &r, &dst);
+                if (lcd) DrawLcd(dst, w.w, w.h);
+                return;
+            }
+        }
+        if (!zoomTex)
+        {
+            zoomTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING,
+                                        PkWideCamera::Camera::MaxW, PkWideCamera::Camera::MaxH);
+            if (!zoomTex) return;
+        }
+        SDL_UpdateTexture(zoomTex, &src, colour ? fxSrc.data() : zoomBuf.data(), w.w * 4);
+        SDL_SetTextureScaleMode(zoomTex, set.Get("scaling") == "smooth" ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+        SDL_RenderCopy(ren, zoomTex, &src, &dst);
+        if (lcd) DrawLcd(dst, w.w, w.h);
+    }
+
     void DrawGame()
     {
+        if (zoomRefresh)
+        {
+            zoomRefresh = false;
+            ZoomFrame(true);
+        }
+        if (zoomShown && zoomWin.valid)
+        {
+            DrawZoom();
+            return;
+        }
         const int w = GbaW + 2 * wideExtra;
         int ow, oh;
         SDL_GetRendererOutputSize(ren, &ow, &oh);
@@ -2118,14 +2503,34 @@ struct App
         touchLayout = Touch::Make(ui.w, ui.h);
         Touch::Apply(touchLayout, touchProfile, ui.w, ui.h);
         bool any = true;
+        const Uint32 now = SDL_GetTicks();
+        const bool wantFps = set.Int("show_fps") && screen == PLAY && !paused;
+        if (wantFps && now - fpsSince >= 1000)
+        {
+            fpsShown = (int)lround(fpsFrames * 1000.0 / std::max<Uint32>(1, now - fpsSince));
+            fpsFrames = 0;
+            fpsSince = now;
+        }
+        const bool showToast = !toast.empty() && now < toastUntil;
+#ifdef GBAW_EMBEDDED
+        usingHostMenu = false;
+        const bool useHost = uiHost && uiHost->drawOverlay && screen == PLAY && (paused || showToast || wantFps);
+        if (screen == LIST) DrawList(ui);
+        else if (screen == SETTINGS) DrawSettings(ui);
+        else if (useHost && paused) usingHostMenu = true;
+        else if (paused)
+#else
         if (screen == LIST) DrawList(ui);
         else if (screen == SETTINGS) DrawSettings(ui);
         else if (paused)
+#endif
         {
             std::string title = game.name;
             std::string hint = Hint("ENTER: CHOOSE   ESC: BACK TO THE GAME", "A: CHOOSE   B: BACK TO THE GAME", "TAP TO CHOOSE, OUTSIDE TO GO BACK");
 #ifdef GBAW_EMBEDDED
-            if (pausePage == P_RA)
+            if (pausePage == P_SETTINGS)
+                title = "SETTINGS";
+            else if (pausePage == P_RA)
             {
                 title = "RETROACHIEVEMENTS";
                 char detail[80] = {};
@@ -2149,7 +2554,7 @@ struct App
 #endif
             else if (pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_CONTROLS)
             {
-                title = pausePage == P_DISPLAY ? "DISPLAY" : pausePage == P_SOUND ? "SOUND" : "CONTROLS";
+                title = pausePage == P_DISPLAY ? "GRAPHICS" : pausePage == P_SOUND ? "SOUND" : "CONTROLS";
                 hint = Hint("ARROWS: CHANGE   ESC: BACK", "D-PAD: CHOOSE AND CHANGE   B: BACK", "TAP TO CHANGE");
             }
             else if (pausePage == P_LOGIN)
@@ -2176,15 +2581,131 @@ struct App
         }
         else if (touchUi) Touch::Draw(ui, touchLayout, touchHeld, fastToggle);
         else any = false;
-        const Uint32 now = SDL_GetTicks();
-        if (set.Int("show_fps") && screen == PLAY && !paused)
+#ifdef GBAW_EMBEDDED
+        if (useHost)
         {
-            if (now - fpsSince >= 1000)
+            if (!paused && !touchUi) any = false;
+            std::string title = "NoSplitNX";
+            std::string hint = padLast ? "A: SELECT   B: BACK" : "ENTER: SELECT   ESC: BACK";
+            std::string note;
+            if (paused)
             {
-                fpsShown = (int)lround(fpsFrames * 1000.0 / std::max<Uint32>(1, now - fpsSince));
-                fpsFrames = 0;
-                fpsSince = now;
+                const int sel = pause.selected;
+                const std::string selLabel = (sel >= 0 && sel < (int)pause.items.size()) ? pause.items[sel].label : "";
+                if (pausePage == P_ROOT)
+                {
+                    if (selLabel == "SETTINGS") hint = "AUDIO, VIDEO AND SYSTEM OPTIONS";
+                    else if (selLabel == "CHEATS") hint = "ACTION REPLAY CODES";
+                }
+                else if (pausePage == P_SETTINGS)
+                {
+                    title = "SETTINGS";
+                    if (selLabel == "RETROACHIEVEMENTS") hint = "FROM RETROACHIEVEMENTS.ORG";
+                }
+                else if (pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_CONTROLS)
+                {
+                    title = pausePage == P_DISPLAY ? "GRAPHICS" : pausePage == P_SOUND ? "SOUND" : "CONTROLS";
+                    hint = padLast ? "A: CHANGE   B: BACK" : "ENTER: CHANGE   ESC: BACK";
+                    if (sel >= 0 && sel < (int)pageSettings.size()) note = pageSettings[sel]->text;
+                }
+#ifdef GBAW_CHEATS
+                else if (pausePage == P_CHEATS)
+                {
+                    title = "CHEATS";
+                    hint = padLast ? "A: ON / OFF   B: BACK" : "ENTER: ON / OFF   ESC: BACK";
+                    if (sel >= 0 && sel < GbaCheats::COUNT)
+                        note = cheats.Has(sel) ? GbaCheats::About(sel).note : "NOT FOR THIS VERSION OF THE GAME";
+                }
+#endif
+                else if (pausePage == P_RA)
+                {
+                    title = "RETROACHIEVEMENTS";
+                    char detail[80] = {};
+                    if (ra && ra->detail && ra->detail(ra->ud, detail, sizeof detail) && detail[0]) hint = detail;
+                }
+                else if (pausePage == P_LIST)
+                {
+                    title = "ACHIEVEMENTS";
+                    if (sel >= 0 && sel < (int)achDesc.size()) note = achDesc[sel];
+                }
+                else if (pausePage == P_LOGIN)
+                {
+                    title = "LOG IN";
+                    hint = padLast ? "B: CANCEL" : "ENTER: NEXT   ESC: CANCEL";
+                }
             }
+            const int toastAlpha = !showToast ? 0 : (toastUntil - now >= 400 ? 255 : (int)((toastUntil - now) * 255 / 400));
+            const std::string accent = !hostAccent.empty() ? hostAccent : set.HostValue("list_colour");
+            const std::string langVal = set.Get("language");
+            std::vector<GbaWide::MenuHostItem> hostItems;
+            if (paused)
+            {
+                hostItems.reserve(pause.items.size());
+                for (const MenuItem& it : pause.items)
+                {
+                    int sl = -1;
+                    if (pausePage == P_SOUND && it.label == "VOLUME")
+                        sl = std::max(0, std::min(10, set.Int("volume") / 10));
+                    hostItems.push_back({ it.label, it.value, it.fixed, sl });
+                }
+            }
+            uint64_t sig = 14695981039346656037ULL;
+            auto mix = [&](uint64_t v) { sig = (sig ^ v) * 1099511628211ULL; };
+            auto mixStr = [&](const std::string& s) {
+                mix((uint64_t)s.size());
+                for (unsigned char ch : s) mix(ch);
+            };
+            mix((uint64_t)(unsigned)ow);
+            mix((uint64_t)(unsigned)oh);
+            mix(paused ? 1ULL : 0ULL);
+            mix((uint64_t)pausePage);
+            mix((uint64_t)pause.selected);
+            mix((uint64_t)hostMenu.scroll);
+            mix((uint64_t)toastAlpha);
+            mix(wantFps ? (uint64_t)(unsigned)(fpsShown + 1) : 0ULL);
+            mixStr(accent);
+            mixStr(langVal);
+            mixStr(showToast ? toast : std::string());
+            if (paused)
+            {
+                mixStr(title);
+                mixStr(hint);
+                mixStr(note);
+                mix((uint64_t)hostItems.size());
+                for (const GbaWide::MenuHostItem& it : hostItems)
+                {
+                    mixStr(it.label);
+                    mixStr(it.value);
+                    mix((it.info ? 0x100ULL : 0ULL) | (uint64_t)(unsigned)(it.slider + 2));
+                }
+            }
+            if (!sig) sig = 1;
+            if (sig != builtHostSig || hostTexW != ow || hostTexH != oh)
+            {
+                uiHost->drawOverlay(uiHost->ud, hostPx, ow, oh, paused, hostItems, pause.selected,
+                                    title, hint, note, showToast ? toast : std::string(), toastAlpha,
+                                    fpsShown, wantFps, accent, hostMenu);
+                if (!hostTex || hostTexW != ow || hostTexH != oh)
+                {
+                    if (hostTex) SDL_DestroyTexture(hostTex);
+                    hostTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, ow, oh);
+                    hostTexW = ow;
+                    hostTexH = oh;
+                    if (hostTex) SDL_SetTextureBlendMode(hostTex, SDL_BLENDMODE_BLEND);
+                }
+                if (hostTex && hostPx.size() == (size_t)ow * (size_t)oh)
+                    SDL_UpdateTexture(hostTex, nullptr, hostPx.data(), ow * 4);
+                builtHostSig = sig;
+            }
+        }
+        else builtHostSig = 0;
+#endif
+        if (wantFps
+#ifdef GBAW_EMBEDDED
+            && !useHost
+#endif
+        )
+        {
             const std::string f = std::to_string(fpsShown) + " FPS";
             int fpsX = 2, fpsY = 2;
 #ifdef __ANDROID__
@@ -2195,7 +2716,11 @@ struct App
             ui.Text(fpsX + 3, fpsY + 2, f, 1, Colour::Bright);
             any = true;
         }
-        if (!toast.empty() && now < toastUntil)
+        if (showToast
+#ifdef GBAW_EMBEDDED
+            && !useHost
+#endif
+        )
         {
             const std::vector<std::string> lines = Wrap(toast, std::max(10, (ui.w - 40) / 6));
             int tw = 0;
@@ -2240,6 +2765,9 @@ struct App
                     SDL_RenderCopy(ren, t, nullptr, &dst);
                 }
         }
+#ifdef GBAW_EMBEDDED
+        if (useHost && hostTex) SDL_RenderCopy(ren, hostTex, nullptr, nullptr);
+#endif
     }
 
     // A game's art as a texture, read from the built-in JPEG the first time (nullptr if none).
@@ -2289,6 +2817,12 @@ struct App
         {
             switch (e.type)
             {
+#ifdef GBAW_EMBEDDED
+            case SDL_APP_WILLENTERBACKGROUND:
+            case SDL_APP_TERMINATING:
+                SaveAutomatic();
+                break;
+#endif
             case SDL_QUIT:
                 quit = true;
                 break;
@@ -2336,6 +2870,9 @@ struct App
                     if (screen == LIST) Rescan();
                     break;
                 case SDL_SCANCODE_F11: ToggleFullscreen(); break;
+                case SDL_SCANCODE_C:
+                    if (!e.key.repeat && screen == PLAY && !paused) ZoomCycle();
+                    break;
                 default: break;
                 }
                 break;
@@ -2394,7 +2931,9 @@ struct App
                 // The pause menu: START (+), as in the DS games, as it is let go (pressed with
                 // SELECT (-) it is the GBA's START instead); START BUTTON GBA START: the other way
                 // round. The Guide (Home, PS) button and a stick click open it too.
-                if (b == SDL_CONTROLLER_BUTTON_GUIDE || b == SDL_CONTROLLER_BUTTON_LEFTSTICK || b == SDL_CONTROLLER_BUTTON_RIGHTSTICK)
+                // (ZOOM AND LOOK AROUND: in a game it knows, a click of the right stick zooms instead.)
+                if (b == SDL_CONTROLLER_BUTTON_RIGHTSTICK && screen == PLAY && !paused && ZoomOn()) ZoomCycle();
+                else if (b == SDL_CONTROLLER_BUTTON_GUIDE || b == SDL_CONTROLLER_BUTTON_LEFTSTICK || b == SDL_CONTROLLER_BUTTON_RIGHTSTICK)
                     in.menu = true;
                 if (screen == PLAY)
                 {
@@ -2446,7 +2985,7 @@ struct App
                 break;
             case SDL_WINDOWEVENT:
                 if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
-                { std::fill(std::begin(key), std::end(key), false); fastInputFocused = false; fastButton.Block(); fingers.clear(); touchHeld = 0; }
+                { std::fill(std::begin(key), std::end(key), false); fastInputFocused = false; fastButton.Block(); fingers.clear(); touchHeld = 0; CancelPauseTouch(); }
                 else if (e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) fastInputFocused = true;
                 break;
             default:
@@ -2494,6 +3033,108 @@ struct App
         }
         fingers.clear();
         touchHeld = 0;
+        if (screen == PLAY && paused)
+        {
+            const int px = (int)(f.x * ow), py = (int)(f.y * oh);
+            auto activateAt = [&](int tx, int ty, float cx, float cy) {
+#ifdef GBAW_EMBEDDED
+                if (usingHostMenu)
+                {
+                    const int hit = hostMenu.ItemAt(tx, ty);
+                    if (hit == -2) in.back = true;
+                    else if (hit >= 0 && hit < (int)pause.items.size())
+                    {
+                        pause.selected = hit;
+                        if (pausePage == P_SOUND && pause.items[hit].label == "VOLUME")
+                        {
+                            const int sl = hostMenu.SliderAt(tx);
+                            if (sl >= 0)
+                            {
+                                set.values["volume"] = std::to_string(sl * 10);
+                                set.Save();
+                                set.ToHost("volume");
+                                SetVolume();
+                                pause.items[hit].value = sl == 0 ? "OFF" : std::to_string(sl * 10) + "%";
+                                return;
+                            }
+                        }
+                        in.accept = true;
+                    }
+                    return;
+                }
+#endif
+                for (int i = 0; i < (int)pause.rows.size(); i++)
+                    if (pause.rows[i].Has(cx, cy))
+                    {
+                        pause.selected = i < (int)pause.rowItem.size() ? pause.rowItem[i] : i;
+                        in.accept = true;
+                        return;
+                    }
+                if (!pause.box.Has(cx, cy)) in.back = true;
+            };
+            if (!fromFinger)
+            {
+                if (f.type == SDL_FINGERDOWN) activateAt(px, py, x, y);
+                return;
+            }
+            if (f.type == SDL_FINGERDOWN)
+            {
+                if (!pauseTouchDown)
+                {
+                    pauseTouchDown = true;
+                    pauseTouchMoved = false;
+                    pauseTouchId = f.fingerId;
+                    pauseTouchX0 = px;
+                    pauseTouchY0 = pauseTouchLastY = py;
+#ifdef GBAW_EMBEDDED
+                    pauseTouchPage = pausePage;
+#endif
+                }
+                return;
+            }
+            if (!pauseTouchDown || f.fingerId != pauseTouchId) return;
+            if (f.type == SDL_FINGERMOTION)
+            {
+                const double dist = std::hypot((double)(px - pauseTouchX0), (double)(py - pauseTouchY0));
+                if (!pauseTouchMoved && dist > 12.0) pauseTouchMoved = true;
+#ifdef GBAW_EMBEDDED
+                if (pauseTouchMoved && usingHostMenu && hostMenu.lineH > 0 && hostMenu.shown > 0 && hostMenu.count > hostMenu.shown)
+                {
+                    const int stepPx = std::max(8, hostMenu.lineH);
+                    const int maxScroll = std::max(0, hostMenu.count - hostMenu.shown);
+                    while (pauseTouchLastY - py >= stepPx)
+                    {
+                        pauseTouchLastY -= stepPx;
+                        if (hostMenu.scroll < maxScroll)
+                        {
+                            hostMenu.scroll++;
+                            pause.selected = std::clamp(pause.selected, hostMenu.scroll, hostMenu.scroll + hostMenu.shown - 1);
+                        }
+                    }
+                    while (py - pauseTouchLastY >= stepPx)
+                    {
+                        pauseTouchLastY += stepPx;
+                        if (hostMenu.scroll > 0)
+                        {
+                            hostMenu.scroll--;
+                            pause.selected = std::clamp(pause.selected, hostMenu.scroll, hostMenu.scroll + hostMenu.shown - 1);
+                        }
+                    }
+                }
+#endif
+                return;
+            }
+            if (f.type == SDL_FINGERUP)
+            {
+                bool tap = !pauseTouchMoved;
+#ifdef GBAW_EMBEDDED
+                tap = tap && pauseTouchPage == pausePage;
+#endif
+                CancelPauseTouch();
+                if (tap) activateAt(px, py, x, y);
+            }
+            return;
+        }
         if (f.type != SDL_FINGERDOWN) return;
         if (backRect.Has(x, y))
         {
@@ -2503,18 +3144,6 @@ struct App
         if (settingsRect.Has(x, y))
         {
             in.settings = true;
-            return;
-        }
-        if (screen == PLAY && paused)
-        {
-            for (int i = 0; i < (int)pause.rows.size(); i++)
-                if (pause.rows[i].Has(x, y))
-                {
-                    pause.selected = i < (int)pause.rowItem.size() ? pause.rowItem[i] : i;
-                    in.accept = true;
-                    return;
-                }
-            if (!pause.box.Has(x, y)) in.back = true;
             return;
         }
         for (const auto& r : tapRects)
@@ -2718,12 +3347,13 @@ struct App
                     tapDirs = dirs;
                     if (speed > 1 && dirs && SDL_GetTicks() - tapSince < 250) speed = 1;
                 }
-                for (int i = 0; i < run * speed; i++) RunFrame(true, speed > 1);
+                for (int i = 0; i < run * speed; i++) RunFrame(true, speed > 1, i == run * speed - 1);
             }
             else
                 due = 0;
 #ifdef GBAW_EMBEDDED
             if (raReady && ra && ra->pump) ra->pump(ra->ud, paused || screen != PLAY);
+            if (autoStateTimer.Due(SDL_GetTicks(), core && screen == PLAY && !autoStateBlocked && set.Get("auto_state") == "1", paused)) SaveAutomatic();
             if (raReady && ra && ra->pop)
             {
                 char msg[128] = {};
@@ -2872,23 +3502,20 @@ std::vector<ListGame> Find(const std::string& roms, const std::string& saves)
         l.file = g.ips.empty() ? g.rom : g.ips;
         const unsigned char* own = nullptr;
         size_t ownSize = 0;
+        const HackNames::Hack* hack = HackNames::ForPatch(g.patch);
+        const bool thatHack = hack && HackNames::IsThatHack(*hack, g.sha1, g.fileName);
         const std::string baseArt = !g.patch.compare(0, 7, "firered") || g.patch == "radicalred" || g.patch == "unbound" ? "firered"
                                   : !g.patch.compare(0, 7, "emerald") || g.patch == "inclement" ? "emerald"
                                   : !g.patch.compare(0, 9, "leafgreen") ? "leafgreen"
                                   : !g.patch.compare(0, 4, "ruby") ? "ruby"
                                   : !g.patch.compare(0, 8, "sapphire") ? "sapphire" : std::string();
-        l.art = g.patch.empty() ? std::string()
-              : Art(g.patch, own, ownSize) ? g.patch
+        l.art = g.patch.empty() ? Games::ArtCode(g.sha1)
+              : (!hack || thatHack) && Art(g.patch, own, ownSize) ? g.patch
               : !Games::ArtCode(g.sha1).empty() ? Games::ArtCode(g.sha1)
               : (!baseArt.empty() && Art(baseArt, own, ownSize)) ? baseArt : std::string();
-        static const struct { const char* patch; const char* name; } kHackNames[] = {
-            { "radicalred", "Radical Red" }, { "unbound", "Unbound" }, { "emeraldlegacy", "Emerald Legacy" },
-            { "inclement", "Inclement Emerald" }, { "monomyth", "Monomyth" }, { "gen3evolved", "Gen 3 Evolved" }, { "emeraldrogue", "Emerald Rogue" },
-        };
-        for (const auto& n : kHackNames)
-            if (!g.forced && g.patch == n.patch) l.name = n.name;
+        if (thatHack) l.name = hack->name;
         l.hasSave = g.hasSave;
-        l.widescreen = !g.patch.empty();
+        l.widescreen = !g.patch.empty() || pk_wide_knows(g.crc);
         l.hack = !g.known;
         out.push_back(l);
     }
@@ -2923,6 +3550,8 @@ bool Play(const std::string& file, const Options& o)
     std::unique_ptr<App> app(new App());
     app->embedded = true;
     app->ra = o.achievements;
+    app->uiHost = o.ui;
+    app->hostAccent = o.accent;
     app->UseFolders(o.roms, o.saves, o.data);
     if (const char* script = getenv("GBAW_TEST_SCRIPT"))
         if (*script) app->LoadScript(script);

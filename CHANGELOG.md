@@ -4,6 +4,16 @@
 ## Unreleased
 
 
+## v1.2.5 — GBA Dynamic Widescreen, Auto Save State & DS Fixes
+
+- **GBA dynamic widescreen, Zoom & Look-Around (PokeDaisy WIDE)**: integrated PokeDaisy's `WIDE` dynamic overworld/battle/menu rebuild and smooth camera into the built-in GBA player (`PK_WIDE_NO_GUARD`), giving dozens of decomp/expansion GBA ROM hacks without static patches — including *Pokémon SoulGold v1.2.1*, *Heart & Soul*, *Lazarus*, *Seaglass*, *Odyssey*, *Gaia* and *Recharged Yellow* — dynamic 1x widescreen across 16:9 and 16:10 views alongside right-stick-click **Zoom and Look Around** and **Auto Zoom In**.
+- **GBA ROM hack identity & touch pause swipe**: ensured FireRed-engine hacks only use Radical Red / Unbound / Monomyth branding when their SHA-1 or filename matches, added vertical touch-drag scrolling without accidental taps on the GBA pause menu, and switched `gba.wideExtra` cleanly by aspect/game.
+- **Atomic save states & Auto Save State**: save states in both DS (`StateSlots::Save`) and GBA (`GbaStateFile::Save`) now write through `.pending` and preserve `.previous` backups on failure; added **Auto Save State** (1-minute interval, background, exit) and **Resume on Start** keyed per ROM identity (using fast sampled DS ROM CRCs on Switch) while keeping in-game saves untouched.
+- **DS fixes & controls**: kept 2D message boxes and menus crisp at uneven scales (`#183`), locked fast-forward to even multipliers in 30 fps 3D scenes to avoid frame judder (`#178`), kept full-size unlisted DS dumps treated as their own game rather than hacks (`ds-v5`), added a remappable **Reset Game** shortcut (`CONTROLS`), kept physical R3 zoom working even when **Swap Screens** is remapped (`#206`), and returned short translated status results from Switch **HOME Menu Icons** (`#170`).
+- **Unified GBA pause menu**: GBA games now render their pause menu, volume slider, button badges, FPS pill and toasts with the exact same native-resolution frosted glass UI, fonts and active colour theme as DS games (grouping **Graphics**, **Sound**, **Controls** and **RetroAchievements** cleanly under **Settings**), with updated 7-language translations for all GBA options.
+- **NoSplitNX launcher emblem**: replaced the stacked two-screen DS logo across the launcher header bar, Settings header bar and Pause Menu title bar with the unified single-widescreen Joy-Con + Poké Ball NoSplitNX emblem.
+
+
 ## v1.2.4 — New App Icon & README
 
 - **New app icon and README**: a new NoSplitNX icon in the Homebrew Menu (two DS screens becoming one widescreen picture between Joy-Con colours), and a README rewritten around what NoSplitNX is today.

@@ -1410,7 +1410,7 @@ inline Kind CheckDs(const std::string& rom, const std::string& code, Cache& cach
         if (code == c.code) mine.push_back(&c);
     if (mine.empty()) return Kind::Unknown;
     // (A new key: verdicts kept by earlier checks are not trusted.)
-    const std::string key = Cache::Key(rom, "ds-v3");
+    const std::string key = Cache::Key(rom, "ds-v5"); // (v5: only a trimmed ROM matching no release is a hack)
     uint32_t biggest = 0;
     for (const Clean* c : mine) biggest = std::max(biggest, c->size);
     uint64_t size = 0;
@@ -1442,10 +1442,18 @@ inline Kind CheckDs(const std::string& rom, const std::string& code, Cache& cach
             if (!Hasher::Get().Result(rom, key, crc, read, wait)) return Kind::Unknown; // (being read: asked again later)
             // (A trimmed ROM: its end, all 0xFF or all 0x00, cut off.)
             if (read == size)
+            {
                 for (const Clean* c : mine)
                     if (size <= c->size &&
                         (crc == c->crc || CrcPadded(crc, 0xFF, c->size - size) == c->crc || CrcPadded(crc, 0x00, c->size - size) == c->crc))
                         kind = Kind::Clean;
+                // Read whole, trimmed (smaller than every listed release) and matching none: a hack
+                // (e.g. a trimmed Renegade Platinum). A full-size dump stays unknown so a player's
+                // own un-listed dump plays as its game.
+                bool releaseSize = false;
+                for (const Clean* c : mine) releaseSize |= size == c->size;
+                if (kind != Kind::Clean && !releaseSize) kind = Kind::Modified;
+            }
         }
     }
     fprintf(stderr, "[romhacks] %s: %s (fingerprint %08X, revision %u)\n", rom.c_str(), KindName(kind), (unsigned)fp, (unsigned)rev);

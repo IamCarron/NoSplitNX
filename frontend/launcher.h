@@ -684,6 +684,8 @@ inline void SyncGbaSettings(const std::string& cfg, const std::string& dataDir)
     set.push_back({ "language", lang.empty() ? ConfigValue(cfg, "language") : lang });
     const std::string fast = ConfigValue(cfg, "fast_lock");
     if (fast == "0" || fast == "1") set.push_back({ "fast_lock", fast });
+    set.push_back({ "auto_state", ConfigValue(cfg, "auto_state") == "1" ? "1" : "0" });
+    set.push_back({ "auto_resume", ConfigValue(cfg, "auto_resume") == "1" ? "1" : "0" });
     const std::string vol = ConfigValue(cfg, "volume");
     set.push_back({ "volume", vol.empty() ? "100" : vol });
 #ifndef __SWITCH__
@@ -746,15 +748,11 @@ inline void LoadLook(const std::string& cfg, const std::string& folder, Theme& t
     }
 }
 
-// Draw the iconic Nintendo DS dual-screen logo [ ⊟ ]
+// Draw the NoSplitNX emblem (matches the Switch HOME Menu icon).
 inline void DrawDsLogo(Canvas& c, int x, int y, int s, uint32_t color)
 {
-    const int sw = 8 * s, sh = 4 * s + 1;
-    const int gap = std::max(1, s + 1);
-    c.OutlineRound(x, y, sw, sh, s, 1, color);
-    c.FillBlend(x + s, y + s, sw - 2 * s, sh - 2 * s, (color & 0x00FFFFFF) | 0x33000000);
-    c.OutlineRound(x, y + sh + gap, sw, sh, s, 1, color);
-    c.FillBlend(x + s, y + sh + gap + s, sw - 2 * s, sh - 2 * s, (color & 0x00FFFFFF) | 0x66000000);
+    (void)color;
+    DrawNoSplitLogo(c, x, y, s, 0xFFE8EEFF);
 }
 
 // Draw the iconic Nintendo DS / DSi 3-bar battery meter [ ||| ]
@@ -1466,7 +1464,7 @@ inline bool SettingsBackPillRect(const Canvas& c, int& px, int& py, int& pw, int
     const int fontH = std::max(13, 5 * s);
     pw = ModernTextWidth(label, fontH) + 10 * s;
     ph = 12 * s;
-    px = 24 * s;
+    px = 27 * s;
     py = (bandH - ph) / 2;
     return true;
 }
@@ -1527,18 +1525,19 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
     c.Fill(0, bandH, c.w, th.bandLineH * s, th.bandLine);
     c.FillBlend(0, bandH + th.bandLineH * s, c.w, 2 * s, 0x44000000);
 
-    const int logoH = (4 * s + 1) * 2 + std::max(1, s + 1);
+    const int logoH = 9 * s, logoW = 13 * s;
     DrawDsLogo(c, 10 * s, (bandH - logoH) / 2, s, th.title);
     const std::string title = "NoSplitNX";
     const int topFontH = std::max(20, 8 * s);
-    c.ModernText(21 * s, (bandH - topFontH) / 2, title, topFontH, th.title, true);
+    const int titleX = 10 * s + logoW + 4 * s;
+    c.ModernText(titleX, (bandH - topFontH) / 2, title, topFontH, th.title, true);
 
     const int titleW = c.ModernTextWidth(title, topFontH);
 
     // Quick-access Settings pill in top-right beside the Clock widget (touch & visual shortcut)
     {
         int sx = 0, sy = 0, sw = 0, sh = 0;
-        if (SettingsPillRect(c, sx, sy, sw, sh) && sx > 21 * s + titleW + 8 * s)
+        if (SettingsPillRect(c, sx, sy, sw, sh) && sx > titleX + titleW + 8 * s)
         {
             const std::string settLabel = "Y: " + ToNiceTitle(UiLang::Tr("SETTINGS"));
             const int settFontH = std::max(12, 5 * s - 1);
@@ -2305,7 +2304,7 @@ struct SettingsPage
         c.FillGradV(0, 0, c.w, bandH, 0xFF191F2D, th.band, 0);
         c.Fill(0, bandH, c.w, th.bandLineH * s, th.bandLine);
         c.FillBlend(0, bandH + th.bandLineH * s, c.w, 2 * s, 0x33000000);
-        const int logoH = (4 * s + 1) * 2 + std::max(1, s + 1);
+        const int logoH = 9 * s;
         DrawDsLogo(c, 10 * s, (bandH - logoH) / 2, s, th.title);
         const std::string title = group < 0 ? ToNiceTitle(UiLang::Tr("SETTINGS")) : ToNiceTitle(UiLang::Tr("SETTINGS")) + ": " + ToNiceTitle(UiLang::Tr(SettingsGroups()[group].name));
         const int titleH = std::max(22, 8 * s);

@@ -160,7 +160,7 @@ inline std::string ToNiceTitle(const std::string& s)
 {
     if (!IsAllUpper(s)) return s;
     static const char* const acronyms[] = {
-        "GBA", "3DS", "NDS", "GPU", "CPU", "FPS", "ROM", "NRO", "HD", "NX", "UI",
+        "GBA", "3DS", "NDS", "GPU", "CPU", "FPS", "ROM", "NRO", "HD", "NX", "UI", "LCD", "XBRZ",
         "HDMI", "USB", "HDR", "DS", "PC", "SD", "TV", "2K", "4K", "3D", "ZR", "ZL",
         "192P", "288P", "384P", "480P", "576P", "720P", "960P", "1080P", "1440P", "2160P"
     };
@@ -251,7 +251,7 @@ inline std::string ToNiceSentence(const std::string& s)
 {
     if (!IsAllUpper(s)) return s;
     static const char* const acronyms[] = {
-        "GBA", "3DS", "NDS", "GPU", "CPU", "FPS", "ROM", "NRO", "HD", "NX", "UI", "APK", "ESC",
+        "GBA", "3DS", "NDS", "GPU", "CPU", "FPS", "ROM", "NRO", "HD", "NX", "UI", "APK", "ESC", "LCD", "XBRZ",
         "F11", "HDMI", "USB", "HDR", "DS", "PC", "SD", "TV", "2K", "4K", "3D", "F5", "F8", "ZR", "ZL"
     };
     struct ProperNoun { const char* upper; const char* shown; };

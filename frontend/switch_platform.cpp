@@ -31,6 +31,7 @@
 #ifdef SSR_GBA
 #include <map>
 #include "gba_games.h" // Pokemon GBA Widescreen, built in: its GBA games (CMakeLists.txt, SSR_GBA_DIR)
+#include "gba_host_ui.h"
 #include "gba_ra.h"    // RetroAchievements for those games, the same account as the DS games
 #endif
 #ifdef SSR_ALL_GAMES
@@ -494,9 +495,11 @@ std::string InstallHomeIcons(const std::vector<Launcher::Game>& games)
     std::string error;
     const int made = SwitchForwarder::Install(g_self, entries, error);
     fprintf(stderr, "[switch] HOME Menu icons: %d of %d%s%s\n", made, (int)entries.size(), error.empty() ? "" : ", ", error.c_str());
-    if (made == (int)entries.size()) return std::to_string(made) + " ON THE HOME MENU";
-    if (made > 0) return std::to_string(made) + " OF " + std::to_string(entries.size()) + " (" + error + ")";
-    return "FAILED: " + error;
+    // (Short, as the row has room for: the longer "8 ON THE HOME MENU" ran over the row's name.
+    // What went wrong is in game.log, above. Each said in the list's language: "8" + " ADDED".)
+    if (made == (int)entries.size()) return std::to_string(made) + " ADDED";
+    if (made > 0) return "SOME FAILED (SEE GAME.LOG)";
+    return "FAILED (SEE GAME.LOG)";
 }
 #endif
 
@@ -1568,6 +1571,8 @@ bool Start(int& argc, char**& argv)
         o.saves = game.folder;
         o.data = dir;
         o.fullscreen = true;
+        o.ui = GbaHostUi::Api();
+        o.accent = Launcher::ConfigValue(SettingsPath(dir), "list_colour");
         Launcher::SyncGbaSettings(SettingsPath(dir), o.data);
         fprintf(stderr, "[switch] GBA: %s, saves in %s\n", game.rom.c_str(), game.folder.c_str());
         GbaRa::Play(game.rom, o, SettingsPath(dir));
