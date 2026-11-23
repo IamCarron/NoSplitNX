@@ -70,16 +70,10 @@ extern "C" {
 #include <switch.h>
 #endif
 
-#include "android.h"
 #include "follower_hgss.h"
 #include "gameplay.h"
 #include "games.h"
-#include "touch.h"
 #include "ui.h"
-
-#if defined(__APPLE__)
-#include <TargetConditionals.h>
-#endif
 
 using namespace gbaw;
 
@@ -281,6 +275,7 @@ struct Settings
                 }
             }
         }
+        if (!lang.empty()) values["language"] = lang;
         ApplyUiLanguage(lang);
     }
     std::string HostValue(const char* key) const
@@ -492,11 +487,7 @@ void Note(const char* fmt, ...)
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
-#if defined(__ANDROID__)
-    SDL_Log("%s", buf);
-#else
     fprintf(stderr, "%s\n", buf);
-#endif
 }
 
 // A test script: "key FRAME NAME [HOLD]", "touch FRAME X,Y [HOLD]" (0 to 1 across the window),
@@ -681,19 +672,6 @@ struct App
     bool padLast = false;
 #endif
     bool leftTrigger = false;
-    bool needFolder = false;      // Android: no ROM folder chosen yet
-    bool pickingFolder = false;   // Android: the folder picker is open
-    // Touch: the on-screen controls (shown while the last input was a touch), the buttons each
-    // finger is on, and where the menus' rows were drawn (for taps), in canvas pixels.
-    bool touchUi = false;
-    Touch::Layout touchLayout;
-    TouchLayout::Profile touchProfile;
-    std::map<SDL_FingerID, uint32_t> fingers;
-    uint32_t touchHeld = 0;
-    // A button touched and let go before the game's next frame still reaches the game, for a
-    // few frames (a quick tap would otherwise come and go between two of its frames).
-    uint32_t touchTap = 0;
-    int touchTapFrames = 0;
     int uiScale = 1, uiOffX = 0, uiOffY = 0;
     std::vector<std::pair<UiRect, int>> tapRects; // (where, which item)
     // The games' art on the list: drawn at the screen's own resolution over the menus' canvas.
@@ -837,26 +815,9 @@ struct App
     {
 #if defined(__SWITCH__)
         data = "/switch/pokemon-gba-wide";
-#elif defined(__ANDROID__)
-        // The folder the player chose for their ROMs holds everything (saves, states,
-        // settings); until one is chosen, the app's own folder.
-        data = Android::RomFolder();
-        needFolder = data.empty();
-        if (needFolder)
-        {
-            const char* ext = SDL_AndroidGetExternalStoragePath();
-            data = ext ? ext : ".";
-        }
 #else
         if (!dataArg.empty())
             data = dataArg;
-        else if (getenv("APPIMAGE"))
-        {
-            // (An AppImage's own folder can't be written to.)
-            char* pref = SDL_GetPrefPath("", "pokemon-gba-wide");
-            data = pref ? pref : ".";
-            SDL_free(pref);
-        }
         else
         {
             char* base = SDL_GetBasePath();
@@ -867,9 +828,6 @@ struct App
         if (!dataArg.empty()) data = dataArg;
         while (data.size() > 1 && (data.back() == '/' || data.back() == '\\')) data.pop_back();
         roms = data + "/roms";
-#if defined(__ANDROID__)
-        if (!needFolder) roms = data;
-#endif
         saves = data + "/saves";
         states = data + "/states";
         Games::MakeDir(data);
@@ -877,7 +835,6 @@ struct App
         Games::MakeDir(saves);
         Games::MakeDir(states);
         set.Load(data + "/settings.ini");
-        touchProfile.Load(data + "/touch-layout-gba.cfg");
         listCache = saves + "/rom-list.txt";
     }
 
@@ -889,11 +846,9 @@ struct App
         roms = romsDir;
         saves = savesDir;
         states = data + "/states";
-        needFolder = false;
         Games::MakeDir(saves);
         Games::MakeDir(states);
         set.Load(data + "/gba-settings.ini");
-        touchProfile.Load(data + "/touch-layout-gba.cfg");
         listCache = saves + "/gba-rom-list.txt";
     }
 
@@ -1007,7 +962,11 @@ struct App
             if (ff && set.Get("ff_mute") == "1") SDL_ClearQueuedAudio(audio);
             ffWas = ff;
         }
-        if (ff && set.Get("ff_mute") == "1") queue = false;
+        if (ff && set.Get("ff_mute") == "1")
+        {
+            mAudioBufferClear(buf);
+            return;
+        }
         double nudge = ff ? 0 : (target - queued) / target * 0.005;
         nudge = std::max(-0.005, std::min(0.005, nudge));
         mAudioResamplerSetSource(&resampler, buf, core->audioSampleRate(core) / ratio, true);
@@ -1443,6 +1402,11 @@ struct App
         const bool dyn1x = DynamicWide1x();
         const bool zoomOn = ZoomOn();
         if (!dyn1x && !zoomOn) return;
+        if (!shown)
+        {
+            pk_wide_skip(core, frame240.data());
+            return;
+        }
         const int cw = CoreW(), ch = CoreH();
         const int e = std::max(0, wideExtra);
         for (int y = 0; y < ch; y++)
@@ -1546,7 +1510,6 @@ struct App
         }
         if (pads.Button(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) on(K_L);
         if (pads.Button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) on(K_R);
-        k |= (touchHeld | touchTap) & 0x3FF;
         const int d = pads.Dirs();
         if (d & 1) on(K_UP);
         if (d & 2) on(K_DOWN);
@@ -1785,7 +1748,7 @@ struct App
             DayNightFrame();
             FollowerFrame();
         }
-        companion.PostFrame(core, CompanionActions());
+        companion.PostFrame(core, CompanionActions(), shown);
 #ifdef GBAW_CHEATS
         cheats.Frame(cheatBus, keys);
 #endif
@@ -1793,7 +1756,6 @@ struct App
         if (raReady && ra->frame) ra->frame(ra->ud);
         autoStatePlayed = true;
 #endif
-        if (touchTapFrames > 0 && --touchTapFrames == 0) touchTap = 0;
         Sound(sound, ff);
         fpsFrames++;
         gameFrames++;
@@ -2346,15 +2308,6 @@ struct App
     void ListInput(const MenuIn& in)
     {
         const int n = (int)games.size(), cols = std::max(1, listCols);
-#if defined(__ANDROID__)
-        if ((needFolder || !n) && in.accept)
-        {
-            // Android's folder picker (after asking for access to files the first time).
-            pickingFolder = true;
-            Android::ChooseFolder();
-            return;
-        }
-#endif
         if (n)
         {
             if (in.left && listSel > 0) listSel--;
@@ -2375,12 +2328,8 @@ struct App
 
     void OpenFolder()
     {
-#if !defined(__SWITCH__) && !defined(__ANDROID__)
-        std::string url = "file://";
-#ifdef _WIN32
-        url += "/";
-#endif
-        url += roms;
+#if !defined(__SWITCH__)
+        std::string url = "file://" + roms;
         SDL_OpenURL(url.c_str());
 #endif
     }
@@ -2635,7 +2584,7 @@ struct App
 
     std::string Hint(const char* keys, const char* pad, const char* touch = nullptr) const
     {
-        if (touchUi && !padLast && touch) return touch;
+        (void)touch;
         return padLast ? pad : keys;
     }
 
@@ -2645,27 +2594,7 @@ struct App
         c.Fill(0, 0, c.w, 26, Colour::Band);
         c.Fill(0, 26, c.w, 1, Colour::BandLine);
         c.TextCentred(c.w / 2, 6, "POKEMON GBA WIDESCREEN", 2, Colour::Title);
-        if (needFolder)
-        {
-            // (Android, the first time.)
-            const std::vector<std::string> lines = {
-                "WHERE ARE YOUR ROMS?",
-                "",
-                "TAP HERE (OR PRESS A) AND CHOOSE THE FOLDER WITH YOUR ROMS.",
-                "ANDROID ASKS FIRST TO LET THE APP USE YOUR FILES: ALLOW IT,",
-                "THEN COME BACK. YOUR SAVES GO IN A SAVES FOLDER INSIDE IT.",
-                "",
-                "IT PLAYS POKEMON EMERALD, FIRERED AND LEAFGREEN (US, 1.0 OR 1.1)",
-                "AND ULTRA VIOLET 1.22 (ITS .GBA, OR ITS .IPS WITH FIRERED 1.0 BESIDE IT).",
-            };
-            int y = 60;
-            for (const std::string& l : lines)
-            {
-                c.Text(40, y, l, 1, l == "WHERE ARE YOUR ROMS?" ? Colour::Bright : Colour::Text);
-                y += 12;
-            }
-        }
-        else if (games.empty())
+        if (games.empty())
         {
             const std::vector<std::string> lines = {
                 "NO GAMES YET",
@@ -2676,11 +2605,7 @@ struct App
                 "  POKEMON ULTRA VIOLET 1.22: ITS .GBA, OR ITS .IPS",
                 "  WITH FIRERED 1.0 BESIDE IT",
                 "",
-#if defined(__ANDROID__)
-                "THEN TAP HERE (OR PRESS A) TO CHOOSE THE FOLDER AGAIN.",
-#else
                 "THEN PRESS R (OR A CONTROLLER'S X) TO LOOK AGAIN.",
-#endif
             };
             int y = 60;
             for (const std::string& l : lines)
@@ -2759,13 +2684,6 @@ struct App
 #endif
                            "TAP A GAME TO PLAY IT"),
                       1, Colour::Hint);
-        if (touchUi)
-        {
-            // (The settings for fingers.)
-            settingsRect = { c.w - 76, 3, 72, 20 };
-            c.Fill(settingsRect.x, settingsRect.y, settingsRect.w, settingsRect.h, 0xFF22304C);
-            c.TextCentred(settingsRect.x + settingsRect.w / 2, settingsRect.y + 6, "SETTINGS", 1, Colour::Bright);
-        }
     }
 
     void DrawSettings(Canvas& c)
@@ -2774,13 +2692,6 @@ struct App
         c.Fill(0, 0, c.w, 26, Colour::Band);
         c.Fill(0, 26, c.w, 1, Colour::BandLine);
         c.TextCentred(c.w / 2, 6, "SETTINGS", 2, Colour::Title);
-        if (touchUi)
-        {
-            // (A way back for fingers.)
-            backRect = { 4, 3, 60, 20 };
-            c.Fill(backRect.x, backRect.y, backRect.w, backRect.h, 0xFF22304C);
-            c.TextCentred(backRect.x + backRect.w / 2, backRect.y + 6, "< BACK", 1, Colour::Bright);
-        }
         const int width = std::min(c.w - 40, 560), x = (c.w - width) / 2;
         const auto& l = SettingsList();
         // (The chosen option and the lines under it are kept on the page.)
@@ -2844,8 +2755,6 @@ struct App
         artSpots.clear();
         backRect = UiRect();
         settingsRect = UiRect();
-        touchLayout = Touch::Make(ui.w, ui.h);
-        Touch::Apply(touchLayout, touchProfile, ui.w, ui.h);
         bool any = true;
         const Uint32 now = SDL_GetTicks();
         const bool wantFps = set.Int("show_fps") && screen == PLAY && !paused;
@@ -2907,7 +2816,7 @@ struct App
                 hint = Hint("TYPE, THEN ENTER   ESC: CANCEL", "TYPE WITH THE KEYBOARD   B: CANCEL", "TYPE, THEN TAP LOG IN");
             }
 #endif
-            pause.Draw(ui, title, hint, touchUi && !padLast);
+            pause.Draw(ui, title, hint, false);
 #ifdef GBAW_EMBEDDED
             // The chosen setting's explanation, under the menu (as the settings screen has it).
             const int sel = pause.selected;
@@ -2923,12 +2832,11 @@ struct App
             }
 #endif
         }
-        else if (touchUi) Touch::Draw(ui, touchLayout, touchHeld, fastToggle);
         else any = false;
 #ifdef GBAW_EMBEDDED
         if (useHost)
         {
-            if (!paused && !touchUi) any = false;
+            if (!paused) any = false;
             std::string title = "NoSplitNX";
             std::string hint = padLast ? "A: SELECT   B: BACK" : "ENTER: SELECT   ESC: BACK";
             std::string note;
@@ -3052,10 +2960,6 @@ struct App
         {
             const std::string f = std::to_string(fpsShown) + " FPS";
             int fpsX = 2, fpsY = 2;
-#ifdef __ANDROID__
-            fpsX = std::max(2, ui.w / 20);
-            fpsY = std::max(2, ui.h / 20);
-#endif
             ui.Fill(fpsX, fpsY, Canvas::TextWidth(f, 1) + 6, 11, 0xA0000000);
             ui.Text(fpsX + 3, fpsY + 2, f, 1, Colour::Bright);
             any = true;
@@ -3273,7 +3177,6 @@ struct App
             case SDL_CONTROLLERBUTTONDOWN:
             {
                 padLast = true;
-                touchUi = false;
                 const bool byLabel = ByLabel();
                 const int b = Labelled(e.cbutton.button);
                 if (b == (byLabel ? SDL_CONTROLLER_BUTTON_A : SDL_CONTROLLER_BUTTON_B)) in.accept = true;
@@ -3348,7 +3251,7 @@ struct App
                 break;
             case SDL_WINDOWEVENT:
                 if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
-                { std::fill(std::begin(key), std::end(key), false); fastInputFocused = false; fastButton.Block(); fingers.clear(); touchHeld = 0; CancelPauseTouch(); }
+                { std::fill(std::begin(key), std::end(key), false); fastInputFocused = false; fastButton.Block(); CancelPauseTouch(); }
                 else if (e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) fastInputFocused = true;
                 break;
             default:
@@ -3358,13 +3261,13 @@ struct App
         pads.MenuDirs(in);
     }
 
-    // A finger on the screen: the on-screen controls while playing, taps in the menus.
+    // A finger on the screen: companion and pause menu taps.
     void Finger(const SDL_TouchFingerEvent& f, MenuIn& in, bool fromFinger = true)
     {
+        (void)fromFinger;
         int ow, oh;
         SDL_GetRendererOutputSize(ren, &ow, &oh);
         const float x = (f.x * ow - uiOffX) / uiScale, y = (f.y * oh - uiOffY) / uiScale;
-        if (fromFinger) touchUi = true;
         padLast = false;
         if (screen == PLAY && !paused)
         {
@@ -3374,34 +3277,8 @@ struct App
                 if (companion.HandleTouch(core, px, py, ow, oh, f.type != SDL_FINGERUP, CompanionActions()))
                     return;
             }
-            if (f.type == SDL_FINGERUP)
-                fingers.erase(f.fingerId);
-            else
-            {
-                const uint32_t m = Touch::Hit(touchLayout, x, y);
-                if (f.type == SDL_FINGERDOWN)
-                {
-                    if (m & (1u << Touch::MENU)) in.menu = true;
-                    if (m & (1u << Touch::FAST))
-                    {
-                        fastToggle = !fastToggle;
-                        set.values["fast_lock"] = fastToggle ? "1" : "0";
-                        set.Save(); set.ToHost("fast_lock");
-                    }
-                    if (m & 0x3FF)
-                    {
-                        touchTap |= m & 0x3FF;
-                        touchTapFrames = 3;
-                    }
-                }
-                fingers[f.fingerId] = m & 0x3FF;
-            }
-            touchHeld = 0;
-            for (const auto& kv : fingers) touchHeld |= kv.second;
             return;
         }
-        fingers.clear();
-        touchHeld = 0;
         if (screen == PLAY && paused)
         {
             const int px = (int)(f.x * ow), py = (int)(f.y * oh);
@@ -3656,15 +3533,6 @@ struct App
         while (!quit)
         {
             if (testMode) Script();
-#if defined(__ANDROID__)
-            // Back from Android's folder picker: the chosen folder's games.
-            if (pickingFolder && !Android::Picking())
-            {
-                pickingFolder = false;
-                Folders("");
-                Rescan();
-            }
-#endif
             MenuIn in;
             Events(in);
             if (screen == LIST) ListInput(in);
@@ -3724,7 +3592,23 @@ struct App
                     tapDirs = dirs;
                     if (ffAudioNow && speed > 1 && dirs && SDL_GetTicks() - tapSince < 250) speed = 1;
                 }
-                for (int i = 0; i < run * speed; i++) RunFrame(true, speed > 1, i == run * speed - 1);
+                if (speed > 1)
+                {
+                    run = 1;
+                    due = 0;
+                    const Uint64 batchStart = SDL_GetPerformanceCounter();
+                    for (int i = 0; i < speed; i++)
+                    {
+                        const bool budgetExpired = (i >= 1 && ((double)(SDL_GetPerformanceCounter() - batchStart) / freq) >= 0.0135);
+                        const bool isLast = (i == speed - 1) || budgetExpired;
+                        RunFrame(true, true, isLast);
+                        if (isLast) break;
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < run; i++) RunFrame(true, false, i == run - 1);
+                }
             }
             else
                 due = 0;
@@ -3902,7 +3786,7 @@ bool Art(const std::string& name, const unsigned char*& jpeg, size_t& size)
 // list and the game.)
 static void LeaveSdl()
 {
-#if !defined(__SWITCH__) && !defined(__ANDROID__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+#if !defined(__SWITCH__)
     SDL_Quit();
 #endif
 }

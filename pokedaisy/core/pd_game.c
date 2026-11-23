@@ -158,18 +158,6 @@ struct port_rom {
     enum pd_game_kind kind;
     const char* title;
 };
-// The guide a port reads (its English text over the port's own tables): the base game's, by the code's third letter.
-static enum pd_guide_id port_guide(const char* code) {
-    if (code[3] == 'J') return PD_GUIDE_NONE; // Japanese tables are laid out apart: no guide yet
-    switch (code[2]) {
-    case 'R': return PD_GUIDE_FIRERED;
-    case 'G': return PD_GUIDE_LEAFGREEN;
-    case 'E': return PD_GUIDE_EMERALD;
-    case 'V': return PD_GUIDE_RUBY;
-    case 'P': return PD_GUIDE_SAPPHIRE;
-    }
-    return PD_GUIDE_NONE;
-}
 static const struct port_rom PORT_ROMS[] = {
     {"AXPD", 0, &PD_CONFIG_PORT_AXPD0, PD_GAME_EMERALD, "Pokémon Saphir-Edition (unverified)"},
     {"AXPD", 1, &PD_CONFIG_PORT_AXPD1, PD_GAME_EMERALD, "Pokémon Saphir-Edition (unverified)"},
@@ -225,7 +213,6 @@ void pd_game_detect(struct pd_game* g, const uint8_t* header, size_t romSize) {
         g->kind = PD_GAME_FIRERED;
         g->title = g->code[2] == 'R' ? "Pokémon FireRed" : "Pokémon LeafGreen";
         bool rev1 = g->revision == 1;
-        g->guide = g->code[2] == 'R' ? PD_GUIDE_FIRERED : PD_GUIDE_LEAFGREEN;
         if (g->code[2] == 'R') g->cfg = rev1 ? &PD_CONFIG_FIRERED_REV1 : &PD_CONFIG_FIRERED_REV0;
         else g->cfg = rev1 ? &PD_CONFIG_LEAFGREEN_REV1 : &PD_CONFIG_LEAFGREEN_REV0;
     } else if (!strcmp(g->code, "AXVE") || !strcmp(g->code, "AXPE")) {
@@ -233,7 +220,6 @@ void pd_game_detect(struct pd_game* g, const uint8_t* header, size_t romSize) {
         bool ruby = g->code[2] == 'V';
         g->kind = PD_GAME_EMERALD;
         g->title = ruby ? "Pokémon Ruby" : "Pokémon Sapphire";
-        g->guide = ruby ? PD_GUIDE_RUBY : PD_GUIDE_SAPPHIRE;
         if (g->revision == 0) g->cfg = ruby ? &PD_CONFIG_RUBY_REV0 : &PD_CONFIG_SAPPHIRE_REV0;
         else g->cfg = ruby ? &PD_CONFIG_RUBY : &PD_CONFIG_SAPPHIRE;
         if (g->revision > 2) {
@@ -248,14 +234,12 @@ void pd_game_detect(struct pd_game* g, const uint8_t* header, size_t romSize) {
     } else if (!strcmp(g->code, "BPEE")) {
         g->kind = PD_GAME_EMERALD;
         g->title = "Pokémon Emerald";
-        g->guide = PD_GUIDE_EMERALD;
         g->cfg = &PD_CONFIG_EMERALD;
     } else {
         for (const struct port_rom* r = PORT_ROMS; r->code; r++) {
             if (strcmp(r->code, g->code) || r->rev != g->revision) continue;
             g->kind = r->kind;
             g->title = r->title;
-            g->guide = port_guide(r->code);
             g->cfg = romSize > 0x1000000 ? NULL : r->cfg;
             if (!g->cfg) g->unsupported = "Not a version the companion knows";
             return;
@@ -476,171 +460,98 @@ struct known_rom {
     const struct pd_config* cfg;
     enum pd_game_kind kind;
     const char* title;
-    enum pd_guide_id guide;
 };
 static const struct known_rom KNOWN_ROMS[] = {
     // Guessed from the retail layout: the ROM's code reads the same addresses as often as retail's does (unverified on a save,
     // except Altered Emerald). Scorched Silver, below, reads none of them.
-    {"b1d5feccdf9f1b2b025c5ff6062ce97134b1d0e7", &PD_CONFIG_EMERALD, PD_GAME_EMERALD, "Pokémon Altered Emerald (unverified)",
-     PD_GUIDE_NONE},
-    {"6650b2f7f2b7aa0c880061e0e362bbdb9ab999c6", &PD_CONFIG_EMERALD, PD_GAME_EMERALD, "Pokémon Delta Emerald (unverified)",
-     PD_GUIDE_NONE},
-    {"186449f6208675af4d8cfe4ace5afbf5186cea6d", &PD_CONFIG_SAPPHIRE, PD_GAME_EMERALD, "Pokémon Royal Sapphire (unverified)",
-     PD_GUIDE_NONE},
-    {"cbd71af65ee3dcd53280a6a12014bfb11e8f626a", &PD_CONFIG_EMERALD_LEGACY, PD_GAME_EMERALD, "Pokémon Emerald Legacy",
-     PD_GUIDE_EMERALD_LEGACY},
-    {"a7c4e34fafb53f2d5283eb6d43dad285c0dd40a8", &PD_CONFIG_EMERALD_KAIZO, PD_GAME_EMERALD, "Pokémon Emerald Kaizo",
-     PD_GUIDE_EMERALD_KAIZO},
-    {"e10105d8544469c6a11ca2cf510289981df3c3b0", &PD_CONFIG_GLAZED, PD_GAME_EMERALD, "Pokémon Glazed",
-     PD_GUIDE_GLAZED},
-    {"3cbd5a2e72ce60cfae1e0c28d83e01f855c51537", &PD_CONFIG_CELIA, PD_GAME_FIRERED, "Pokémon Celia's Stupid Romhack",
-     PD_GUIDE_CELIA},
-    {"8bac897de515f88e6ce92d0712ce2c018a394b37", &PD_CONFIG_ORANGE_ISLANDS, PD_GAME_FIRERED, "Pokémon Orange Islands",
-     PD_GUIDE_ORANGE_ISLANDS},
-    {"d2e3800e69e44c9649c3d9a15dc1cd12c1d90501", &PD_CONFIG_ORANGE_ISLANDS, PD_GAME_FIRERED, "Pokémon Orange Islands",
-     PD_GUIDE_ORANGE_ISLANDS},
-    {"3b6c51d8fb6b513bdd01b7bda3ed8965bc985d58", &PD_CONFIG_ULTRA_VIOLET, PD_GAME_FIRERED, "Pokémon Ultra Violet",
-     PD_GUIDE_ULTRA_VIOLET},
-    {"033d05374ae34eb84fae62c693ca8f3da23dd1bd", &PD_CONFIG_ROCKET_EDITION, PD_GAME_FIRERED, "Pokémon FireRed Rocket Edition",
-     PD_GUIDE_ROCKET_EDITION},
-    {"1ee1557db1e4c2e0e94c6306efcc40506bc40cc9", &PD_CONFIG_ASH_GRAY, PD_GAME_FIRERED, "Pokémon Ash Gray",
-     PD_GUIDE_ASH_GRAY},
-    {"92ed82145c013069472153391c7aab1cfbf37b75", &PD_CONFIG_ASH_GRAY, PD_GAME_FIRERED, "Pokémon Ash Gray Fork Bug Fix",
-     PD_GUIDE_ASH_GRAY},
-    {"d5b1e77975fcda831e0e9a7b527906bf3f40ecd0", &PD_CONFIG_GAIA, PD_GAME_FIRERED, "Pokémon Gaia",
-     PD_GUIDE_GAIA},
-    {"8745ddbdbfadf6abaf66de4e9055923b62eb4668", &PD_CONFIG_ODYSSEY, PD_GAME_FIRERED, "Pokémon Odyssey",
-     PD_GUIDE_ODYSSEY},
-    {"00e70c0384a5f1698588034201fd5b849d3542e2", &PD_CONFIG_AMETHYST, PD_GAME_FIRERED, "Pokémon Amethyst",
-     PD_GUIDE_AMETHYST},
-    {"91291aade04b4b111cd03ae7b6e2ff460e1edd8a", &PD_CONFIG_AMETHYST_V1_4_1, PD_GAME_FIRERED, "Pokémon Amethyst",
-     PD_GUIDE_AMETHYST_V141},
-    {"25f8840ecb58e584edf18ffde35f845e94f3f17c", &PD_CONFIG_GS_CHRONICLES, PD_GAME_FIRERED, "Pokémon GS Chronicles",
-     PD_GUIDE_GS_CHRONICLES},
-    {"20dfaea1d5317cf95fe0b493208edce7d50b865f", &PD_CONFIG_GHOST_GREY, PD_GAME_FIRERED, "Pokémon Ghost Grey",
-     PD_GUIDE_GHOST_GREY},
-    {"74337272566a74625d6dedefe47d2d153eb48ec1", &PD_CONFIG_GHOST_GREY, PD_GAME_FIRERED, "Pokémon Ghost Grey",
-     PD_GUIDE_GHOST_GREY},
-    {"0dafc0116b74406a2df491e26ccb40dd362fb0b7", &PD_CONFIG_GHOST_GREY, PD_GAME_FIRERED, "Pokémon Ghost Grey",
-     PD_GUIDE_GHOST_GREY},
-    {"afe4c8e0f9c7186860fcea5f25d8318f5d7929b9", &PD_CONFIG_SWORD_SHIELD, PD_GAME_FIRERED, "Pokémon Sword and Shield Ultimate Plus",
-     PD_GUIDE_SWORD_SHIELD},
-    {"daa2f89934d2c0447d5271dabeba86bfba04e1fd", &PD_CONFIG_SWORD_SHIELD, PD_GAME_FIRERED, "Pokémon Sword and Shield Ultimate Plus",
-     PD_GUIDE_SWORD_SHIELD},
-    {"4858cc3d7b335bb5eed553861d7a4a17bad9ce2c", &PD_CONFIG_SWORD_SHIELD, PD_GAME_FIRERED, "Pokémon Sword and Shield Ultimate Plus",
-     PD_GUIDE_SWORD_SHIELD},
-    {"932323d1fa3732d8673d1319fa86ed4df41087b9", &PD_CONFIG_SWORD_SHIELD, PD_GAME_FIRERED, "Pokémon Sword and Shield Ultimate Plus",
-     PD_GUIDE_SWORD_SHIELD},
-    {"964f951a0fdaf209e4ea1344883ef0d557bb3a80", &PD_CONFIG_RADICAL_RED, PD_GAME_FIRERED, "Pokémon Radical Red",
-     PD_GUIDE_RADICAL_RED},
-    {"b4776b82a4c7915d0fadeaa27e013523f99dfd94", &PD_CONFIG_UNBOUND, PD_GAME_FIRERED, "Pokémon Unbound",
-     PD_GUIDE_UNBOUND},
-    {"0ce2a880aa097f1dce4e1db8ee513d0e82d15859", &PD_CONFIG_UNBOUND_FR, PD_GAME_FIRERED, "Pokémon Unbound",
-     PD_GUIDE_UNBOUND},
-    {"8114e0f81eb3581f699c74a5891c7b75a130269d", &PD_CONFIG_UNBOUND_IT, PD_GAME_FIRERED, "Pokémon Unbound",
-     PD_GUIDE_UNBOUND},
-    {"1d20091c4d936f5eb122db8780554dd0829ffb63", &PD_CONFIG_IMPERIUM, PD_GAME_EMERALD, "Pokémon Emerald Imperium",
-     PD_GUIDE_IMPERIUM},
-    {"3fa8e61ec1727cc51540c54677623f736a446e1b", &PD_CONFIG_TMT2, PD_GAME_EMERALD, "Pokémon Too Many Types 2",
-     PD_GUIDE_TMT2},
-    {"8a6940ae3fb9a27577ab24833d7c928eb4d8db87", &PD_CONFIG_TMT2, PD_GAME_EMERALD, "Pokémon Too Many Types 2 (unverified)",
-     PD_GUIDE_TMT2},
-    {"be5033598e91d0e80fa93e551406f02a7876d7c2", &PD_CONFIG_RECHARGED_YELLOW_V1_8_0, PD_GAME_FIRERED, "Pokémon Recharged Yellow",
-     PD_GUIDE_RECHARGED_YELLOW_V180},
-    {"ac30d1ed80e75104a3fb92f71e2b9a51c26e80c8", &PD_CONFIG_RECHARGED_YELLOW_V1_9_0, PD_GAME_FIRERED, "Pokémon Recharged Yellow",
-     PD_GUIDE_RECHARGED_YELLOW_V190},
-    {"7d9fae6cf31c07bc7fa5cf7afe137ad5385cefb1", &PD_CONFIG_RECHARGED_YELLOW_V1_9_4, PD_GAME_FIRERED, "Pokémon Recharged Yellow",
-     PD_GUIDE_RECHARGED_YELLOW_V194},
-    {"ed60654d7525ba005bfc8f799bf0ecba2ef08a2e", &PD_CONFIG_RECHARGED_YELLOW_V1_9_7, PD_GAME_FIRERED, "Pokémon Recharged Yellow",
-     PD_GUIDE_RECHARGED_YELLOW},
-    {"b9f4d332d30fc88c379f9e037f9eae3b2755ead4", &PD_CONFIG_SEAGLASS, PD_GAME_EMERALD, "Pokémon Emerald Seaglass",
-     PD_GUIDE_SEAGLASS},
-    {"7dcdc7e280bc4631487e13dd37e6e0cea04adea6", &PD_CONFIG_LAZARUS, PD_GAME_EMERALD, "Pokémon Lazarus",
-     PD_GUIDE_LAZARUS},
-    {"60182b934d2e8eb3eef226a9bbc25e5df6becd4f", &PD_CONFIG_WISHES, PD_GAME_EMERALD, "Pokémon Wishes of Tomorrow",
-     PD_GUIDE_WISHES},
-    {"06e79d12afa578db97c23c1f7ba771fe2f8fe905", &PD_CONFIG_MARIOMON_V1_5_2, PD_GAME_EMERALD, "Super Mariomon",
-     PD_GUIDE_MARIOMON},
-    {"831fe0f97301f17b24a9cd4a64ef0520835c4dde", &PD_CONFIG_MARIOMON_V1_5_1, PD_GAME_EMERALD, "Super Mariomon",
-     PD_GUIDE_MARIOMON},
-    {"c2ee8cc6b0a80bde0f4fb0d4a2e1fb984bccec77", &PD_CONFIG_MARIOMON_V1_5_1, PD_GAME_EMERALD, "Super Mariomon (unverified)",
-     PD_GUIDE_MARIOMON},
-    {"043512c2497871c018df606fb90ffbd4c81430f4", &PD_CONFIG_MARIOMON_V1_3, PD_GAME_EMERALD, "Super Mariomon",
-     PD_GUIDE_MARIOMON},
-    {"08d1c275c0ba4d559b33427292702d61ad49fb5c", &PD_CONFIG_MARIOMON_V1_2_2, PD_GAME_EMERALD, "Super Mariomon",
-     PD_GUIDE_MARIOMON},
-    {"43dd208b23eade69aa3384301e934ecafbf6c2b3", &PD_CONFIG_MARIOMON_V1_2_1, PD_GAME_EMERALD, "Super Mariomon",
-     PD_GUIDE_MARIOMON},
-    {"81bd0f4bfa1c04ab2c6faab1bddd10e8a390ea77", &PD_CONFIG_ROWE, PD_GAME_EMERALD, "Pokémon R.O.W.E.",
-     PD_GUIDE_NONE},
-    {"40780347d0b4df6bf491eaf12603e5422caee677", &PD_CONFIG_TEAM_ROCKET, PD_GAME_EMERALD, "Pokémon Team Rocket Edition",
-     PD_GUIDE_TEAM_ROCKET},
-    {"20e91aecb3243eea7cd610659846f37062f5d709", &PD_CONFIG_DREAMSTONE, PD_GAME_EMERALD, "Pokémon Dreamstone Mysteries",
-     PD_GUIDE_DREAMSTONE},
-    {"ea5d369cc8a31cbf1cfacb7c9470ea670f08957b", &PD_CONFIG_SOULGOLD, PD_GAME_EMERALD, "Pokémon SoulGold",
-     PD_GUIDE_SOULGOLD},
-    {"805d880ee229fb6dc3ce03d7b03baf48f0d759d0", &PD_CONFIG_SOULGOLD_V1_2, PD_GAME_EMERALD, "Pokémon SoulGold",
-     PD_GUIDE_SOULGOLD},
-    {"5d6a036260fdbde96f85b5c1b92d0256d3aebafb", &PD_CONFIG_SOULGOLD_V1_2B, PD_GAME_EMERALD, "Pokémon SoulGold",
-     PD_GUIDE_SOULGOLD},
-    {"2be7c99aa473308debe1d03ff2015bab7d9addb5", &PD_CONFIG_SOULGOLD_V1_2C, PD_GAME_EMERALD, "Pokémon SoulGold",
-     PD_GUIDE_SOULGOLD},
-    {"32988f918ca09923466ae3bc5bbfe5f2a771c728", &PD_CONFIG_SOULGOLD_V1_2_1, PD_GAME_EMERALD, "Pokémon SoulGold",
-     PD_GUIDE_SOULGOLD},
-    {"dacb6e40e7f572ddefd2dfa10e99c0da6835b062", &PD_CONFIG_SOULGOLD_V1_2_1, PD_GAME_EMERALD, "Pokémon SoulGold",
-     PD_GUIDE_SOULGOLD},
-    {"62bb900925118796fb963b7df92d02cb548c404e", &PD_CONFIG_LETS_GO_PIKACHU, PD_GAME_FIRERED, "Pokémon Let's Go Pikachu",
-     PD_GUIDE_LETS_GO},
+    {"b1d5feccdf9f1b2b025c5ff6062ce97134b1d0e7", &PD_CONFIG_EMERALD, PD_GAME_EMERALD, "Pokémon Altered Emerald (unverified)"},
+    {"6650b2f7f2b7aa0c880061e0e362bbdb9ab999c6", &PD_CONFIG_EMERALD, PD_GAME_EMERALD, "Pokémon Delta Emerald (unverified)"},
+    {"186449f6208675af4d8cfe4ace5afbf5186cea6d", &PD_CONFIG_SAPPHIRE, PD_GAME_EMERALD, "Pokémon Royal Sapphire (unverified)"},
+    {"cbd71af65ee3dcd53280a6a12014bfb11e8f626a", &PD_CONFIG_EMERALD_LEGACY, PD_GAME_EMERALD, "Pokémon Emerald Legacy"},
+    {"a7c4e34fafb53f2d5283eb6d43dad285c0dd40a8", &PD_CONFIG_EMERALD_KAIZO, PD_GAME_EMERALD, "Pokémon Emerald Kaizo"},
+    {"e10105d8544469c6a11ca2cf510289981df3c3b0", &PD_CONFIG_GLAZED, PD_GAME_EMERALD, "Pokémon Glazed"},
+    {"3cbd5a2e72ce60cfae1e0c28d83e01f855c51537", &PD_CONFIG_CELIA, PD_GAME_FIRERED, "Pokémon Celia's Stupid Romhack"},
+    {"8bac897de515f88e6ce92d0712ce2c018a394b37", &PD_CONFIG_ORANGE_ISLANDS, PD_GAME_FIRERED, "Pokémon Orange Islands"},
+    {"d2e3800e69e44c9649c3d9a15dc1cd12c1d90501", &PD_CONFIG_ORANGE_ISLANDS, PD_GAME_FIRERED, "Pokémon Orange Islands"},
+    {"3b6c51d8fb6b513bdd01b7bda3ed8965bc985d58", &PD_CONFIG_ULTRA_VIOLET, PD_GAME_FIRERED, "Pokémon Ultra Violet"},
+    {"033d05374ae34eb84fae62c693ca8f3da23dd1bd", &PD_CONFIG_ROCKET_EDITION, PD_GAME_FIRERED, "Pokémon FireRed Rocket Edition"},
+    {"1ee1557db1e4c2e0e94c6306efcc40506bc40cc9", &PD_CONFIG_ASH_GRAY, PD_GAME_FIRERED, "Pokémon Ash Gray"},
+    {"92ed82145c013069472153391c7aab1cfbf37b75", &PD_CONFIG_ASH_GRAY, PD_GAME_FIRERED, "Pokémon Ash Gray Fork Bug Fix"},
+    {"d5b1e77975fcda831e0e9a7b527906bf3f40ecd0", &PD_CONFIG_GAIA, PD_GAME_FIRERED, "Pokémon Gaia"},
+    {"8745ddbdbfadf6abaf66de4e9055923b62eb4668", &PD_CONFIG_ODYSSEY, PD_GAME_FIRERED, "Pokémon Odyssey"},
+    {"00e70c0384a5f1698588034201fd5b849d3542e2", &PD_CONFIG_AMETHYST, PD_GAME_FIRERED, "Pokémon Amethyst"},
+    {"91291aade04b4b111cd03ae7b6e2ff460e1edd8a", &PD_CONFIG_AMETHYST_V1_4_1, PD_GAME_FIRERED, "Pokémon Amethyst"},
+    {"25f8840ecb58e584edf18ffde35f845e94f3f17c", &PD_CONFIG_GS_CHRONICLES, PD_GAME_FIRERED, "Pokémon GS Chronicles"},
+    {"20dfaea1d5317cf95fe0b493208edce7d50b865f", &PD_CONFIG_GHOST_GREY, PD_GAME_FIRERED, "Pokémon Ghost Grey"},
+    {"74337272566a74625d6dedefe47d2d153eb48ec1", &PD_CONFIG_GHOST_GREY, PD_GAME_FIRERED, "Pokémon Ghost Grey"},
+    {"0dafc0116b74406a2df491e26ccb40dd362fb0b7", &PD_CONFIG_GHOST_GREY, PD_GAME_FIRERED, "Pokémon Ghost Grey"},
+    {"afe4c8e0f9c7186860fcea5f25d8318f5d7929b9", &PD_CONFIG_SWORD_SHIELD, PD_GAME_FIRERED, "Pokémon Sword and Shield Ultimate Plus"},
+    {"daa2f89934d2c0447d5271dabeba86bfba04e1fd", &PD_CONFIG_SWORD_SHIELD, PD_GAME_FIRERED, "Pokémon Sword and Shield Ultimate Plus"},
+    {"4858cc3d7b335bb5eed553861d7a4a17bad9ce2c", &PD_CONFIG_SWORD_SHIELD, PD_GAME_FIRERED, "Pokémon Sword and Shield Ultimate Plus"},
+    {"932323d1fa3732d8673d1319fa86ed4df41087b9", &PD_CONFIG_SWORD_SHIELD, PD_GAME_FIRERED, "Pokémon Sword and Shield Ultimate Plus"},
+    {"964f951a0fdaf209e4ea1344883ef0d557bb3a80", &PD_CONFIG_RADICAL_RED, PD_GAME_FIRERED, "Pokémon Radical Red"},
+    {"b4776b82a4c7915d0fadeaa27e013523f99dfd94", &PD_CONFIG_UNBOUND, PD_GAME_FIRERED, "Pokémon Unbound"},
+    {"0ce2a880aa097f1dce4e1db8ee513d0e82d15859", &PD_CONFIG_UNBOUND_FR, PD_GAME_FIRERED, "Pokémon Unbound"},
+    {"8114e0f81eb3581f699c74a5891c7b75a130269d", &PD_CONFIG_UNBOUND_IT, PD_GAME_FIRERED, "Pokémon Unbound"},
+    {"1d20091c4d936f5eb122db8780554dd0829ffb63", &PD_CONFIG_IMPERIUM, PD_GAME_EMERALD, "Pokémon Emerald Imperium"},
+    {"3fa8e61ec1727cc51540c54677623f736a446e1b", &PD_CONFIG_TMT2, PD_GAME_EMERALD, "Pokémon Too Many Types 2"},
+    {"8a6940ae3fb9a27577ab24833d7c928eb4d8db87", &PD_CONFIG_TMT2, PD_GAME_EMERALD, "Pokémon Too Many Types 2 (unverified)"},
+    {"be5033598e91d0e80fa93e551406f02a7876d7c2", &PD_CONFIG_RECHARGED_YELLOW_V1_8_0, PD_GAME_FIRERED, "Pokémon Recharged Yellow"},
+    {"ac30d1ed80e75104a3fb92f71e2b9a51c26e80c8", &PD_CONFIG_RECHARGED_YELLOW_V1_9_0, PD_GAME_FIRERED, "Pokémon Recharged Yellow"},
+    {"7d9fae6cf31c07bc7fa5cf7afe137ad5385cefb1", &PD_CONFIG_RECHARGED_YELLOW_V1_9_4, PD_GAME_FIRERED, "Pokémon Recharged Yellow"},
+    {"ed60654d7525ba005bfc8f799bf0ecba2ef08a2e", &PD_CONFIG_RECHARGED_YELLOW_V1_9_7, PD_GAME_FIRERED, "Pokémon Recharged Yellow"},
+    {"b9f4d332d30fc88c379f9e037f9eae3b2755ead4", &PD_CONFIG_SEAGLASS, PD_GAME_EMERALD, "Pokémon Emerald Seaglass"},
+    {"7dcdc7e280bc4631487e13dd37e6e0cea04adea6", &PD_CONFIG_LAZARUS, PD_GAME_EMERALD, "Pokémon Lazarus"},
+    {"60182b934d2e8eb3eef226a9bbc25e5df6becd4f", &PD_CONFIG_WISHES, PD_GAME_EMERALD, "Pokémon Wishes of Tomorrow"},
+    {"06e79d12afa578db97c23c1f7ba771fe2f8fe905", &PD_CONFIG_MARIOMON_V1_5_2, PD_GAME_EMERALD, "Super Mariomon"},
+    {"831fe0f97301f17b24a9cd4a64ef0520835c4dde", &PD_CONFIG_MARIOMON_V1_5_1, PD_GAME_EMERALD, "Super Mariomon"},
+    {"c2ee8cc6b0a80bde0f4fb0d4a2e1fb984bccec77", &PD_CONFIG_MARIOMON_V1_5_1, PD_GAME_EMERALD, "Super Mariomon (unverified)"},
+    {"043512c2497871c018df606fb90ffbd4c81430f4", &PD_CONFIG_MARIOMON_V1_3, PD_GAME_EMERALD, "Super Mariomon"},
+    {"08d1c275c0ba4d559b33427292702d61ad49fb5c", &PD_CONFIG_MARIOMON_V1_2_2, PD_GAME_EMERALD, "Super Mariomon"},
+    {"43dd208b23eade69aa3384301e934ecafbf6c2b3", &PD_CONFIG_MARIOMON_V1_2_1, PD_GAME_EMERALD, "Super Mariomon"},
+    {"81bd0f4bfa1c04ab2c6faab1bddd10e8a390ea77", &PD_CONFIG_ROWE, PD_GAME_EMERALD, "Pokémon R.O.W.E."},
+    {"40780347d0b4df6bf491eaf12603e5422caee677", &PD_CONFIG_TEAM_ROCKET, PD_GAME_EMERALD, "Pokémon Team Rocket Edition"},
+    {"20e91aecb3243eea7cd610659846f37062f5d709", &PD_CONFIG_DREAMSTONE, PD_GAME_EMERALD, "Pokémon Dreamstone Mysteries"},
+    {"ea5d369cc8a31cbf1cfacb7c9470ea670f08957b", &PD_CONFIG_SOULGOLD, PD_GAME_EMERALD, "Pokémon SoulGold"},
+    {"805d880ee229fb6dc3ce03d7b03baf48f0d759d0", &PD_CONFIG_SOULGOLD_V1_2, PD_GAME_EMERALD, "Pokémon SoulGold"},
+    {"5d6a036260fdbde96f85b5c1b92d0256d3aebafb", &PD_CONFIG_SOULGOLD_V1_2B, PD_GAME_EMERALD, "Pokémon SoulGold"},
+    {"2be7c99aa473308debe1d03ff2015bab7d9addb5", &PD_CONFIG_SOULGOLD_V1_2C, PD_GAME_EMERALD, "Pokémon SoulGold"},
+    {"32988f918ca09923466ae3bc5bbfe5f2a771c728", &PD_CONFIG_SOULGOLD_V1_2_1, PD_GAME_EMERALD, "Pokémon SoulGold"},
+    {"dacb6e40e7f572ddefd2dfa10e99c0da6835b062", &PD_CONFIG_SOULGOLD_V1_2_1, PD_GAME_EMERALD, "Pokémon SoulGold"},
+    {"62bb900925118796fb963b7df92d02cb548c404e", &PD_CONFIG_LETS_GO_PIKACHU, PD_GAME_FIRERED, "Pokémon Let's Go Pikachu"},
     {"11f6ee3890a0aaeb95903471ec73413c846e86fc", &PD_CONFIG_LETS_GO_PIKACHU, PD_GAME_FIRERED,
-     "Pokémon Let's Go Pikachu (Translation Only)", PD_GUIDE_LETS_GO},
-    {"4a41d539cbf6108cfe3344db5ba997fc5660d77d", &PD_CONFIG_LETS_GO_EEVEE, PD_GAME_FIRERED, "Pokémon Let's Go Eevee",
-     PD_GUIDE_LETS_GO},
+     "Pokémon Let's Go Pikachu (Translation Only)"},
+    {"4a41d539cbf6108cfe3344db5ba997fc5660d77d", &PD_CONFIG_LETS_GO_EEVEE, PD_GAME_FIRERED, "Pokémon Let's Go Eevee"},
     {"5b6146adec1a30f88c565e8f555ab7a578825598", &PD_CONFIG_LETS_GO_EEVEE, PD_GAME_FIRERED,
-     "Pokémon Let's Go Eevee (Translation Only)", PD_GUIDE_LETS_GO},
-    {"ae1c4be9be8d706bb989602bc05731203d42860d", &PD_CONFIG_MONOMYTH, PD_GAME_EMERALD, "Pokémon Monomyth",
-     PD_GUIDE_MONOMYTH},
-    {"eb660caffbc26e1f09f86714d03af4c3eccd9e4d", &PD_CONFIG_MONOMYTH_V1_1, PD_GAME_EMERALD, "Pokémon Monomyth",
-     PD_GUIDE_MONOMYTH},
-    {"742e62ffa5a8d607171fdb8477eb1f417dc36086", &PD_CONFIG_MONOMYTH_V1_2, PD_GAME_EMERALD, "Pokémon Monomyth",
-     PD_GUIDE_MONOMYTH},
-    {"79ee6df0869c1773c8c6a5f764afc1f8d833d8bb", &PD_CONFIG_HEART_AND_SOUL, PD_GAME_EMERALD, "Pokémon Heart and Soul",
-     PD_GUIDE_HEART_AND_SOUL},
-    {"d0658315da1e8827f66f15c3d3a000fe747e163e", &PD_CONFIG_QUETZAL_V9_0, PD_GAME_EMERALD, "Pokémon Quetzal",
-     PD_GUIDE_QUETZAL},
-    {"fe346b5b0eb022e3a103f81e7dcefba6f1dc542f", &PD_CONFIG_QUETZAL_V9_0_ES, PD_GAME_EMERALD, "Pokémon Quetzal",
-     PD_GUIDE_QUETZAL},
-    {"c108cec750a35775084c0806cc704d8abd1994e7", &PD_CONFIG_QUETZAL_V9_1, PD_GAME_EMERALD, "Pokémon Quetzal",
-     PD_GUIDE_QUETZAL},
-    {"ff008b70b6f2b330da9ffa8a405fc951a9e54147", &PD_CONFIG_QUETZAL_V9_1_ES, PD_GAME_EMERALD, "Pokémon Quetzal",
-     PD_GUIDE_QUETZAL},
-    {"6806c7146aff457a4be85ef2030e9ddcdb17b665", &PD_CONFIG_QUETZAL_V0_8_4, PD_GAME_EMERALD, "Pokémon Quetzal",
-     PD_GUIDE_QUETZAL_V084},
-    {"b6542c7dbb40cf6ea96714a7a0e30cb468102861", &PD_CONFIG_QUETZAL_V0_8_4_ES, PD_GAME_EMERALD, "Pokémon Quetzal",
-     PD_GUIDE_QUETZAL_V084},
-    {"f1035f615c13c46394a18fa99181c24c3cd15e12", &PD_CONFIG_MOEMON_QUETZAL_V0_8_4, PD_GAME_EMERALD, "Moemon Quetzal",
-     PD_GUIDE_QUETZAL_V084},
-    {"ae5d88bb823a8f9d0d07e8784da2376ff7c1ae43", &PD_CONFIG_MOEMON_QUETZAL_V0_8_4_ES, PD_GAME_EMERALD, "Moemon Quetzal",
-     PD_GUIDE_QUETZAL_V084},
-    {"67f44fb4cdbb16c0d1a495ac219f2979b1e3005f", &PD_CONFIG_RECHARGED_EMERALD_V2_2_5, PD_GAME_EMERALD, "Pokémon Recharged Emerald",
-     PD_GUIDE_RECHARGED_EMERALD},
-    {"56c9777215f5be627f7c3099e68985aefc10f2b7", &PD_CONFIG_RECHARGED_EMERALD_V2_2_8, PD_GAME_EMERALD, "Pokémon Recharged Emerald",
-     PD_GUIDE_RECHARGED_EMERALD},
-    {"08b9c7903ae4c4e26d80ef945a90c004ae1e0ebb", &PD_CONFIG_RECHARGED_EMERALD_REBALANCED_V2_2_8, PD_GAME_EMERALD, "Pokémon Recharged Emerald Rebalanced",
-     PD_GUIDE_RECHARGED_EMERALD},
-    {"7600af1fe08444c850c3c1227fd7dfd81336ae8e", &PD_CONFIG_EMERALD_ROGUE, PD_GAME_EMERALD, "Pokémon Emerald Rogue EX",
-     PD_GUIDE_NONE},
+     "Pokémon Let's Go Eevee (Translation Only)"},
+    {"ae1c4be9be8d706bb989602bc05731203d42860d", &PD_CONFIG_MONOMYTH, PD_GAME_EMERALD, "Pokémon Monomyth"},
+    {"eb660caffbc26e1f09f86714d03af4c3eccd9e4d", &PD_CONFIG_MONOMYTH_V1_1, PD_GAME_EMERALD, "Pokémon Monomyth"},
+    {"742e62ffa5a8d607171fdb8477eb1f417dc36086", &PD_CONFIG_MONOMYTH_V1_2, PD_GAME_EMERALD, "Pokémon Monomyth"},
+    {"79ee6df0869c1773c8c6a5f764afc1f8d833d8bb", &PD_CONFIG_HEART_AND_SOUL, PD_GAME_EMERALD, "Pokémon Heart and Soul"},
+    {"d0658315da1e8827f66f15c3d3a000fe747e163e", &PD_CONFIG_QUETZAL_V9_0, PD_GAME_EMERALD, "Pokémon Quetzal"},
+    {"fe346b5b0eb022e3a103f81e7dcefba6f1dc542f", &PD_CONFIG_QUETZAL_V9_0_ES, PD_GAME_EMERALD, "Pokémon Quetzal"},
+    {"c108cec750a35775084c0806cc704d8abd1994e7", &PD_CONFIG_QUETZAL_V9_1, PD_GAME_EMERALD, "Pokémon Quetzal"},
+    {"ff008b70b6f2b330da9ffa8a405fc951a9e54147", &PD_CONFIG_QUETZAL_V9_1_ES, PD_GAME_EMERALD, "Pokémon Quetzal"},
+    {"6806c7146aff457a4be85ef2030e9ddcdb17b665", &PD_CONFIG_QUETZAL_V0_8_4, PD_GAME_EMERALD, "Pokémon Quetzal"},
+    {"b6542c7dbb40cf6ea96714a7a0e30cb468102861", &PD_CONFIG_QUETZAL_V0_8_4_ES, PD_GAME_EMERALD, "Pokémon Quetzal"},
+    {"f1035f615c13c46394a18fa99181c24c3cd15e12", &PD_CONFIG_MOEMON_QUETZAL_V0_8_4, PD_GAME_EMERALD, "Moemon Quetzal"},
+    {"ae5d88bb823a8f9d0d07e8784da2376ff7c1ae43", &PD_CONFIG_MOEMON_QUETZAL_V0_8_4_ES, PD_GAME_EMERALD, "Moemon Quetzal"},
+    {"67f44fb4cdbb16c0d1a495ac219f2979b1e3005f", &PD_CONFIG_RECHARGED_EMERALD_V2_2_5, PD_GAME_EMERALD, "Pokémon Recharged Emerald"},
+    {"56c9777215f5be627f7c3099e68985aefc10f2b7", &PD_CONFIG_RECHARGED_EMERALD_V2_2_8, PD_GAME_EMERALD, "Pokémon Recharged Emerald"},
+    {"08b9c7903ae4c4e26d80ef945a90c004ae1e0ebb", &PD_CONFIG_RECHARGED_EMERALD_REBALANCED_V2_2_8, PD_GAME_EMERALD, "Pokémon Recharged Emerald Rebalanced"},
+    {"7600af1fe08444c850c3c1227fd7dfd81336ae8e", &PD_CONFIG_EMERALD_ROGUE, PD_GAME_EMERALD, "Pokémon Emerald Rogue EX"},
     {"2f3e17e55c6afe23da97ec0f96a067eeb142ad15", &PD_CONFIG_ELITE_REDUX_V2_65_4_1B, PD_GAME_EMERALD,
-     "Pokémon Elite Redux", PD_GUIDE_ELITE_REDUX},
+     "Pokémon Elite Redux"},
     {"5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523", &PD_CONFIG_ELITE_REDUX_V2_65_3B, PD_GAME_EMERALD,
-     "Pokémon Elite Redux", PD_GUIDE_ELITE_REDUX},
+     "Pokémon Elite Redux"},
     // Guessed: builds the app doesn't list, matched to the neighbour whose addresses they most plausibly share.
     {"411e9023cefae108e6cc28be493e3fd91e9aba6e", &PD_CONFIG_AMETHYST_V1_4_1, PD_GAME_FIRERED,
-     "Pokémon Amethyst 1.4.3 (unverified)", PD_GUIDE_AMETHYST_V141},
+     "Pokémon Amethyst 1.4.3 (unverified)"},
     {"95a91a0863ed43dd17d6f4a99f70d592725dd6cc", &PD_CONFIG_EMERALD_ROGUE, PD_GAME_EMERALD,
-     "Pokémon Emerald Rogue 2.2.1 Vanilla (unverified)", PD_GUIDE_NONE},
+     "Pokémon Emerald Rogue 2.2.1 Vanilla (unverified)"},
     {"5b93702f0e464df37b01500d4716d59f05c0425e", &PD_CONFIG_QUETZAL_V9_1, PD_GAME_EMERALD,
-     "Moemon Quetzal 0.9.1 (unverified)", PD_GUIDE_QUETZAL},
-    {NULL, NULL, PD_GAME_NONE, NULL, PD_GUIDE_NONE},
+     "Moemon Quetzal 0.9.1 (unverified)"},
+    {NULL, NULL, PD_GAME_NONE, NULL},
 };
 
 static bool retail_dump(const struct pd_game* g) {
@@ -699,7 +610,6 @@ static void identify(struct pd_game* g) {
     for (const struct unsupported_rom* u = UNSUPPORTED_ROMS; u->sha1; u++) {
         if (strcmp(u->sha1, g->sha1)) continue;
         g->cfg = NULL;
-        g->guide = PD_GUIDE_NONE;
         g->title = u->title;
         g->unsupported = u->why;
         return;
@@ -709,12 +619,6 @@ static void identify(struct pd_game* g) {
             if (strcmp(r->sha1, g->sha1)) continue;
             g->cfg = r->cfg;
             g->title = r->title;
-            g->guide = r->cfg == &PD_GB_CONFIG_RED ? PD_GUIDE_GB_RED : r->cfg == &PD_GB_CONFIG_BLUE ? PD_GUIDE_GB_BLUE :
-                       r->cfg == &PD_GB_CONFIG_YELLOW || r->cfg == &PD_GB_CONFIG_YELLOW_DE || r->cfg == &PD_GB_CONFIG_YELLOW_FR ||
-                       r->cfg == &PD_GB_CONFIG_YELLOW_IT || r->cfg == &PD_GB_CONFIG_YELLOW_ES ? PD_GUIDE_GB_YELLOW : r->cfg == &PD_GB_CONFIG_CRYSTAL || r->cfg == &PD_GB_CONFIG_CRYSTAL_DE ? PD_GUIDE_GB_CRYSTAL :
-                       r->cfg == &PD_GB_CONFIG_POLISHED || r->cfg == &PD_GB_CONFIG_POLISHED_FAITHFUL ? PD_GUIDE_GB_POLISHED :
-                       r->cfg == &PD_GB_CONFIG_YELLOW_LEGACY ? PD_GUIDE_GB_YELLOW_LEGACY :
-                       r->cfg == &PD_GB_CONFIG_CRYSTAL_LEGACY ? PD_GUIDE_GB_CRYSTAL_LEGACY : PD_GUIDE_NONE;
             g->language = r->cfg->gb->language ? r->cfg->gb->language : 'E';
             g->hackMaps = true;
             g->unsupported = NULL;
@@ -728,7 +632,6 @@ static void identify(struct pd_game* g) {
         g->cfg = k->cfg;
         g->kind = k->kind;
         g->title = k->title;
-        g->guide = k->guide;
         g->hackMaps = false; // its names: pd_text.mapsecs / mapsecsRom, else its engine's retail ones (the app's activeMapSecData)
         g->unsupported = NULL;
         return;
@@ -742,7 +645,6 @@ static void identify(struct pd_game* g) {
         if (!strcmp(RETAIL_SHA1S[i], g->sha1)) { g->shinyBelow = 8; g->retail = true; return; }
     if (retail_dump(g)) { g->shinyBelow = 8; g->retail = true; return; }
     g->cfg = NULL;
-    g->guide = PD_GUIDE_NONE;
     g->title = g->kind == PD_GAME_FIRERED ? "FireRed ROM hack" : "Emerald ROM hack";
     g->unsupported = "Not a version the companion knows";
 }

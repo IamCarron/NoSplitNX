@@ -7,8 +7,6 @@
 
 #include "pd_game.h"
 #include "pd_games.h"
-#include "pd_gb_world.h"
-#include "pd_guide.h"
 #include "pd_tables.h"
 
 // Gen 1 / Gen 2 structs are plaintext and big-endian (Gen1Reader.kt, Gen2Reader.kt).
@@ -21,7 +19,6 @@
 #define G2_EGG 0xFD
 #define G2_TMS 57
 
-extern const struct pd_gb_team pd_gb_teams_crystal[], pd_gb_teams_crystal_legacy[];
 extern const uint16_t pd_gb_internal_to_dex_yellow[], pd_gb_internal_to_dex_pure_rgb[], pd_gb_internal_to_dex_yellow_legacy[], pd_gb_gender_crystal[],
     pd_gb_gender_prism[], pd_gb_gender_polished[], pd_gb_tm_crystal[], pd_gb_tm_prism[], pd_gb_tm_polished[];
 extern const int pd_gb_internal_to_dex_yellow_count, pd_gb_internal_to_dex_pure_rgb_count, pd_gb_internal_to_dex_yellow_legacy_count, pd_gb_gender_crystal_count,
@@ -34,47 +31,41 @@ const struct pd_gb_config pd_gb_yellow = {
     .gen = 1, .partyCount = 0xD162, .partyMons = 0xD16A, .numItems = 0xD31C, .money = 0xD346, .battleMode = 0xD056,
     .battleMon = 0xD013, .enemyMon = 0xCFE4, .otPartyCount = 0xD89B, .otPartyMons = 0xD8A3, .curOTMon = 0xCFE7,
     .internalToDex = pd_gb_internal_to_dex_yellow, .bagSlots = 20,
-    .dexCaught = 0xD2F6, .dexSeen = 0xD309, .dexCount = 151,
-    .guideRam = &(const struct pd_gb_guide_ram){ 0xD746, 0xD5A5, 0xD6EF, 0xD736, 0xD355, 0xD714, 0xD35D }, .teams = pd_gb_teams_yellow,
+    .dexCaught = 0xD2F6, .dexSeen = 0xD309, .dexCount = 151, .curMap = 0xD35D,
     .tileMap = 0xC3A0, .moveMenuType = 0xCCDB, .outSlot = 0xCC2F, .topMenuItemY = 0xCC24, .battleMenuLeftX = 9, .battleMenuRightX = 15, .battlePartyMenu = 2, .partyMenuType = 0xD07C,
 };
 // The German, French, Italian and Spanish Yellows (Gen1Reader.kt's GEN1_YELLOW_EUROPE): English's code with their own
-// text, everything from wBattleMon up 5 bytes later (the menus and tile map didn't move); the GUIDE's RAM shifted with it.
+// text, everything from wBattleMon up 5 bytes later (the menus and tile map didn't move).
 #define PD_GB_YELLOW_EUROPE \
     .gen = 1, .partyCount = 0xD167, .partyMons = 0xD16F, .numItems = 0xD321, .money = 0xD34B, .battleMode = 0xD05B, \
     .battleMon = 0xD018, .enemyMon = 0xCFE9, .otPartyCount = 0xD8A0, .otPartyMons = 0xD8A8, .curOTMon = 0xCFEC, \
     .internalToDex = pd_gb_internal_to_dex_yellow, .bagSlots = 20, \
-    .dexCaught = 0xD2FB, .dexSeen = 0xD30E, .dexCount = 151, \
-    .guideRam = &(const struct pd_gb_guide_ram){ 0xD74B, 0xD5AA, 0xD6F4, 0xD73B, 0xD35A, 0xD719, 0xD362 }, .teams = pd_gb_teams_yellow, \
+    .dexCaught = 0xD2FB, .dexSeen = 0xD30E, .dexCount = 151, .curMap = 0xD362, \
     .tileMap = 0xC3A0, .moveMenuType = 0xCCDB, .outSlot = 0xCC2F, .topMenuItemY = 0xCC24, .battlePartyMenu = 2, .partyMenuType = 0xD081,
 const struct pd_gb_config pd_gb_yellow_de = { PD_GB_YELLOW_EUROPE .language = 'D', .battleMenuLeftX = 7, .battleMenuRightX = 12 };
 const struct pd_gb_config pd_gb_yellow_fr = { PD_GB_YELLOW_EUROPE .language = 'F', .battleMenuLeftX = 7, .battleMenuRightX = 13 };
 const struct pd_gb_config pd_gb_yellow_it = { PD_GB_YELLOW_EUROPE .language = 'I', .battleMenuLeftX = 7, .battleMenuRightX = 14 };
 const struct pd_gb_config pd_gb_yellow_es = { PD_GB_YELLOW_EUROPE .language = 'S', .battleMenuLeftX = 9, .battleMenuRightX = 15 };
 // Yellow Legacy (GEN1_YELLOW_LEGACY): Yellow's but the bag (59 slots) pushed money and the battle mode on; its own
-// internal species order. Its GUIDE RAM is GuideGen1Gen.kt's G1L_* (HERE, NEXT BOSS, the map's place).
+// internal species order.
 const struct pd_gb_config pd_gb_yellow_legacy = {
     .gen = 1, .partyCount = 0xD162, .partyMons = 0xD16A, .numItems = 0xD31C, .money = 0xD394, .battleMode = 0xD057,
     .battleMon = 0xD013, .enemyMon = 0xCFE4, .otPartyCount = 0xD89B, .otPartyMons = 0xD8A3, .curOTMon = 0xCFE7,
     .internalToDex = pd_gb_internal_to_dex_yellow_legacy, .bagSlots = 59,
-    .dexCaught = 0xD2F6, .dexSeen = 0xD309, .dexCount = 151,
-    .guideRam = &(const struct pd_gb_guide_ram){ 0xD746, 0xD5F3, 0xD6EF, 0xD736, 0xD3A3, 0xD714, 0xD3AB }, .teams = pd_gb_teams_yellow_legacy,
+    .dexCaught = 0xD2F6, .dexSeen = 0xD309, .dexCount = 151, .curMap = 0xD3AB,
     .tileMap = 0xC3A0, .moveMenuType = 0xCCDB, .outSlot = 0xCC2F, .topMenuItemY = 0xCC24, .battleMenuLeftX = 9, .battleMenuRightX = 15, .battlePartyMenu = 2, .partyMenuType = 0xD07C,
 };
 #define PD_GB_RED_BASE \
     .gen = 1, .partyCount = 0xD163, .partyMons = 0xD16B, .numItems = 0xD31D, .money = 0xD347, .battleMode = 0xD057, \
     .battleMon = 0xD014, .enemyMon = 0xCFE5, .otPartyCount = 0xD89C, .otPartyMons = 0xD8A4, .curOTMon = 0xCFE8, \
     .internalToDex = pd_gb_internal_to_dex_yellow, .bagSlots = 20, \
-    .dexCaught = 0xD2F7, .dexSeen = 0xD30A, .dexCount = 151, \
-    .guideRam = &(const struct pd_gb_guide_ram){ 0xD747, 0xD5A6, 0xD6F0, 0xD737, 0xD356, 0xD715, 0xD35E }, \
+    .dexCaught = 0xD2F7, .dexSeen = 0xD30A, .dexCount = 151, .curMap = 0xD35E, \
     .tileMap = 0xC3A0, .moveMenuType = 0xCCDB, .outSlot = 0xCC2F, .topMenuItemY = 0xCC24, .battleMenuLeftX = 9, .battleMenuRightX = 15, .battlePartyMenu = 2, .partyMenuType = 0xD07D,
 const struct pd_gb_config pd_gb_red = {
     PD_GB_RED_BASE
-    .teams = pd_gb_teams_red,
 };
 const struct pd_gb_config pd_gb_blue = {
     PD_GB_RED_BASE
-    .teams = pd_gb_teams_blue,
 };
 const struct pd_gb_config pd_gb_pure_red = {
     .gen = 1, .partyCount = PD_WRAMX(1, 0xD16B), .partyMons = PD_WRAMX(1, 0xD173), .numItems = PD_WRAMX(1, 0xD542),
@@ -97,9 +88,6 @@ const struct pd_gb_config pd_gb_pure_red = {
 #define PD_GB_CRYSTAL_FULL \
     PD_GB_CRYSTAL_BASE \
     .dexCaught = PD_WRAMX(1, 0xDE99), .dexSeen = PD_WRAMX(1, 0xDEB9), .dexCount = 251, \
-    .guide2Ram = &(const struct pd_gb_guide2_ram){ PD_WRAMX(1, 0xDA72), PD_WRAMX(1, 0xD269), PD_WRAMX(1, 0xD857), \
-                                                   PD_WRAMX(1, 0xD960), PD_WRAMX(1, 0xDCB5) }, \
-    .teams = pd_gb_teams_crystal, \
     .mapGroup = PD_WRAMX(1, 0xDCB5), .backupMapGroup = PD_WRAMX(1, 0xDCAD), .playerGender = PD_WRAMX(1, 0xD472), \
     .landmarks = pd_gb_landmarks_crystal, .landmarkCount = &pd_gb_landmarks_crystal_count,
 const struct pd_gb_config pd_gb_crystal = { PD_GB_CRYSTAL_FULL };
@@ -129,11 +117,6 @@ const struct pd_gb_config pd_gb_crystal_legacy = {
     .curOTMon = 0xC663, .genderRatios = pd_gb_gender_crystal, .tmItems = pd_gb_tm_crystal, .speciesCount = 251,
     .itemsMax = 80, .ballsMax = 25, .keyItemsMax = 50,
     .dexCaught = PD_WRAMX(1, 0xDEA4), .dexSeen = PD_WRAMX(1, 0xDEC4), .dexCount = 251,
-    // Its GUIDE (GuideCrystalLegacyGen.kt's CL_*: event flags, clock, badges, trades) and place (GEN2_CRYSTAL_LEGACY), on
-    // Crystal's map.
-    .guide2Ram = &(const struct pd_gb_guide2_ram){ PD_WRAMX(1, 0xDA7D), PD_WRAMX(1, 0xD274), PD_WRAMX(1, 0xD862),
-                                                   PD_WRAMX(1, 0xD96B), PD_WRAMX(1, 0xDCC0) },
-    .teams = pd_gb_teams_crystal_legacy,
     .mapGroup = PD_WRAMX(1, 0xDCC0), .backupMapGroup = PD_WRAMX(1, 0xDCB8), .playerGender = PD_WRAMX(1, 0xD47D),
     .landmarks = pd_gb_landmarks_crystal, .landmarkCount = &pd_gb_landmarks_crystal_count,
 };
@@ -585,38 +568,14 @@ void pd_gb_snapshot_read(struct pd_snapshot* s, const struct pd_config* cfg, pd_
         }
     }
 
-    // --- GUIDE (Gen 1): the event flags and the other banks packed into flags[] (gen_guide.py's GB_BANK_BIT) ---
-    if (g->guideRam) {
-        const struct pd_gb_guide_ram* r = g->guideRam;
-        uint8_t* f = s->flags;
-        uint8_t team = 0;
-        if (rd(read, ctx, r->event, f, 320) && rd(read, ctx, r->missable, f + 320, 32) &&
-            rd(read, ctx, r->hidden, f + 352, 14) && rd(read, ctx, r->trades, f + 366, 2) &&
-            rd(read, ctx, r->badges, f + 368, 1) && rd(read, ctx, r->teamVar, &team, 1)) {
-            s->vars[0] = team;
-            s->flagsOk = s->partyCount > 0;
-        }
+    // --- Gen 1 place (wCurMap -> pd_gb_gen1_area) ---
+    if (g->curMap && s->partyCount > 0) {
         uint8_t map;
-        if (s->partyCount > 0 && rd(read, ctx, r->curMap, &map, 1)) {
+        if (rd(read, ctx, g->curMap, &map, 1)) {
             s->posOk = true;
             s->mapGroup = 0;
             s->mapNum = map;
             s->mapsec = pd_gb_gen1_area[map];
-        }
-    }
-
-    // --- GUIDE (Crystal): wEventFlags, then the badge and trade banks packed after them (gen_guide.py's CR_BANK_BIT); the
-    // clock's time of day in hour (0 morning, 1 day, 2 night); the map and its landmark (HERE's area) ---
-    if (g->guide2Ram && s->partyCount > 0) {
-        const struct pd_gb_guide2_ram* r = g->guide2Ram;
-        uint8_t tod, map[2];
-        if (rd(read, ctx, r->event, s->flags, 256) && rd(read, ctx, r->badges, s->flags + 256, 2) &&
-            rd(read, ctx, r->trades, s->flags + 258, 1)) s->flagsOk = true;
-        if (rd(read, ctx, r->timeOfDay, &tod, 1)) s->hour = tod;
-        if (rd(read, ctx, r->mapGroup, map, 2)) {
-            s->posOk = true;
-            s->mapGroup = map[0];
-            s->mapNum = map[1];
         }
     }
 
@@ -649,9 +608,6 @@ void pd_gb_snapshot_read(struct pd_snapshot* s, const struct pd_config* cfg, pd_
             s->dexCount = g->dexCount;
         }
     }
-
-    // --- Polished Crystal's GUIDE world (pd_gb_world.c): its flags, badges, clock, champion's var and place ---
-    if (cfg->gb == &pd_gb_polished) pd_gbw_read(s, g, read, ctx);
 
     // --- battle ---
     uint8_t mode = 0;

@@ -25,7 +25,6 @@ enum pd_tab {
     PD_TAB_PARTY,
     PD_TAB_BAG,
     PD_TAB_MAP,
-    PD_TAB_GUIDE,
     PD_TAB_DEX,
     PD_TAB_BATTLE,
     PD_TAB_SETTINGS,
@@ -70,7 +69,6 @@ enum pd_scaling { PD_SCALE_INTEGER, PD_SCALE_FIT, PD_SCALE_STRETCH, PD_SCALINGS 
 struct pd_settings {
     int screenMode; // enum pd_screen_mode
     int ffSpeed;    // PD_FF_MIN..PD_FF_MAX
-    int guideNotice; // a bit per game kind whose GUIDE notice was accepted
     int aspect;      // enum pd_aspect (hosts with hasExpand only)
     int zoom;        // ZOOM: EXPAND's step, 0 = 1x (hosts with zoomCount > 1)
     bool autoZoom;   // AUTO ZOOM IN: ZOOM OUT steps back in off the plain overworld
@@ -136,7 +134,7 @@ extern const char* const PD_GAME_SPEEDS[PD_GAME_SPEED_COUNT];
 
 // TAB BAR: at most this many tabs beside the gear (the app's MAX_BAR_TABS).
 #define PD_MAX_BAR_TABS 5
-#define PD_TAB_BAR_DEFAULT (1 << PD_TAB_PARTY | 1 << PD_TAB_DEX | 1 << PD_TAB_MAP | 1 << PD_TAB_BAG | 1 << PD_TAB_GUIDE)
+#define PD_TAB_BAR_DEFAULT (1 << PD_TAB_PARTY | 1 << PD_TAB_DEX | 1 << PD_TAB_MAP | 1 << PD_TAB_BAG | 1 << PD_TAB_CARD)
 
 // The HUD's parts (the app's FieldHudPart, in its order) and SETTINGS > HUD's LAYOUT / LOOK / SIZE
 // (FieldHudSettings.kt). The buttons (PC, BAG, WILD) are reached with the HUD hotkey on a host without touch.
@@ -257,7 +255,6 @@ enum pd_overlay {
     PD_OVERLAY_CONFIRM_LOAD,
     PD_OVERLAY_CONFIRM_LEAVE,
     PD_OVERLAY_PLACES,       // the MAP's list of places
-    PD_OVERLAY_GUIDE_NOTICE, // the GUIDE's "AI-written, may be wrong" notice
     PD_OVERLAY_PICK_ASPECT,
     PD_OVERLAY_PICK_ZOOM, // ZOOM: the steps out (hosts with zoomCount > 1)
     PD_OVERLAY_PICK_VIEW,
@@ -365,18 +362,6 @@ struct pd_map_source {
 // Host-owned option rows use the established Settings frame and row widgets.
 struct pd_option_row { const char* label; const char* value; };
 struct pd_option_source { const char* title; const struct pd_option_row* rows; int count, infoCount; };
-struct pd_guide_row {
-    const char *title, *detail, *hint, *answer;
-    bool owned, heading;
-};
-struct pd_guide_source {
-    const char* const* pages;
-    int pageCount;
-    const struct pd_guide_row* rows;
-    int rowCount;
-    int noticeBit;
-    bool verified;
-};
 // The handheld Dex Moves pane. Providers keep cartridge ids and decoding local.
 struct pd_dex_move_row {
     int number; // level, or the TM / HM number
@@ -534,10 +519,6 @@ struct pd_ui {
     int placesScroll;
     const char* const* flyNames; // FLY's towns, as the host found them
     int flyCount, flyPick;
-    // GUIDE: the page, its scroll, the open entry and how far it's revealed.
-    int guidePage, guideScroll, guideOpen, guideLevel;
-    bool guideController, guideFollow, guideNoticeConfirm, guideVerified;
-    int guidePageCount, guidePageFocus, guideRowFocus, guideNoticeBit;
     // TRAINER CARD: the side shown, a flip running (ms into it, 0 = none) and
     // the play time's blinking colon.
     bool cardBack, cardColon;
@@ -584,10 +565,6 @@ enum pd_map_input {
 enum pd_map_input pd_ui_map_control(int* action, int count, int dx, int dy, bool accept, bool back, bool places);
 int pd_ui_list_step(int selected, int count, int step);
 void pd_ui_format_money(long, char*, size_t);
-void pd_ui_guide_view(struct pd_ui*, struct pd_canvas*, const struct pd_guide_source*);
-void pd_ui_guide_reset(struct pd_ui*);
-void pd_ui_guide_control(struct pd_ui*, int dx, int dy, bool confirm);
-void pd_ui_guide_boss_note(char*, size_t, const char* place, int count, int ace, int best);
 void pd_ui_dex_view(struct pd_ui*,struct pd_canvas*,const struct pd_game*,const struct pd_snapshot*,int selected);
 void pd_ui_bag_cycle_sort(struct pd_ui*);
 // The tab bar's D-pad step: the key after / before `key` in `keys` (the tabs in the order they are drawn), the ends

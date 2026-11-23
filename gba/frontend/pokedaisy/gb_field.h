@@ -28,9 +28,6 @@ struct gb_field;
 const struct gb_field *gb_field_find(const uint8_t *rom, size_t len);
 /* The config's short name ("Yellow", "Crystal", ...), for logs and tests. */
 const char *gb_field_name(const struct gb_field *f);
-/* The game's PC: ITEM_USED = started (Gen 1) or queued (Crystal: gb_field_taken says), ITEM_NOT_NOW where the player
- * isn't free. [busy]: the host's own "not on the plain field" (a scene that isn't the field). */
-enum item_result gb_field_pc(struct mCore *core, const struct gb_field *f, bool busy);
 /* Where FLY can go now (map sections: Gen 1's town map ids, Crystal's landmarks), or why it can't. */
 void gb_field_fly_targets(struct mCore *core, const struct gb_field *f, const uint8_t *rom, size_t len, bool busy,
                           struct fly_targets *out);

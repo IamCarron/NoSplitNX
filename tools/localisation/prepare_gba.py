@@ -30,11 +30,3 @@ main=(source/'frontend/main.cpp').read_text(encoding='utf-8');main=main.replace(
 main=main.replace('c.Text(x + 12, y, ln.text, 1, sel ? Colour::Text : Colour::Hint);','c.TextRaw(x + 12, y, ln.text, 1, sel ? Colour::Text : Colour::Hint);')
 write(output/'frontend/main.cpp',main.encode())
 print('Prepared localised GBA UI at '+str(output))
-
-# The generic editor is shared, including localisation-aware action bounds.
-host_editor=Path(__file__).resolve().parents[2]/"frontend/touchlayout.h"
-write(output/"frontend/touchlayout.h",host_editor.read_bytes())
-
-touch=(source/'frontend/touch.h').read_text(encoding='utf-8')
-touch=touch.replace('c.TextCentred(r.x + r.w / 2, r.y + (r.h - 7) / 2, label, 1, text);','if(UiLang::Tr(label)!=label)TouchLayout::DrawAction(c,r.x,r.x+r.w,r.y,r.h,label,1,text);else c.TextCentred(r.x + r.w / 2, r.y + (r.h - 7) / 2, label, 1, text);')
-write(output/'frontend/touch.h',touch.encode())

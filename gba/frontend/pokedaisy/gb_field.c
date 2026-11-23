@@ -3,7 +3,7 @@
  * mapped by scripts/port_gen1.py; PureRGB 2.7.6 from its pokered.sym). Keep in sync with GbField.kt. */
 #include "gb_field.h"
 #include "pk_gb_field.h"
-#include "pd_guide.h"
+#include "pd_gb.h"
 #include <mgba/core/core.h>
 #include <mgba/internal/gb/gb.h>
 #include <string.h>
@@ -280,22 +280,6 @@ static int cr_shown_points(const struct gb_field *f, struct mCore *c, const uint
 }
 
 /* ---- the actions ---- */
-enum item_result gb_field_pc(struct mCore *c, const struct gb_field *f, bool busy) {
-  if (!f)
-    return ITEM_FAILED;
-  if (f->crystal) {
-    if (busy || !cr_free(c))
-      return u8(c, CR_BATTLE_MODE) ? ITEM_IN_BATTLE : ITEM_NOT_NOW;
-    cr_queue(c, CR_PC_BANK, CR_PC_SCRIPT);
-    return ITEM_USED;
-  }
-  if (u8(c, f->inBattle))
-    return ITEM_IN_BATTLE;
-  if (busy || !g1_free(c, f))
-    return ITEM_NOT_NOW;
-  return pk_gb_call_at(c, f->loopAfterWait, f->bankswitch, 0, f->pcBank, f->pcRoutine, 2) ? ITEM_USED : ITEM_NOT_NOW;
-}
-
 void gb_field_fly_targets(struct mCore *c, const struct gb_field *f, const uint8_t *rom, size_t len, bool busy,
                           struct fly_targets *out) {
   memset(out, 0, sizeof *out);

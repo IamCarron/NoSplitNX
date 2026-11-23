@@ -24,7 +24,6 @@ extern "C" {
 #include "pd_font.h"
 #include "pd_game.h"
 #include "pd_gb.h"
-#include "pd_guide.h"
 #include "pd_map.h"
 #include "pd_romart.h"
 #include "pd_settings.h"
@@ -37,7 +36,6 @@ extern "C" {
 #include "quick_menu.h"
 #include "pd_fs.h"
 #include "pokedaisy/field_items.h"
-#include "pokedaisy/flash.h"
 #include "pokedaisy/flight.h"
 #include "pokedaisy/fly.h"
 #include "pokedaisy/gb_field.h"
@@ -155,12 +153,16 @@ public:
     static int ToPdLang(const std::string& code)
     {
 #ifdef GBAW_POKEDAISY
-        if (code == "es") return PD_LANG_ES;
-        if (code == "fr") return PD_LANG_FR;
-        if (code == "de") return PD_LANG_DE;
-        if (code == "it") return PD_LANG_IT;
-        if (code == "pt") return PD_LANG_PT;
-        if (code == "en") return PD_LANG_EN;
+        std::string lo;
+        lo.reserve(code.size());
+        for (unsigned char c : code) lo.push_back((c >= 'A' && c <= 'Z') ? (char)(c + ('a' - 'A')) : (char)c);
+        if (lo == "es") return PD_LANG_ES;
+        if (lo == "fr") return PD_LANG_FR;
+        if (lo == "de") return PD_LANG_DE;
+        if (lo == "it") return PD_LANG_IT;
+        if (lo == "pt-br" || lo == "br") return PD_LANG_BR;
+        if (lo == "pt") return PD_LANG_PT;
+        if (lo == "en") return PD_LANG_EN;
         return PD_LANG_AUTO;
 #else
         (void)code;
@@ -175,7 +177,7 @@ public:
         if (lang != PD_LANG_AUTO) pd_tr_set_system(lang);
         const char letter = (!isGb && romLen > 0xAF) ? (char)romBytes[0xAF] : 0;
         pd_tr_apply(lang, letter);
-        settings.language = lang;
+        if (lang != PD_LANG_AUTO) settings.language = lang;
 #else
         (void)langCode;
 #endif
@@ -232,10 +234,9 @@ public:
         pk_flight_set_call(pk_call);
         pk_flight_configure(nullptr, 0);
         flyCfg = nullptr;
-        flashCfg = nullptr;
         flightWords = nullptr;
         freeFlight = false;
-        itemsOk = pcOk = bikeOk = false;
+        itemsOk = bikeOk = false;
         gbf = nullptr;
         gbWildHeld = false;
 
@@ -247,9 +248,7 @@ public:
         else if (game.cfg)
         {
             if (fly_supported(game.cfg, romBytes.data(), romLen)) flyCfg = game.cfg;
-            if (flash_supported(game.cfg, romBytes.data(), romLen)) flashCfg = game.cfg;
             itemsOk = field_items_supported(game.cfg, romBytes.data(), romLen);
-            pcOk = pc_supported(game.cfg, romBytes.data(), romLen);
             bikeOk = bike_supported(game.cfg);
             for (size_t i = 0; i < sizeof(flight_profiles) / sizeof(flight_profiles[0]); i++)
             {
@@ -266,7 +265,7 @@ public:
         wildSwitch = (!isGb && game.cfg) ? pk_wild_switch_find(romBytes.data(), romLen) : 0;
 
         pd_ui_init(&ui, &settings);
-        ui.handheldDex = ui.handheldParty = ui.guideController = ui.shoulderTabs = ui.hideSettingsTab = true;
+        ui.handheldDex = ui.handheldParty = ui.shoulderTabs = ui.hideSettingsTab = true;
         memset(&host, 0, sizeof host);
         host.hideScreenMode = true;
         host.hasQuickMenu = true;
@@ -278,9 +277,9 @@ public:
         host.fullSettings = false;
         host.frontendOwnsPlayback = true;
         if (core) pd_snapshot_read(&snap, &game, ReadMemory, core);
-        fprintf(stderr, "[pokedaisy] %s (%s) fly=%d flight=%d pc=%d wild=%d\n",
+        fprintf(stderr, "[pokedaisy] %s (%s) fly=%d flight=%d wild=%d\n",
                 game.title ? game.title : "unknown", isGb ? "GB/GBC" : "GBA",
-                (flyCfg || gbf) ? 1 : 0, freeFlight ? 1 : 0, (pcOk || gbf) ? 1 : 0, (wildSwitch || gbf) ? 1 : 0);
+                (flyCfg || gbf) ? 1 : 0, freeFlight ? 1 : 0, (wildSwitch || gbf) ? 1 : 0);
 #else
         (void)dataDir;
         (void)langCode;
@@ -457,10 +456,10 @@ public:
         return false;
     }
 
-    void PostFrame(struct mCore* core, const HostActions& actions)
+    void PostFrame(struct mCore* core, const HostActions& actions, bool shown = true)
     {
         if (!core) return;
-        if (rewindEnabled && rewindInited && !AnyMenuOpen())
+        if (shown && rewindEnabled && rewindInited && !AnyMenuOpen())
         {
             if (++rewindTick >= 6)
             {
@@ -479,7 +478,7 @@ public:
         const bool busy = scene != PK_WIDE_SCENE_FIELD;
         const bool battle = snap.inBattle;
 
-        if (++snapTick >= (companionOpen ? 6 : 12))
+        if (shown && ++snapTick >= (companionOpen ? 6 : 12))
         {
             snapTick = 0;
             pd_snapshot_read(&snap, &game, ReadMemory, core);
@@ -615,27 +614,8 @@ public:
                 Say(fly_reason(FLY_FAILED), actions);
         }
 
-        if (flashCfg && flashAsk && !companionOpen)
-        {
-            if (pk_call_safe(core))
-            {
-                pd_snapshot_read(&snap, &game, ReadMemory, core);
-                enum flash_result r = flash_use(core, flashCfg, romBytes.data(), romLen, &snap, busy, battle);
-                flashAsk = 0;
-                if (r != FLASH_OK) Say(flash_reason(r), actions);
-            }
-            else if (++flashAsk > 120) { flashAsk = 0; Say(flash_reason(FLASH_FAILED), actions); }
-        }
-
         const bool safe = job != JOB_NONE && !companionOpen && (gbf ? true : pk_call_safe(core));
-        if (job == JOB_PC && safe)
-        {
-            job = JOB_NONE;
-            enum item_result r = gbf ? gb_field_pc(core, gbf, busy) : pc_open(core, game.cfg, romBytes.data(), romLen, busy, battle);
-            if (gbf && r == ITEM_USED) gbTake = GB_FIELD_TAKE_FRAMES;
-            if (r != ITEM_USED) Say(item_reason(r), actions);
-        }
-        else if (job == JOB_REPEL && safe)
+        if (job == JOB_REPEL && safe)
         {
             job = JOB_NONE;
             int steps = 0;
@@ -643,7 +623,7 @@ public:
             if (r == ITEM_USED)
             {
                 char msg[64];
-                snprintf(msg, sizeof msg, "REPEL ACTIVE (%d STEPS)", steps);
+                snprintf(msg, sizeof msg, "%s (%d %s)", pd_tr("REPEL ACTIVE"), steps, pd_tr("STEPS"));
                 Say(msg, actions);
             }
             else Say(item_reason(r), actions);
@@ -665,7 +645,7 @@ public:
             job = JOB_NONE;
             bike_restore(core, game.cfg, jobItem, bikeOld);
         }
-        else if ((job == JOB_PC || job == JOB_REPEL || job == JOB_BIKE) && !companionOpen && ++jobFrames > 120)
+        else if ((job == JOB_REPEL || job == JOB_BIKE) && !companionOpen && ++jobFrames > 120)
         {
             job = JOB_NONE;
             Say(item_reason(ITEM_FAILED), actions);
@@ -818,10 +798,8 @@ public:
                 const auto& r = hudHits.at[i];
                 if (hx >= r.x && hx < r.x + r.w && hy >= r.y && hy < r.y + r.h)
                 {
-                    if (r.id == HUD_PC && (pcOk || gbf)) { job = JOB_PC; jobFrames = 0; }
-                    else if (r.id == HUD_COMPANION) ToggleCompanion(core);
+                    if (r.id == HUD_COMPANION) ToggleCompanion(core);
                     else if (r.id == HUD_BAG) { ToggleCompanion(core); ui.tab = PD_TAB_BAG; }
-                    else if (r.id == HUD_WILD) { ToggleCompanion(core); ui.tab = PD_TAB_GUIDE; }
                     else if (r.id == HUD_MAP || r.id == HUD_MAP_BUTTON) { ToggleCompanion(core); ui.tab = PD_TAB_MAP; }
                     else if (r.id >= HUD_SLOT && r.id < HUD_SLOT + 6) { ToggleCompanion(core); ui.tab = PD_TAB_PARTY; }
                     return true;
@@ -849,8 +827,9 @@ public:
             if (hs.repel > 0) repelFull = std::max(repelFull, hud_repel_full(hs.repel));
             else repelFull = 0;
             hs.repelFull = repelFull;
-            hs.pc = pcOk || gbf != nullptr;
-            hs.wild = WildUncaught();
+            hs.noButtons = true;
+            hs.pc = false;
+            hs.wild = -1;
             hs.focus = -1;
             hs.mini = (settings.hudSize != PD_HUD_LARGE);
 
@@ -972,24 +951,23 @@ private:
     int lastRepelSteps = 0;
 
     const struct pd_config* flyCfg = nullptr;
-    const struct pd_config* flashCfg = nullptr;
     const uint32_t* flightWords = nullptr;
     const struct gb_field* gbf = nullptr;
     uint32_t wildSwitch = 0;
     bool wildWasOff = false;
     bool freeFlight = false, takeOff = false;
-    bool itemsOk = false, pcOk = false, bikeOk = false;
+    bool itemsOk = false, bikeOk = false;
     bool gbWildHeld = false;
     int gbTake = 0;
 
     struct fly_targets flyT{};
     const char* flyNames[FLY_MAX_TOWNS] = {};
     int quickSel = 0, flyAsk = 0, flySel = 0, flyStage = 0, flyMapsec = 0, flyWait = 0;
-    int flashAsk = 0, scenicAsk = 0, scenicMapsec = 0;
+    int scenicAsk = 0, scenicMapsec = 0;
     bool flyList = false, repelList = false;
     uint32_t flyCallback = 0;
 
-    enum { JOB_NONE, JOB_PC, JOB_REPEL, JOB_BIKE, JOB_BIKE_RESTORE } job = JOB_NONE;
+    enum { JOB_NONE, JOB_REPEL, JOB_BIKE, JOB_BIKE_RESTORE } job = JOB_NONE;
     int jobItem = 0, jobFrames = 0;
     uint16_t bikeOld = 0;
     uint32_t injectKeys = 0;
@@ -1016,7 +994,7 @@ private:
 
     void Say(const char* msg, const HostActions& actions)
     {
-        if (msg && *msg && actions.toast) actions.toast(msg);
+        if (msg && *msg && actions.toast) actions.toast(pd_tr(msg));
     }
 
     void ConfigureFlightWords()
@@ -1077,27 +1055,9 @@ private:
         }
     }
 
-    int WildUncaught() const
-    {
-        struct pd_wild_set w{};
-        if (!game.cfg || (!game.cfg->gb && !game.cfg->wildHeaders)) return -1;
-        if (!pd_wild_here(&game, &snap, &w)) return -1;
-        int seen[PD_WILD_METHODS * PD_WILD_MAX], n = 0, left = 0;
-        for (int m = 0; m < PD_WILD_METHODS; m++)
-            for (int i = 0; i < w.count[m]; i++)
-            {
-                const int sp = w.mons[m][i].species;
-                int k = 0;
-                while (k < n && seen[k] != sp) k++;
-                if (k < n) continue;
-                seen[n++] = sp;
-                left += !pd_dex_caught(&snap, pd_dex_national(&game, sp));
-            }
-        return n ? left : -1;
-    }
-
     int BuildQuickItems(struct quick_item out[QUICK_COUNT], const HostActions& actions) const
     {
+        (void)actions;
         int n = 0;
         auto add = [&](enum quick_action a) -> struct quick_item& {
             memset(&out[n], 0, sizeof out[n]);
@@ -1108,13 +1068,6 @@ private:
             add(QUICK_LAND);
         else
         {
-            if (pcOk || gbf) add(QUICK_PC);
-            if (flyCfg || gbf)
-            {
-                auto& it = add(QUICK_FLY);
-                const int fl = fly_flyer(&snap);
-                if (fl >= 0 && fl < snap.partyCount) it.species = snap.party[fl].species;
-            }
             if (freeFlight)
             {
                 auto& it = add(QUICK_FLIGHT);
@@ -1125,12 +1078,6 @@ private:
             {
                 add(QUICK_REPEL);
                 if (bikeOk) add(QUICK_BIKE);
-            }
-            if (flashCfg) add(QUICK_FLASH);
-            if (actions.getWildOff || wildSwitch || gbf)
-            {
-                auto& it = add(QUICK_WILD);
-                it.off = actions.getWildOff ? actions.getWildOff() : settings.wildOff;
             }
         }
         {
@@ -1145,35 +1092,11 @@ private:
     {
         switch (item.action)
         {
-        case QUICK_PC:
-            job = JOB_PC; jobFrames = 0; quickOpen = false;
-            break;
-        case QUICK_FLY:
-            flyAsk = 1;
-            break;
         case QUICK_FLIGHT:
             takeOff = true; quickOpen = false;
             break;
         case QUICK_LAND:
             pk_flight_land(); quickOpen = false;
-            break;
-        case QUICK_FLASH:
-            flashAsk = 1; quickOpen = false;
-            break;
-        case QUICK_WILD:
-            if (actions.getWildOff && actions.setWildOff)
-            {
-                const bool next = !actions.getWildOff();
-                actions.setWildOff(next);
-                Say(next ? "WILD ENCOUNTERS OFF" : "WILD ENCOUNTERS ON", actions);
-            }
-            else
-            {
-                settings.wildOff = !settings.wildOff;
-                pd_settings_save(&settings, settingsPath.c_str());
-                Say(settings.wildOff ? "WILD ENCOUNTERS OFF" : "WILD ENCOUNTERS ON", actions);
-            }
-            quickOpen = false;
             break;
         case QUICK_REPEL:
         {
@@ -1186,7 +1109,7 @@ private:
                 {
                     repelItemIds[repelKindCount] = id;
                     const char* nm = pd_item_name(&game, id);
-                    snprintf(repelRows[repelKindCount], sizeof repelRows[repelKindCount], "%s x%d", (nm && *nm) ? nm : "REPEL", cnt);
+                    snprintf(repelRows[repelKindCount], sizeof repelRows[repelKindCount], "%s x%d", (nm && *nm) ? nm : pd_tr("REPEL"), cnt);
                     repelNames[repelKindCount] = repelRows[repelKindCount];
                     repelKindCount++;
                 }

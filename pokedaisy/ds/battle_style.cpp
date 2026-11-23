@@ -507,9 +507,31 @@ void native_move_card(pd_canvas& canvas,Rect dst,const uint32_t* lower,int slot)
 }
 
 // The type names the games print on their move cards: capitals, cut to six (ELECTR, PSYCHC), in type order.
-const char* const cardTypes[]={"NORMAL","FIGHT","FLYING","POISON","GROUND","ROCK","BUG","GHOST","STEEL","???",
-  "FIRE","WATER","GRASS","ELECTR","PSYCHC","ICE","DRAGON","DARK"};
-const char* card_type(int type){return type>=0 && type<int(std::size(cardTypes))?cardTypes[type]:"???";}
+const char* card_type(int type){
+  static constexpr const char* en[]={"NORMAL","FIGHT","FLYING","POISON","GROUND","ROCK","BUG","GHOST","STEEL","???",
+    "FIRE","WATER","GRASS","ELECTR","PSYCHC","ICE","DRAGON","DARK"};
+  static constexpr const char* fr[]={"NORMAL","COMBAT","VOL","POISON","SOL","ROCHE","INSECT","SPECTR","ACIER","???",
+    "FEU","EAU","PLANTE","ELECTR","PSY","GLACE","DRAGON","TENEBR"};
+  static constexpr const char* de[]={"NORMAL","KAMPF","FLUG","GIFT","BODEN","GESTEN","KAFER","GEIST","STAHL","???",
+    "FEUER","WASSER","PFLANZ","ELEKTR","PSYCHO","EIS","DRACHE","UNLICH"};
+  static constexpr const char* it[]={"NORMAL","LOTTA","VOLANT","VELENO","TERRA","ROCCIA","COLEOT","SPETTR","ACCIAO","???",
+    "FUOCO","ACQUA","ERBA","ELETT","PSICO","GHIACC","DRAGO","BUIO"};
+  static constexpr const char* es[]={"NORMAL","LUCHA","VOLADR","VENENO","TIERRA","ROCA","BICHO","FANTAS","ACERO","???",
+    "FUEGO","AGUA","PLANTA","ELECTR","PSIQUI","HIELO","DRAGON","SINIES"};
+  static constexpr const char* pt[]={"NORMAL","LUTAR","VOADOR","VENENO","TERRA","PEDRA","INSETO","FANTAS","ACO","???",
+    "FOGO","AGUA","PLANTA","ELETR","PSIQ","GELO","DRAGAO","SOMBRI"};
+  const char* const* table=en;
+  switch(pd_tr_language()){
+    case PD_LANG_FR:table=fr;break;
+    case PD_LANG_DE:table=de;break;
+    case PD_LANG_IT:table=it;break;
+    case PD_LANG_ES:table=es;break;
+    case PD_LANG_BR:
+    case PD_LANG_PT:table=pt;break;
+    default:break;
+  }
+  return type>=0 && type<int(std::size(en))?table[type]:"???";
+}
 
 // PP as the cards show it: current / max where the max is known, tinted as it runs low (half, a quarter, none).
 uint32_t pp_ink(int pp,int maxPp,uint32_t ink){
@@ -533,18 +555,23 @@ constexpr BadgeGlyph badgeGlyphs[]={
   {'G',4,{0b0111,0b1000,0b1000,0b1011,0b1001,0b1001,0b0111}},
   {'H',4,{0b1001,0b1001,0b1001,0b1111,0b1001,0b1001,0b1001}},
   {'I',3,{0b111,0b010,0b010,0b010,0b010,0b010,0b111}},
+  {'J',4,{0b0011,0b0001,0b0001,0b0001,0b1001,0b1001,0b0110}},
   {'K',4,{0b1001,0b1010,0b1100,0b1100,0b1010,0b1001,0b1001}},
   {'L',4,{0b1000,0b1000,0b1000,0b1000,0b1000,0b1000,0b1111}},
   {'M',5,{0b10001,0b11011,0b10101,0b10101,0b10001,0b10001,0b10001}},
   {'N',4,{0b1001,0b1101,0b1101,0b1011,0b1011,0b1001,0b1001}},
   {'O',4,{0b0110,0b1001,0b1001,0b1001,0b1001,0b1001,0b0110}},
   {'P',4,{0b1110,0b1001,0b1001,0b1110,0b1000,0b1000,0b1000}},
+  {'Q',4,{0b0110,0b1001,0b1001,0b1001,0b1011,0b1010,0b0101}},
   {'R',4,{0b1110,0b1001,0b1001,0b1110,0b1010,0b1001,0b1001}},
   {'S',4,{0b0111,0b1000,0b1000,0b0110,0b0001,0b0001,0b1110}},
   {'T',5,{0b11111,0b00100,0b00100,0b00100,0b00100,0b00100,0b00100}},
   {'U',4,{0b1001,0b1001,0b1001,0b1001,0b1001,0b1001,0b0110}},
+  {'V',4,{0b1001,0b1001,0b1001,0b1001,0b1001,0b0110,0b0110}},
   {'W',5,{0b10001,0b10001,0b10001,0b10101,0b10101,0b11011,0b10001}},
+  {'X',4,{0b1001,0b1001,0b0110,0b0110,0b0110,0b1001,0b1001}},
   {'Y',5,{0b10001,0b10001,0b01010,0b00100,0b00100,0b00100,0b00100}},
+  {'Z',4,{0b1111,0b0001,0b0010,0b0100,0b0100,0b1000,0b1111}},
   {'?',4,{0b1110,0b0001,0b0001,0b0110,0b0100,0b0000,0b0100}},
 };
 const BadgeGlyph* badge_glyph(char letter){

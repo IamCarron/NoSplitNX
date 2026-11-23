@@ -143,11 +143,9 @@ if(TARGET pokedaisy_core)
     list(APPEND GBAW_PK_WIDE
         frontend/pokedaisy/fly.c
         frontend/pokedaisy/flight.c
-        frontend/pokedaisy/flash.c
         frontend/pokedaisy/wild.c
         frontend/pokedaisy/field_items.c
         frontend/pokedaisy/gb_field.c
-        frontend/pokedaisy/polished_field.c
         frontend/pokedaisy/pd_flight_area.c)
 endif()
 set(GBAW_SOURCES frontend/main.cpp frontend/third_party/xbrz/xbrz.cpp ${GBAW_PK_WIDE} "${CMAKE_CURRENT_BINARY_DIR}/gen/patches.h" "${CMAKE_CURRENT_BINARY_DIR}/gen/art.h")
@@ -177,29 +175,9 @@ if(GBAW_EMBEDDED)
     else()
         target_include_directories(gbawide PRIVATE ${SDL2_INCLUDE_DIRS})
     endif()
-    if(ANDROID)
-        target_link_libraries(gbawide PRIVATE android log)
-    endif()
     return()
 endif()
-if(WIN32)
-    # The program's icon, drawn by tools/pc/make_icon.py.
-    add_custom_command(
-        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gen/icon.ico" "${CMAKE_CURRENT_BINARY_DIR}/gen/icon.rc"
-        COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tools/pc/make_icon.py" "${CMAKE_CURRENT_BINARY_DIR}/gen/icon.ico" "${CMAKE_CURRENT_BINARY_DIR}/gen/icon.rc"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/pc/make_icon.py"
-        VERBATIM)
-    list(APPEND GBAW_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/gen/icon.rc")
-endif()
-if(ANDROID)
-    # On Android the program is the library libmain.so that SDL's Java activity loads
-    # (tools/android/build.sh packs it into an APK).
-    add_library(pokemon-gba-wide SHARED ${GBAW_SOURCES})
-    set_target_properties(pokemon-gba-wide PROPERTIES OUTPUT_NAME main)
-    target_link_libraries(pokemon-gba-wide PRIVATE android log)
-else()
-    add_executable(pokemon-gba-wide WIN32 ${GBAW_SOURCES})
-endif()
+add_executable(pokemon-gba-wide ${GBAW_SOURCES})
 target_include_directories(pokemon-gba-wide PRIVATE frontend "${CMAKE_CURRENT_BINARY_DIR}/gen")
 target_link_libraries(pokemon-gba-wide PRIVATE mgba)
 if(GBAW_SWITCH)
@@ -221,14 +199,6 @@ endif()
 # (mGBA's headers depend on the same feature defines it was built with: ENABLE_DIRECTORIES and
 # others change what its structures hold.)
 target_compile_definitions(pokemon-gba-wide PRIVATE ${GBAW_MGBA_DEFS})
-if(UNIX AND NOT APPLE AND NOT GBAW_SWITCH AND NOT ANDROID)
-    # (The Linux download has SDL2 beside the program.)
-    set_target_properties(pokemon-gba-wide PROPERTIES BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN")
-endif()
-if(MINGW)
-    # One .exe with no MinGW runtime DLLs beside it (SDL2.dll is the only one).
-    target_link_options(pokemon-gba-wide PRIVATE -static -static-libgcc -static-libstdc++)
-endif()
 
 if(GBAW_SWITCH)
     # The .nro for the Homebrew Menu, with libnx's default icon.

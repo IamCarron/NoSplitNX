@@ -89,11 +89,6 @@ enum {
     HIT_DEX_TYPE = 1945,   // the TYPE filter's row
     HIT_DEX_NAME = 1946,   // the NAME filter's row
     HIT_DEX_PICK = 1950,   // + a TYPE / NAME choice (ALL first)
-    HIT_GUIDE_PAGE = 2000, // + page
-    HIT_GUIDE_ROW = 2100,  // + entry
-    HIT_GUIDE_LIST = 2900,
-    HIT_NOTICE_OK = 2901,
-    HIT_NOTICE_BACK = 2902,
     HIT_BATTLE_SUGGEST = 3000,
     HIT_BATTLE_INFO = 3001,
     HIT_FOE_SLOT = 3010,   // + foe party index
@@ -118,7 +113,7 @@ enum {
 };
 
 // The tabs TAB BAR offers, in the bar's order.
-#define UI_BAR_CHOICES 10
+#define UI_BAR_CHOICES 9
 extern const enum pd_tab UI_BAR_CHOICE[UI_BAR_CHOICES];
 const char* ui_tab_label(enum pd_tab t);
 
@@ -162,7 +157,6 @@ bool ui_bag_act(struct pd_ui* ui, int id, const struct pd_snapshot* s);
 void ui_item_grid(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s);
 void ui_map_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s,
                 const struct pd_host_info* host);
-void ui_guide_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s);
 void ui_dex_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s);
 void ui_mon_summary(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s, const struct pd_mon* m,
                     const struct pd_mon* const* column, int columnCount, int shown, bool canTake, const char* pcLabel);
@@ -174,17 +168,15 @@ int ui_configurable_tabs(const struct pd_ui*, enum pd_tab out[UI_BAR_CHOICES]);
 int ui_more_tabs(const struct pd_ui* ui, const struct pd_game* g, enum pd_tab out[UI_BAR_CHOICES]);
 // How many tabs TAB BAR has on the bar.
 int ui_bar_count(const struct pd_ui* ui);
-// Overlays drawn by their tab's file (PLACES, the GUIDE notice).
+// Overlays drawn by their tab's file (PLACES).
 void ui_places_overlay(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g);
 void ui_fly_overlay(struct pd_ui* ui, struct pd_canvas* c);
-void ui_guide_notice(struct pd_ui* ui, struct pd_canvas* c);
 void ui_dex_pick_overlay(struct pd_ui* ui, struct pd_canvas* c);
 
 // A tap each tab's file handles; true if it was theirs.
 bool ui_map_act(struct pd_ui* ui, int id);
 void ui_dex_next_filter(struct pd_ui* ui);
 bool ui_dex_act(struct pd_ui* ui, int id);
-bool ui_guide_act(struct pd_ui* ui, int id);
 bool ui_battle_act(struct pd_ui* ui, int id);
 bool ui_card_act(struct pd_ui* ui, int id);
 void ui_card_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s);

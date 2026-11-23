@@ -1,6 +1,7 @@
 /* The QUICK MENU (quick_menu.h): tiles of one size round a circle, the first at the top, clockwise; the
  * highlighted one's name in the middle, with why it's dimmed. GPL-3.0, see ../NOTICE. */
 #include "quick_menu.h"
+#include "pd_tr.h"
 #include "hud_style.h"
 
 #include "pd_icon.h"
@@ -228,19 +229,19 @@ const char *const quick_icon_hud[] = {
 
 const char *quick_label(enum quick_action a) {
   switch (a) {
-  case QUICK_PC: return "PC";
-  case QUICK_FLY: return "FLY";
-  case QUICK_FLASH: return "FLASH";
-  case QUICK_FLIGHT: return "TAKE OFF";
-  case QUICK_LAND: return "LAND";
-  case QUICK_REPEL: return "REPEL";
-  case QUICK_BIKE: return "BIKE";
-  case QUICK_WILD: return "WILD";
-  case QUICK_SAVE_STATE: return "SAVE STATE";
-  case QUICK_LOAD_STATE: return "LOAD STATE";
-  case QUICK_FF: return "FF";
-  case QUICK_COMPANION: return "COMPANION";
-  case QUICK_HUD: return "HUD";
+  case QUICK_PC: return pd_tr("PC");
+  case QUICK_FLY: return pd_tr("FLY");
+  case QUICK_FLASH: return pd_tr("FLASH");
+  case QUICK_FLIGHT: return pd_tr("TAKE OFF");
+  case QUICK_LAND: return pd_tr("LAND");
+  case QUICK_REPEL: return pd_tr("REPEL");
+  case QUICK_BIKE: return pd_tr("BIKE");
+  case QUICK_WILD: return pd_tr("WILD");
+  case QUICK_SAVE_STATE: return pd_tr("SAVE STATE");
+  case QUICK_LOAD_STATE: return pd_tr("LOAD STATE");
+  case QUICK_FF: return pd_tr("FF");
+  case QUICK_COMPANION: return pd_tr("COMPANION");
+  case QUICK_HUD: return pd_tr("HUD");
   default: return "";
   }
 }
@@ -563,17 +564,18 @@ bool quick_draw(struct pd_canvas *c, const struct pd_game *g, const struct quick
         pd_text(c, x + (TW - pd_text_width(lb)) / 2, ly + LABEL_LINE, lb, col, shadow);
     }
     if (items[i].off) { // WILD switched off: an OFF tag on its corner
-      int tw = pd_text_width("OFF") + 6;
+      const char *off = pd_tr("OFF");
+      int tw = pd_text_width(off) + 6;
       pd_round_rect(c, x + TW - tw - 2, y + 2, tw, 13, 2, ink->accent);
-      pd_text(c, x + TW - tw + 1, y, "OFF", ink->onAccent, PD_NO_SHADOW);
+      pd_text(c, x + TW - tw + 1, y, off, ink->onAccent, PD_NO_SHADOW);
     }
   }
   // The middle: the highlighted one's name, and why it's dimmed (or WILD's state).
   if (sel >= 0 && sel < n) {
     const struct quick_item *it = &items[sel];
-    const char *name = it->action == QUICK_WILD ? "WILD ENCOUNTERS" : it->label ? it->label : quick_label(it->action);
-    const char *note = it->why ? it->why : it->action == QUICK_WILD ? (it->off ? "OFF" : "ON")
-                     : it->action == QUICK_FF ? (it->lit ? "ON" : "OFF") : NULL;
+    const char *name = it->action == QUICK_WILD ? pd_tr("WILD ENCOUNTERS") : it->label ? it->label : quick_label(it->action);
+    const char *note = it->why ? it->why : it->action == QUICK_WILD ? pd_tr(it->off ? "OFF" : "ON")
+                     : it->action == QUICK_FF ? pd_tr(it->lit ? "ON" : "OFF") : NULL;
     int nw = pd_text_width(name), ow = note ? pd_text_width(note) : 0;
     int w = (nw > ow ? nw : ow) + 16, h = note ? 40 : 24;
     int x = (c->w - w) / 2, y = (c->h - h) / 2;

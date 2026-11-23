@@ -7,7 +7,7 @@
 #include <string.h>
 
 #include "pd_dex.h"
-#include "pd_guide.h"
+#include "pd_map.h"
 #include "pd_party_art.h"
 #include "pd_settings.h"
 #include "pd_ui_internal.h"
@@ -23,11 +23,11 @@
 // The tab bar (CompanionScreen): BATTLE first while a battle's on, the chosen tabs this game has, MORE when any are
 // left off it, and the gear at the end. Which tabs may sit on it, in the bar's order.
 const enum pd_tab UI_BAR_CHOICE[UI_BAR_CHOICES] = {
-    PD_TAB_PARTY, PD_TAB_DEX, PD_TAB_MAP, PD_TAB_BAG, PD_TAB_BOXES, PD_TAB_GUIDE, PD_TAB_NUZLOCKE, PD_TAB_CARD,
+    PD_TAB_PARTY, PD_TAB_DEX, PD_TAB_MAP, PD_TAB_BAG, PD_TAB_BOXES, PD_TAB_NUZLOCKE, PD_TAB_CARD,
     PD_TAB_STATES, PD_TAB_ACHIEVEMENTS,
 };
 static const char* const TAB_LABELS[PD_TAB_COUNT] = {
-    [PD_TAB_PARTY] = "PARTY", [PD_TAB_BAG] = "BAG", [PD_TAB_MAP] = "MAP", [PD_TAB_GUIDE] = "GUIDE",
+    [PD_TAB_PARTY] = "PARTY", [PD_TAB_BAG] = "BAG", [PD_TAB_MAP] = "MAP",
     [PD_TAB_DEX] = "DEX", [PD_TAB_BATTLE] = "BATTLE", [PD_TAB_SETTINGS] = "", [PD_TAB_CARD] = "CARD",
     [PD_TAB_STATES] = "STATES", [PD_TAB_BOXES] = "BOXES", [PD_TAB_NUZLOCKE] = "NUZLOCKE",
     [PD_TAB_ACHIEVEMENTS] = "CHEEVOS",
@@ -48,7 +48,7 @@ bool ui_tab_available(const struct pd_ui* ui, const struct pd_game* g, enum pd_t
     const struct pd_config* cfg = g ? g->cfg : NULL;
     switch (t) {
     case PD_TAB_DEX: return cfg && (cfg->dexEntries || pd_dex_gb_count(g));
-    case PD_TAB_GUIDE: return !g || pd_guide_for(g) != NULL;
+    case PD_TAB_MAP: return cfg && pd_map_art(g) != NULL;
     case PD_TAB_CARD: return cfg && cfg->cardStyle;
     case PD_TAB_STATES: return ui->hostHasStates;
     case PD_TAB_BOXES: return ui->boxes != NULL;
@@ -191,7 +191,6 @@ void pd_ui_init(struct pd_ui* ui, struct pd_settings* settings) {
     ui->mapPage = -1;
     ui->mapSel = -1;
     ui->mapDungeon = -1;
-    pd_ui_guide_reset(ui);
     ui->foeSelected = ui->foeShown = -1;
     ui->itemMoveSlot = -1;
     ui->lastFoeActive = ui->lastFoeNext = -1;
@@ -360,7 +359,7 @@ static void tab_bar(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game*
 // What the cursor can land on (linux/main.c's focus): not the tab bar, nor a scrim, a list's drag area or its bar.
 static bool focusable(int id) {
     return !(id >= HIT_TAB && id < HIT_TAB + PD_TAB_COUNT) && id != HIT_MORE && id != HIT_FF && id != HIT_SCRIM && id != HIT_BAG_LIST &&
-        id != HIT_DEX_LIST && id != HIT_GUIDE_LIST && id != HIT_SETTINGS_LIST && id != HIT_SCROLL_BAR &&
+        id != HIT_DEX_LIST && id != HIT_SETTINGS_LIST && id != HIT_SCROLL_BAR &&
         id != HIT_SHOULDER_L && id != HIT_SHOULDER_R && !(id >= HIT_SETTINGS_GROUP && id < HIT_SETTINGS_GROUP + 10);
 }
 
@@ -465,8 +464,6 @@ void pd_ui_draw(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g,
         ui_bag_tab(ui, c, g, s, host);
     } else if (ui->tab == PD_TAB_MAP) {
         ui_map_tab(ui, c, g, s, host);
-    } else if (ui->tab == PD_TAB_GUIDE) {
-        ui_guide_tab(ui, c, g, s);
     } else if (ui->tab == PD_TAB_DEX) {
         ui_dex_tab(ui, c, g, s);
     } else if (ui->tab == PD_TAB_CARD) {
@@ -480,8 +477,6 @@ void pd_ui_draw(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g,
         ui_places_overlay(ui, c, g);
     } else if (ui->overlay == PD_OVERLAY_FLY) {
         ui_fly_overlay(ui, c);
-    } else if (ui->overlay == PD_OVERLAY_GUIDE_NOTICE) {
-        ui_guide_notice(ui, c);
     } else if (ui->overlay == PD_OVERLAY_DEX_PICK) {
         ui_dex_pick_overlay(ui, c);
     } else if (ui->overlay != PD_OVERLAY_MORE) {
@@ -497,7 +492,6 @@ static int* scroll_target(struct pd_ui* ui) {
     switch (ui->tab) {
     case PD_TAB_BAG: return &ui->bagScroll;
     case PD_TAB_DEX: return ui->dexOpen && ui->dexSection ? &ui->dexPageScroll : &ui->dexScroll;
-    case PD_TAB_GUIDE: return &ui->guideScroll;
     default: return NULL;
     }
 }
@@ -526,7 +520,7 @@ bool ui_summary_learn(struct pd_ui* ui) {
 }
 
 static void act(struct pd_ui* ui, int id) {
-    if (ui_map_act(ui, id) || ui_dex_act(ui, id) || ui_guide_act(ui, id) || ui_battle_act(ui, id) || ui_card_act(ui, id) ||
+    if (ui_map_act(ui, id) || ui_dex_act(ui, id) || ui_battle_act(ui, id) || ui_card_act(ui, id) ||
         ui_bag_act(ui, id, ui->drawn)) {
         return;
     }
@@ -793,8 +787,6 @@ bool pd_ui_back(struct pd_ui* ui) {
         else ui->itemPicking = false;
         return true;
     }
-    // The GUIDE's notice: BACK is its GO BACK.
-    if (ui->overlay == PD_OVERLAY_GUIDE_NOTICE) return ui_guide_act(ui, HIT_NOTICE_BACK);
     if (ui->overlay != PD_OVERLAY_NONE) {
         ui->overlay = PD_OVERLAY_NONE;
         return true;
@@ -847,11 +839,6 @@ bool pd_ui_back(struct pd_ui* ui) {
     }
     if (ui->tab == PD_TAB_BATTLE && ui->foeSelected >= 0) {
         ui->foeSelected = -1;
-        return true;
-    }
-    if (ui->tab == PD_TAB_GUIDE && ui->guideOpen >= 0) {
-        ui->guideOpen = -1;
-        ui->guideLevel = 0;
         return true;
     }
     return false;

@@ -9,6 +9,7 @@ static const char* const NAMES[PD_LANGS] = { "ENGLISH", "FRANÇAIS", "DEUTSCH", 
 static const char* const CODES[PD_LANGS] = { "EN", "FR", "DE", "IT", "ES", "BR", "PT" };
 
 static int current = PD_LANG_EN, autoLang = PD_LANG_EN, systemLang = PD_LANG_EN, forced = -1;
+static bool systemLangSet = false;
 
 void pd_tr_force(int lang) {
     forced = lang >= 0 && lang < PD_LANGS ? lang : -1;
@@ -24,9 +25,21 @@ const char* pd_lang_label(int setting, char* buf, size_t n) {
     return buf;
 }
 
+static bool eq_ascii_ci(const char* a, const char* b) {
+    if (!a || !b) return false;
+    while (*a && *b) {
+        unsigned char ca = (unsigned char) *a++, cb = (unsigned char) *b++;
+        if (ca >= 'a' && ca <= 'z') ca -= 'a' - 'A';
+        if (cb >= 'a' && cb <= 'z') cb -= 'a' - 'A';
+        if (ca != cb) return false;
+    }
+    return *a == *b;
+}
+
 int pd_lang_of_code(const char* code) {
+    if (eq_ascii_ci(code, "PT-BR")) return PD_LANG_BR;
     for (int i = 0; code && i < PD_LANGS; i++)
-        if (!strcmp(code, CODES[i])) return i;
+        if (eq_ascii_ci(code, CODES[i])) return i;
     return PD_LANG_AUTO;
 }
 
@@ -44,14 +57,16 @@ int pd_lang_of_letter(char letter) {
 int pd_tr_language(void) { return current; }
 int pd_tr_auto(void) { return autoLang; }
 
-void pd_tr_set_system(int lang) { systemLang = lang >= 0 && lang < PD_LANGS ? lang : PD_LANG_EN; }
+void pd_tr_set_system(int lang) {
+    if (lang >= 0 && lang < PD_LANGS) {
+        systemLang = lang;
+        systemLangSet = true;
+    }
+}
 
 void pd_tr_apply(int setting, char gameLetter) {
-    // As the app's L10n.apply: the game's language, else the system's; no game is in Portuguese, so a Portuguese
-    // system's wins over an English game too. A Japanese / Korean game (no glyphs here yet) falls back to the system's.
     int game = gameLetter ? pd_lang_of_letter(gameLetter) : -1;
-    bool portuguese = systemLang == PD_LANG_BR || systemLang == PD_LANG_PT;
-    autoLang = game >= 0 && !(game == PD_LANG_EN && portuguese) ? game : systemLang;
+    autoLang = systemLangSet ? systemLang : (game >= 0 ? game : systemLang);
     current = forced >= 0 ? forced : setting >= 0 && setting < PD_LANGS ? setting : autoLang;
 }
 

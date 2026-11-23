@@ -19,8 +19,6 @@ struct DsCompanionUi {
   unsigned bagPockets=1;
   int dexEntry=0,dexRow=0,dexFilterFocus=-1;
   int placeRow=-1,mapAction=-1;
-  int guideLoadedPage=-1,guideMap=-1;
-  std::vector<GuideRow> guideRows;
   std::vector<DsMapPlace> mapPlaces;
   DsDexArt dexArt;
   int dexMode=-1,dexCachedSpecies=0,dexDetailRow=0;

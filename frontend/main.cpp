@@ -32,16 +32,12 @@
 #else
 #include <SDL2/SDL.h>
 #endif
-#if defined(__linux__) || defined(__SWITCH__) // (Android too)
+#if defined(__linux__) || defined(__SWITCH__)
 #include <unistd.h>
 #include <fcntl.h>
 #endif
 #ifndef SSR_NO_PNG
 #include <png.h>
-#endif
-#ifdef __ANDROID__
-#include <atomic>
-#include <jni.h>
 #endif
 
 #include "NDS.h"
@@ -108,101 +104,6 @@ static unsigned PortableOverlaySize(int) { return 0; }
 #include "bw2map.h" // Black 2 and White 2: more of the map loaded beside the player
 #if defined(__SWITCH__) && defined(SSR_DEKO3D) && defined(SSR_DEKO_PROBE)
 #include "dekoprobe.h"
-#endif
-
-#ifdef __ANDROID__
-// The app holds the player's own game, so it cannot update itself as the setup window does:
-// at start it asks GitHub for the newest release, and if that is newer than this build
-// (SSR_VERSION, from CHANGELOG.md) the game says so, to rebuild it on the PC.
-namespace UpdateCheck {
-static std::atomic<bool> g_done{false};
-static std::string g_newer; // set before g_done
-
-// The body of an HTTPS GET through Java (the NDK has no TLS of its own); empty on failure.
-static std::string Get(JNIEnv* env, const char* address)
-{
-    std::string body;
-    auto failed = [&]() {
-        if (!env->ExceptionCheck()) return false;
-        env->ExceptionClear();
-        return true;
-    };
-    jclass urlClass = env->FindClass("java/net/URL");
-    jclass connClass = env->FindClass("java/net/URLConnection");
-    jclass streamClass = env->FindClass("java/io/InputStream");
-    if (failed() || !urlClass || !connClass || !streamClass) return body;
-    jobject url = env->NewObject(urlClass, env->GetMethodID(urlClass, "<init>", "(Ljava/lang/String;)V"), env->NewStringUTF(address));
-    if (failed()) return body;
-    jobject conn = env->CallObjectMethod(url, env->GetMethodID(urlClass, "openConnection", "()Ljava/net/URLConnection;"));
-    if (failed() || !conn) return body;
-    env->CallVoidMethod(conn, env->GetMethodID(connClass, "setConnectTimeout", "(I)V"), 10000);
-    env->CallVoidMethod(conn, env->GetMethodID(connClass, "setReadTimeout", "(I)V"), 10000);
-    env->CallVoidMethod(conn, env->GetMethodID(connClass, "setRequestProperty", "(Ljava/lang/String;Ljava/lang/String;)V"),
-        env->NewStringUTF("Accept"), env->NewStringUTF("application/vnd.github+json"));
-    if (failed()) return body;
-    jobject in = env->CallObjectMethod(conn, env->GetMethodID(connClass, "getInputStream", "()Ljava/io/InputStream;"));
-    if (failed() || !in) return body;
-    jmethodID read = env->GetMethodID(streamClass, "read", "([BII)I");
-    jbyteArray buf = env->NewByteArray(4096);
-    while (body.size() < (1 << 20))
-    {
-        jint n = env->CallIntMethod(in, read, buf, 0, 4096);
-        if (failed()) { body.clear(); break; }
-        if (n < 0) break;
-        const size_t at = body.size();
-        body.resize(at + n);
-        env->GetByteArrayRegion(buf, 0, n, (jbyte*)&body[at]);
-    }
-    env->CallVoidMethod(in, env->GetMethodID(streamClass, "close", "()V"));
-    failed();
-    return body;
-}
-
-static std::vector<int> Key(const std::string& v)
-{
-    std::vector<int> key;
-    std::stringstream ss(v);
-    std::string part;
-    while (std::getline(ss, part, '.'))
-    {
-        if (part.empty() || part.find_first_not_of("0123456789") != std::string::npos) return {};
-        key.push_back(atoi(part.c_str()));
-    }
-    return key;
-}
-
-static void Start()
-{
-    const std::string current = SSR_VERSION;
-    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
-    JavaVM* vm = nullptr;
-    if (current.empty() || !env || env->GetJavaVM(&vm) != JNI_OK) return;
-    std::thread([vm, current]() {
-        JNIEnv* env = nullptr;
-        if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return;
-        const std::string body = Get(env, "https://api.github.com/repos/ClickingMaster/ssrecomp/releases/latest");
-        vm->DetachCurrentThread();
-        // "tag_name": "v1.2.3"
-        std::string latest;
-        size_t at = body.find("\"tag_name\"");
-        if (at != std::string::npos && (at = body.find('"', body.find(':', at))) != std::string::npos)
-        {
-            const size_t end = body.find('"', at + 1);
-            if (end != std::string::npos) latest = body.substr(at + 1, end - at - 1);
-        }
-        if (!latest.empty() && latest[0] == 'v') latest.erase(0, 1);
-        const std::vector<int> a = Key(latest), b = Key(current);
-        if (latest.empty() || a.empty())
-            fprintf(stderr, "update check: no answer from GitHub\n");
-        else
-        {
-            fprintf(stderr, "update check: this is %s, the newest release is %s\n", current.c_str(), latest.c_str());
-            if (!b.empty() && a > b) g_newer = latest;
-        }
-        g_done = true;
-    }).detach();
-}
-}
 #endif
 
 // With --log-sections and a shot directory, a screenshot is taken around every change of merged scene.
@@ -491,20 +392,6 @@ static bool WritePNG(const std::string& path, const uint32_t* pixels, int w, int
 static std::vector<uint8_t> ReadFile(const std::string& path)
 {
     std::vector<uint8_t> data;
-#ifdef __ANDROID__
-    // Relative paths are files packed in the APK (the ROM); SDL reads both kinds.
-    if (SDL_RWops* rw = SDL_RWFromFile(path.c_str(), "rb"))
-    {
-        Sint64 len = SDL_RWsize(rw);
-        if (len > 0)
-        {
-            data.resize((size_t)len);
-            if (SDL_RWread(rw, data.data(), 1, (size_t)len) != (size_t)len) data.clear();
-        }
-        SDL_RWclose(rw);
-    }
-    return data;
-#endif
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) return data;
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return data; }
@@ -1880,35 +1767,6 @@ static bool ReadSnapshot(NDS& nds, const std::string& path, uint32_t* frame, boo
 int main(int argc, char** argv)
 {
     Options opt;
-#ifdef __ANDROID__
-    // Started from the app icon: the ROM is packed in the APK, the save and the settings
-    // go in the app's own storage.
-    std::vector<std::string> androidArgs;
-    std::vector<char*> androidArgv;
-    if (argc < 2)
-    {
-        const char* dir = SDL_AndroidGetInternalStoragePath();
-        // Files the emulator core keeps by relative name go there too.
-        if (dir) chdir(dir);
-        // Messages go to log.txt (Android drops them otherwise), with the frame timing,
-        // for bug reports: in the app's folder on the shared storage
-        // (Android/data/io.github.clickingmaster.ssrecomp/files), which a file manager or
-        // a PC over USB can open, or else beside the save.
-        setenv("SSR_PERF", "1", 0);
-#ifndef SSR_PC_LAUNCHER
-        const char* ext = SDL_AndroidGetExternalStoragePath();
-        if (!ext || !freopen((std::string(ext) + "/log.txt").c_str(), "w", stderr))
-            freopen("log.txt", "w", stderr);
-        setvbuf(stderr, nullptr, _IOLBF, 0);
-        androidArgs = { "ssrecomp", "rom.nds", "--save", std::string(dir ? dir : ".") + "/soulsilver.sav", "--fullscreen" };
-        for (auto& a : androidArgs) androidArgv.push_back(a.data());
-        argc = (int)androidArgv.size();
-        argv = androidArgv.data();
-#endif
-        // (The all-games app: no ROM inside; the game list (pc_launcher.cpp) finds the
-        // player's ROMs and sends the log to game.log in the app's folder.)
-    }
-#endif
 #ifdef __SWITCH__
     // Started from the Homebrew Menu: the ROM, save and settings are in the app's folder
     // on the SD card (sdmc:/switch/nosplitnx), and the log goes there too.
@@ -2430,7 +2288,7 @@ int main(int argc, char** argv)
         // The frames keep their own pace (nextTick, 59.8 a second): one a little under the
         // screen's 60 never waits for it, with Metal's three pictures in flight.
         rendererFlags |= SDL_RENDERER_PRESENTVSYNC;
-#elif !defined(__SWITCH__) && !defined(__ANDROID__)
+#elif !defined(__SWITCH__)
         // Windows and Linux: in step with the screen (vsync) when it shows 60 pictures a
         // second or a multiple of that (59.94 or 60, 120, 240 Hz). The pictures then follow
         // that refresh, not the DS's own 59.8 a second. Keeping both, the two walk past each
@@ -5842,10 +5700,6 @@ int main(int argc, char** argv)
             pdActions.toast = [&](const std::string& msg) { say(msg); };
         }
     }
-#endif
-#if defined(__ANDROID__) && !defined(SSR_PC_LAUNCHER)
-    bool updateSaid = false;
-    UpdateCheck::Start();
 #endif
 
     std::vector<uint32_t> shot;
@@ -9452,22 +9306,6 @@ int main(int argc, char** argv)
         // shadow passes and full-screen SDL_UpdateTexture uploads.
         int cornerY = 0;
         int cornerInset = 0;
-#ifdef __ANDROID__
-        // Full-screen phones may have rounded corners or a camera cutout on either side.
-        cornerInset = std::max(4, outW / 20);
-        cornerY = std::max(cornerY, outH / 20);
-#endif
-#if defined(__ANDROID__) && !defined(SSR_PC_LAUNCHER)
-        if (!updateSaid && UpdateCheck::g_done)
-        {
-            updateSaid = true;
-            if (!UpdateCheck::g_newer.empty())
-            {
-                say("VERSION " + UpdateCheck::g_newer + " IS OUT - REBUILD THE APP ON YOUR PC");
-                toastUntil = frame + 600;
-            }
-        }
-#endif
         auto mixHash = [](uint64_t& h, uint64_t v) { h = (h ^ v) * 1099511628211ULL; };
         auto mixStr = [&](uint64_t& h, const std::string& s) {
             mixHash(h, (uint64_t)s.size());

@@ -677,7 +677,8 @@ inline void SyncGbaSettings(const std::string& cfg, const std::string& dataDir)
     set.push_back({ "fast_button", ConfigValue(cfg, "fast_button") == "toggle" ? "toggle" : "hold" });
     set.push_back({ "gba_start", ConfigValue(cfg, "start_button") == "ds" ? "start" : "menu" });
     const std::string lang = ConfigValue(cfg, "list_lang");
-    set.push_back({ "language", lang.empty() ? ConfigValue(cfg, "language") : lang });
+    const std::string picked = !lang.empty() ? lang : ConfigValue(cfg, "language");
+    set.push_back({ "language", !picked.empty() ? picked : UiLang::Codes[UiLang::lang] });
     const std::string fast = ConfigValue(cfg, "fast_lock");
     if (fast == "0" || fast == "1") set.push_back({ "fast_lock", fast });
     set.push_back({ "auto_state", ConfigValue(cfg, "auto_state") == "1" ? "1" : "0" });
@@ -1903,11 +1904,7 @@ inline std::vector<Setting> SettingsList()
 {
     const std::vector<std::pair<std::string, std::string>> onOff = { { "1", "ON" }, { "0", "OFF" } };
     std::vector<Setting> l;
-#ifdef __ANDROID__
-    l.push_back({ "!updates", "CHECK FOR UPDATES", { { "", "CHECK" } }, "",
-                  "CHECKS GITHUB FOR A NEW VERSION. INSTALL DOWNLOADS IT: IT IS CHECKED AGAINST THE RELEASE SHA256SUMS.TXT AND ANDROID ASKS "
-                  "BEFORE INSTALLING. THE OLD VERSION IS KEPT. YOUR ROMS / SAVES AND SETTINGS STAY AS THEY ARE." });
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
     l.push_back({ "!updates", "CHECK FOR UPDATES", { { "", "CHECK" } }, "",
                   "CHECKS GITHUB FOR A NEW VERSION. WHEN THERE IS ONE: CHOOSE AGAIN TO OPEN ITS PAGE AND DOWNLOAD IT THERE." });
 #elif defined(__SWITCH__) && defined(SSR_ALL_GAMES)
@@ -2341,12 +2338,7 @@ struct SettingsPage
             ShowGroups(selGroup);
         }
         const int s = std::max(1, std::min(c.w, c.h) / 240);
-#ifdef __ANDROID__
-        // Phone settings use readable touch targets in either orientation.
-        const int ts = std::max(2, s);
-#else
         const int ts = s; // full scale on handheld/console (3 at 720 lines, 4 at 1080)
-#endif
         const int bandH = (c.h > c.w ? 43 : 22) * s;
         const uint32_t bgTop = (th.bg == 0xFF0D0D11) ? 0xFF131318 : th.bg;
         c.FillGradV(0, 0, c.w, c.h, bgTop, 0xFF09090C, 0);

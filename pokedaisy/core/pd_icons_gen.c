@@ -485,25 +485,6 @@ static const char* const tab_boxes[] = {
 };
 static const uint32_t tab_boxes_colors[] = { 0x303038, 0xD8D8E0, 0x9898A8, 0x78C058, 0xE83838, 0x3878E8, 0xF8C830 };
 
-static const char* const tab_guide[] = {
-    ".kkkkkkkkrrkkk..",
-    "kddbbbbbbrrbbk..",
-    "kddbbbbbbbbbbbk.",
-    "kddbkkkkkkkkbbk.",
-    "kddbkyyyyyykbbk.",
-    "kddbkkkkkkkkbbk.",
-    "kddbbbbbbbbbbbk.",
-    "kddbbbbbbbbbbbk.",
-    "kddbbbbbbbbbbbk.",
-    "kddbbbbbbbbbbbk.",
-    "kddbbbbbbbbbbbk.",
-    "kddbbbbbbbbbbbk.",
-    "kdkwwwwwwwwwwwwk",
-    "kdkssssssssssssk",
-    ".kkkkkkkkkkkkkkk",
-};
-static const uint32_t tab_guide_colors[] = { 0x303038, 0x2850A8, 0x4880E0, 0xF8D030, 0xF8F8F8, 0xC8C8D0, 0xE03830 };
-
 static const char* const tab_grave[] = {
     "................",
     ".....kkkkkk.....",
@@ -583,7 +564,6 @@ const struct pd_art PD_TAB_ART[] = {
     { 16, 16, tab_map, "kpqgbx", tab_map_colors },
     { 16, 16, tab_bag, "kdby", tab_bag_colors },
     { 16, 16, tab_boxes, "kwsgrby", tab_boxes_colors },
-    { 16, 15, tab_guide, "kdbywsr", tab_guide_colors },
     { 16, 16, tab_grave, "kwsdgG", tab_grave_colors },
     { 16, 12, tab_card, "khcasply", tab_card_colors },
     { 16, 14, tab_states, "kbsdwl", tab_states_colors },

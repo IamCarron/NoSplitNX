@@ -60,10 +60,9 @@ static int species_count(const struct pd_config* cfg) {
 int pd_dex_evolutions(const struct pd_game* g, int species, struct pd_dex_evolution* out, int capacity) {
     const struct pd_config* cfg = g->cfg;
     if (!cfg || !cfg->dexEvolutions || species <= 0 || species >= species_count(cfg)) return -1;
-    switch (g->guide) {
-        case PD_GUIDE_FIRERED: case PD_GUIDE_LEAFGREEN: case PD_GUIDE_EMERALD: case PD_GUIDE_RUBY: case PD_GUIDE_SAPPHIRE: break;
-        default: return -1;
-    }
+    if (cfg->text || cfg->gb || cfg->expansion || g->code[3] == 'J' ||
+        (!strcmp(g->code, "BPEE") && !g->retail))
+        return -1;
     enum { STRIDE = 40, RECORD = 8 };
     const int limit = species_count(cfg);
     const uint8_t* table = pd_rom_at(g, cfg->dexEvolutions, (size_t)limit * STRIDE);

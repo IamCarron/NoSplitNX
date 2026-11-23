@@ -32,7 +32,7 @@ endif()
 # Windows through WGL, frontend/glcontext_wgl.cpp, for the PC all-games program).
 set(BUILD_QT_SDL OFF CACHE BOOL "" FORCE)
 set(SSR_GPU3D_DEFAULT OFF)
-if(NOT NINTENDO_SWITCH AND NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch" AND UNIX AND NOT APPLE AND NOT ANDROID)
+if(NOT NINTENDO_SWITCH AND NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch" AND UNIX AND NOT APPLE)
     find_library(SSR_EGL_LIBRARY EGL)
     find_path(SSR_EGL_INCLUDE EGL/egl.h)
     if(SSR_EGL_LIBRARY AND SSR_EGL_INCLUDE)
@@ -74,14 +74,14 @@ if(SSR_SWITCH)
     endif()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(SDL2 REQUIRED sdl2)
-elseif(APPLE AND NOT ANDROID AND SSR_MACOS_SOURCE_DEPS)
+elseif(APPLE AND SSR_MACOS_SOURCE_DEPS)
     include(cmake/MacDependencies.cmake)
 else()
     find_package(SDL2 REQUIRED)
     # PNG screenshots (--shot-dir, the test harness): not needed to play, so a player's build
-    # can leave libpng out (SSR_PNG=OFF, as the PC all-games download does).
+    # can leave libpng out (SSR_PNG=OFF).
     option(SSR_PNG "Write screenshots as PNG files (libpng)" ON)
-    if(NOT ANDROID AND SSR_PNG)
+    if(SSR_PNG)
         find_package(PNG REQUIRED)
     endif()
 endif()
@@ -157,10 +157,9 @@ set(SSRECOMP_SOURCES
     "${SSR_GENERATED_DIR}/apps_table.cpp"
     $<TARGET_OBJECTS:gamecode>)
 
-# The app's version (Android: for its check for a newer release; Switch: shown in the
-# Homebrew Menu): the newest one in CHANGELOG.md.
+# The app's version (Switch: shown in the Homebrew Menu): the newest one in CHANGELOG.md.
 set(SSR_VERSION "")
-if(ANDROID OR SSR_SWITCH)
+if(SSR_SWITCH)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/CHANGELOG.md")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS CHANGELOG.md)
         file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/CHANGELOG.md" SSR_RELEASES REGEX "^## v[0-9]")
@@ -402,7 +401,6 @@ if(SSR_GBA_DIR AND (SSR_PC_ALL_GAMES OR SSR_ALL_GAMES))
     endif()
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/localisation/prepare_gba.py"
-        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/touchlayout.h"
         "${SSR_GBA_DIR}/CMakeLists.txt"
         "${SSR_GBA_DIR}/frontend/embed.h"
         "${SSR_GBA_DIR}/frontend/games.h"
@@ -422,7 +420,7 @@ if(SSR_SWITCH)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(SSR_SWITCH_CURL REQUIRED IMPORTED_TARGET libcurl)
     target_link_libraries(ssrecomp PRIVATE PkgConfig::SSR_SWITCH_CURL)
-elseif(UNIX AND NOT ANDROID)
+elseif(UNIX)
     target_link_libraries(ssrecomp PRIVATE ${CMAKE_DL_LIBS})
 endif()
 set(SSR_RA_VERSION "0.0.0")

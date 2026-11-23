@@ -12,14 +12,7 @@
 
 #define PD_WRAMX(bank, addr) (((uint32_t) (bank) << 16) | (addr))
 
-// Where a Gen 1 game keeps what its GUIDE reads: event flags (320 bytes), the missable-object (32), hidden-item (14) and
-// trade (2) banks, the badge byte, the champion's team byte. The snapshot packs them into flags[] (gen_guide.py's GB_BANK_BIT).
-struct pd_gb_guide_ram {
-    uint32_t event, missable, hidden, trades, badges, teamVar;
-    uint32_t curMap; // wCurMap: HERE's map
-};
-struct pd_gb_team;
-
+// Gen 1 map index -> town map area (Gen 2 landmarks live in pd_map_gen.c).
 struct pd_gb_config {
     int gen; // 1 or 2
     uint32_t partyCount, partyMons;
@@ -43,10 +36,7 @@ struct pd_gb_config {
     // POKéDEX flags: wPokedexOwned / wPokedexSeen, a bit per Dex number from 1 (Gen 2: by species id); dexCount 0 = no DEX.
     uint32_t dexCaught, dexSeen;
     int dexCount;
-    const struct pd_gb_guide_ram* guideRam; // Gen 1: the GUIDE's RAM (NULL = no guide)
-    // Crystal's GUIDE RAM (GuideCrystalGen.kt: wEventFlags, wTimeOfDay, wJohtoBadges, wTradeFlags) and wMapGroup / wMapNumber
-    const struct pd_gb_guide2_ram { uint32_t event, timeOfDay, badges, trades, mapGroup; } * guide2Ram;
-    const struct pd_gb_team* teams;         // the GUIDE's boss teams, by index
+    uint32_t curMap; // Gen 1 wCurMap -> pd_gb_gen1_area[map]
     // Gen 2's place (the app's gen2Landmark): wMapGroup / wMapNumber and wBackupMapGroup / wBackupMapNumber, each map's
     // landmark ({group << 8 | number, landmark}); a SPECIAL one (0) is named by the backup map, as the town map does.
     // playerGender: wPlayerGender (bit 0 = the girl), 0 = none (Gold / Silver: always the boy).
@@ -66,6 +56,9 @@ struct pd_gb_config {
     uint8_t gen2BattleMenuLeft, gen2SwitchMenuLeft;
     char language; // a European cart's language letter (Gen1Config / Gen2Config.language); 0 = English
 };
+extern const uint8_t pd_gb_gen1_area[256];
+extern const uint16_t pd_gb_landmarks_crystal[][2];
+extern const int pd_gb_landmarks_crystal_count;
 extern const uint16_t pd_gb_landmarks_gold_silver[][2];
 extern const int pd_gb_landmarks_gold_silver_count;
 extern const uint16_t pd_gb_landmarks_polished[][2];

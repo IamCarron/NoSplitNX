@@ -617,8 +617,10 @@ static void party_column(struct hud *u, int x, int y, int w) {
 // ---- Minimap ------------------------------------------------------------------------------------
 
 static bool has_minimap(const struct hud *u) {
-  const char *name = pd_mapsec_name(u->g, u->s->mapsec);
-  return pd_map_art(u->g) || (name && *name);
+  if (!u->s->posOk) return false;
+  const struct pd_map_art *a = pd_map_art(u->g);
+  int page, tx, ty;
+  return a && a->ok && a->pages > 0 && pd_map_player_tile(u->g, u->s, &page, &tx, &ty) && page >= 0 && page < a->pages;
 }
 
 static int minimap_w(int mw) { return mw + 2 * PAD; }
@@ -1134,11 +1136,7 @@ bool hud_draw(struct pd_canvas *c, const struct pd_game *g, const struct pd_snap
   bool bag = false;
   for (int p = 0; s->bagOk && p < PD_POCKET_COUNT; p++)
     bag |= s->bag[p].count > 0;
-  // HudButtons' order: PC, BAG, WILD, then COMPANION (one screen: the side panel's button).
-  if (h->noButtons)
-    ;
-  else if (h->pc && shows(&u, PD_HUD_PC))
-    u.button[u.buttons++] = HUD_PC;
+  // Minimalist HUD hides buttons when h->noButtons is set; Portable PC button is never shown.
   if (!h->noButtons) {
     if (bag && shows(&u, PD_HUD_BAG))
       u.button[u.buttons++] = HUD_BAG;
@@ -1190,8 +1188,6 @@ void hud_ds_draw(struct pd_canvas *c, const struct pd_snapshot *s, const struct 
   u.balls = shows(&u, PD_HUD_BALLS) ? balls(s, u.ball) : 0;
   u.repel = shows(&u, PD_HUD_REPEL) && h->repel > 0;
   if (!h->noButtons) {
-    if (h->pc && shows(&u, PD_HUD_PC))
-      u.button[u.buttons++] = HUD_PC;
     if (shows(&u, PD_HUD_BAG))
       u.button[u.buttons++] = HUD_BAG;
     if (h->wild >= 0 && shows(&u, PD_HUD_WILD))

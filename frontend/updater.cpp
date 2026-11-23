@@ -14,9 +14,7 @@
 #include <thread>
 #include <vector>
 
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__SWITCH__)
+#if defined(__SWITCH__)
 #include <switch.h>
 #include <zlib.h>
 #else
@@ -35,10 +33,8 @@ namespace Achievements
 // (achievements_http.cpp: each platform's way to the internet, also used here.)
 bool HttpPost(const std::string& url, const std::string& post, const std::string& contentType,
               const std::string& userAgent, int& status, std::string& body, std::string& error);
-#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__)) || defined(__SWITCH__)
 bool HttpDownload(const std::string& url, const std::string& userAgent, int& status, std::string& body,
                   std::string& error);
-#endif
 #ifdef __SWITCH__
 void HttpStop(bool on);
 #endif
@@ -284,58 +280,33 @@ struct JsonReader
 // ---------------------------------------------------------------------------------------------
 // This program's download.
 
-enum class Kind { None, WindowsZip, LinuxTar, AppImage, SwitchNro, NotifyOnly };
+enum class Kind { None, LinuxTar, SwitchNro };
 
 // g_program: the program's own file, where the folder has more than one (the Switch's .nro).
 std::string g_programDir, g_dataDir, g_program;
 
 Kind KindOf()
 {
-#if defined(_WIN32)
-    return Kind::WindowsZip;
-#elif defined(__APPLE__)
-    return Kind::NotifyOnly;
-#elif defined(__SWITCH__)
+#if defined(__SWITCH__)
     return Kind::SwitchNro;
-#elif defined(__linux__) && !defined(__ANDROID__)
-    const char* appImage = getenv("APPIMAGE");
-    return appImage && *appImage ? Kind::AppImage : Kind::LinuxTar;
 #else
-    return Kind::None;
+    return Kind::LinuxTar;
 #endif
 }
 
 const char* AssetName()
 {
-#if defined(SSR_IOS)
-    return "pokemon-ds-wide-ios.ipa";
-#elif defined(__APPLE__) && defined(__aarch64__)
-    return "pokemon-ds-wide-pc-macos-arm64.zip";
-#elif defined(__APPLE__)
-    return "pokemon-ds-wide-pc-macos-x86_64.zip";
-#elif defined(_WIN32)
-    return "pokemon-ds-wide-pc-windows-x86_64.zip";
-#elif defined(__SWITCH__)
+#if defined(__SWITCH__)
     return "nosplitnx-switch.zip";
-#elif defined(__linux__) && !defined(__ANDROID__)
-#if defined(__aarch64__)
-    return KindOf() == Kind::AppImage ? "pokemon-ds-wide-pc-linux-aarch64.AppImage" : "pokemon-ds-wide-pc-linux-aarch64.tar.gz";
 #else
-    return KindOf() == Kind::AppImage ? "pokemon-ds-wide-pc-linux-x86_64.AppImage" : "pokemon-ds-wide-pc-linux-x86_64.tar.gz";
-#endif
-#else
-    return nullptr;
+    return "pokemon-ds-wide-pc-linux-x86_64.tar.gz";
 #endif
 }
 
 // The program's file in the unpacked download.
 const char* ProgramFile()
 {
-#ifdef _WIN32
-    return "Pokemon Fulldex.exe";
-#else
     return "pokemon-ds-wide";
-#endif
 }
 
 std::string ReadFile(const std::string& path);
@@ -485,12 +456,10 @@ bool Installed(std::string& sha, long long& time)
     fs::remove(fs::u8path(legacyPath), ec);
     return true;
 }
-#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__)) || defined(__SWITCH__)
 void SetInstalled(const std::string& sha, long long time)
 {
     WriteCfgValues(SettingsPath(), { { "update_sha", sha }, { "update_time", std::to_string(time) } });
 }
-#endif
 
 // The state, shared with the threads. (Never freed: a check may still be running as the
 // program ends.)
@@ -585,15 +554,14 @@ void RunCheck(bool quiet)
     const Kind kind = KindOf();
     if (newer && !digest.empty())
     {
-        if (kind == Kind::AppImage) canInstall = true;
-        else if (kind == Kind::SwitchNro)
+        if (kind == Kind::SwitchNro)
         {
             // (Only a .nro on the SD card: not one sent over the network to test.)
             std::error_code ec;
             canInstall = g_program.size() > 4 && g_program.compare(g_program.size() - 4, 4, ".nro") == 0 &&
                          fs::exists(fs::u8path(g_program), ec);
         }
-        else if (kind == Kind::WindowsZip || kind == Kind::LinuxTar)
+        else if (kind == Kind::LinuxTar)
         {
             // (Only an unpacked download: never a build folder or somewhere else.)
             std::error_code ec;
@@ -616,7 +584,7 @@ void RunCheck(bool quiet)
     else Set(State::Available, canInstall ? "NEW VERSION: INSTALL" : "NEW VERSION: OPEN PAGE");
 }
 
-#if defined(__linux__) && !defined(__ANDROID__)
+#ifndef __SWITCH__
 bool Run(const std::vector<std::string>& args)
 {
     const pid_t pid = fork();
@@ -632,42 +600,10 @@ bool Run(const std::vector<std::string>& args)
     int status = 0;
     return waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
-#endif
 
-#ifdef _WIN32
-std::wstring Wide(const std::string& s)
-{
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
-    std::wstring w(n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &w[0], n);
-    return w;
-}
-#endif
-
-#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
-// The download unpacked into dest (Windows' own tar.exe reads zips, from Windows 10 on).
 bool Unpack(const std::string& archive, const std::string& dest)
 {
-#ifdef _WIN32
-    wchar_t sys[MAX_PATH];
-    const UINT n = GetSystemDirectoryW(sys, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return false;
-    const std::wstring tar = std::wstring(sys) + L"\\tar.exe";
-    std::wstring cmd = L"\"" + tar + L"\" -xf \"" + Wide(archive) + L"\" -C \"" + Wide(dest) + L"\"";
-    STARTUPINFOW si = {};
-    si.cb = sizeof si;
-    PROCESS_INFORMATION pi = {};
-    if (!CreateProcessW(tar.c_str(), &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
-        return false;
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    DWORD code = 1;
-    GetExitCodeProcess(pi.hProcess, &code);
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    return code == 0;
-#else
     return Run({ "tar", "-xzf", archive, "-C", dest });
-#endif
 }
 #endif
 
@@ -739,7 +675,6 @@ bool UnzipFolder(const std::string& zip, const std::string& folder, const std::s
 
 void RunInstall()
 {
-#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__)) || defined(__SWITCH__)
     Release r;
     std::string digest;
     {
@@ -799,36 +734,6 @@ void RunInstall()
         restart = g_program;
     }
 #else
-#ifndef _WIN32
-    if (KindOf() == Kind::AppImage)
-    {
-        // The AppImage itself replaced; the old one kept beside it as .old.
-        const std::string target = getenv("APPIMAGE");
-        const std::string fresh = target + ".new", old = target + ".old";
-        if (!WriteFile(fresh, data) || chmod(fresh.c_str(), 0755) != 0)
-        {
-            remove(fresh.c_str());
-            Set(State::Failed, "CANNOT WRITE BESIDE THE APPIMAGE");
-            return;
-        }
-        remove(old.c_str());
-        if (rename(target.c_str(), old.c_str()) != 0)
-        {
-            remove(fresh.c_str());
-            Set(State::Failed, "CANNOT MOVE THE APPIMAGE: NOTHING CHANGED");
-            return;
-        }
-        if (rename(fresh.c_str(), target.c_str()) != 0)
-        {
-            rename(old.c_str(), target.c_str());
-            remove(fresh.c_str());
-            Set(State::Failed, "CANNOT REPLACE THE APPIMAGE: NOTHING CHANGED");
-            return;
-        }
-        restart = target;
-    }
-    else
-#endif
     {
         const std::string archive = up + "/" + r.asset, unpacked = up + "/new";
         fs::remove_all(fs::u8path(unpacked), ec);
@@ -866,9 +771,6 @@ void RunInstall()
         S().restart = restart;
     }
     Set(State::Installed, "RESTARTING...");
-#else
-    Set(State::Failed, "OPEN THE PAGE TO UPDATE");
-#endif
 }
 
 void Spawn(void (*work)(bool), bool arg)
@@ -921,11 +823,7 @@ std::string BuildLabel(long long build)
 {
     if(build<=0)return "UNKNOWN";
     const time_t t=(time_t)build;struct tm utc{};
-#ifdef _WIN32
-    if(gmtime_s(&utc,&t))return "UNKNOWN";
-#else
     if(!gmtime_r(&t,&utc))return "UNKNOWN";
-#endif
     char label[32];strftime(label,sizeof label,"%Y-%m-%d %H:%M UTC",&utc);return label;
 }
 
@@ -1163,28 +1061,15 @@ void Restart()
     if (path.empty()) return;
     fprintf(stderr, "[update] starting %s\n", path.c_str());
     fflush(stderr);
-#ifdef _WIN32
-    // (game.log let go first: the new program keeps it as game-previous.log.)
-    freopen("NUL", "w", stderr);
-    const std::wstring self = Wide(path);
-    std::wstring cmd = L"\"" + self + L"\"";
-    STARTUPINFOW si = {};
-    si.cb = sizeof si;
-    PROCESS_INFORMATION pi = {};
-    if (CreateProcessW(self.c_str(), &cmd[0], nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi))
-    {
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
-    }
-#elif defined(__linux__) && !defined(__ANDROID__)
-    execl(path.c_str(), path.c_str(), (char*)nullptr);
-#elif defined(__SWITCH__)
+#if defined(__SWITCH__)
     // The loader starts the next .nro in this same process. Sockets left open mean that start
     // never comes (a black screen).
     Achievements::HttpStop(true);
     const std::string cmd = path.find(' ') == std::string::npos ? path : "\"" + path + "\"";
     const Result rc = envSetNextLoad(path.c_str(), cmd.c_str());
     if (R_FAILED(rc)) fprintf(stderr, "[update] envSetNextLoad: 0x%x\n", (unsigned)rc);
+#else
+    execl(path.c_str(), path.c_str(), (char*)nullptr);
 #endif
 }
 }

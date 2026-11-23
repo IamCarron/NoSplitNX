@@ -26,8 +26,6 @@ extern const int repel_kinds[REPEL_KINDS][2];
 
 /* Whether this ROM ([rom]: its bytes from 0x08000000) has the config's field functions (VarGet ... the field lock). */
 bool field_items_supported(const struct pd_config *cfg, const uint8_t *rom, size_t len);
-/* ... and the PC's: ScriptContext_SetupScript, gSpecials' entry. */
-bool pc_supported(const struct pd_config *cfg, const uint8_t *rom, size_t len);
 /* BIKE: a layout the SELECT register is known in (SaveBlock1.registeredItem = money + 6: FireRed's / Emerald's). */
 bool bike_supported(const struct pd_config *cfg);
 
@@ -42,10 +40,6 @@ int bag_bike(const struct pd_snapshot *snap);
  * holdEffectParam), RemoveBagItem. [steps] gets its steps. Between frames, when pk_call_safe says so. */
 enum item_result repel_use(struct mCore *core, const struct pd_config *cfg, const uint8_t *rom, size_t len,
                            int item, bool busy, bool battle, int *steps);
-/* The game's own PC, as a PC's script opens it: lockall; special ShowPokemonStorageSystemPC; waitstate;
- * releaseall; end - written to the config's script address and run by ScriptContext_SetupScript. */
-enum item_result pc_open(struct mCore *core, const struct pd_config *cfg, const uint8_t *rom, size_t len, bool busy,
-                         bool battle);
 /* BIKE's first step: [item] into the SELECT register; [old] gets the player's own registered item (put back with
  * bike_restore once the game took SELECT). The host then presses SELECT for the game. */
 enum item_result bike_register(struct mCore *core, const struct pd_config *cfg, const uint8_t *rom, size_t len,

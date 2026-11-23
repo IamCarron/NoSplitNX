@@ -18,60 +18,6 @@ enum pd_game_kind {
     PD_GAME_GB,       // Gen 1 / Gen 2 (cfg->gb)
 };
 
-// Which GUIDE a game gets (pd_guide_for): its own, or none until it's ported.
-enum pd_guide_id {
-    PD_GUIDE_NONE = 0,
-    PD_GUIDE_FIRERED,
-    PD_GUIDE_LEAFGREEN,
-    PD_GUIDE_EMERALD,
-    PD_GUIDE_RUBY,
-    PD_GUIDE_SAPPHIRE,
-    PD_GUIDE_EMERALD_LEGACY,
-    PD_GUIDE_ROCKET_EDITION,
-    PD_GUIDE_ASH_GRAY,
-    PD_GUIDE_GS_CHRONICLES,
-    PD_GUIDE_RADICAL_RED,
-    PD_GUIDE_ORANGE_ISLANDS,
-    PD_GUIDE_ODYSSEY,
-    PD_GUIDE_SWORD_SHIELD,
-    PD_GUIDE_UNBOUND,
-    PD_GUIDE_GAIA,
-    PD_GUIDE_GHOST_GREY,
-    PD_GUIDE_CELIA,
-    PD_GUIDE_IMPERIUM,
-    PD_GUIDE_RECHARGED_YELLOW,
-    PD_GUIDE_RECHARGED_EMERALD,
-    PD_GUIDE_GB_RED,
-    PD_GUIDE_GB_BLUE,
-    PD_GUIDE_GB_YELLOW,
-    PD_GUIDE_AMETHYST,
-    PD_GUIDE_SOULGOLD,
-    PD_GUIDE_QUETZAL_V084,
-    PD_GUIDE_QUETZAL,
-    PD_GUIDE_TMT2,
-    PD_GUIDE_SEAGLASS,
-    PD_GUIDE_LAZARUS,
-    PD_GUIDE_HEART_AND_SOUL,
-    PD_GUIDE_GLAZED,
-    PD_GUIDE_MARIOMON,
-    PD_GUIDE_DREAMSTONE,
-    PD_GUIDE_WISHES,
-    PD_GUIDE_TEAM_ROCKET,
-    PD_GUIDE_ELITE_REDUX,
-    PD_GUIDE_ULTRA_VIOLET,
-    PD_GUIDE_AMETHYST_V141,
-    PD_GUIDE_RECHARGED_YELLOW_V180,
-    PD_GUIDE_RECHARGED_YELLOW_V190,
-    PD_GUIDE_RECHARGED_YELLOW_V194,
-    PD_GUIDE_EMERALD_KAIZO,
-    PD_GUIDE_GB_CRYSTAL,
-    PD_GUIDE_LETS_GO,
-    PD_GUIDE_MONOMYTH,
-    PD_GUIDE_GB_POLISHED,
-    PD_GUIDE_GB_YELLOW_LEGACY,
-    PD_GUIDE_GB_CRYSTAL_LEGACY,
-};
-
 // struct Pokemon's party fields (the app's PartyMonLayout): the party-only fields after the
 // BoxPokemon, and where a plaintext (unencrypted) box keeps its substructs. A config without
 // one (partyLayout NULL) is retail's: pd_party_layout_vanilla.
@@ -462,7 +408,6 @@ struct pd_game {
     char code[5];       // ROM header game code, e.g. "BPRE"
     int revision;       // ROM header 0xBC
     const char* title;  // "Pokémon FireRed"
-    enum pd_guide_id guide;
     const struct pd_config* cfg; // NULL = detected but not supported
     const char* unsupported;     // why, when cfg is NULL
     // The ROM's bytes (0x08000000 on the bus), for the tabs that read its

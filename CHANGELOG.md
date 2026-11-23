@@ -4,6 +4,15 @@
 ## Unreleased
 
 
+## v1.3.0-beta.7 — Switch-First Cleanup, Standalone Companion & GBA Fast Forward
+
+- **Switch-first codebase & removal of non-Switch platforms**: deleted legacy Android, Windows, AppImage and virtual touch overlay headers (`android.h`, `touch.h`, `touchlayout.h`), leaving a lean codebase focused on Nintendo Switch and POSIX CI verification.
+- **Removed Walkthrough Guide, Portable PC & Flash**: deleted the Walkthrough Guide (`GUIDE` tab and 18k+ lines of static guide tables), remote Portable PC box access and field Flash helpers across DS, GBA and GB/GBC.
+- **Standalone Field HUD, Quick Menu (`L3`) & ROM-hack map gating**: streamlined the Field HUD into a clean minimalist bar (`Party + Minimap + Owned Item`), limited `L3` Quick Menu to owned in-bag items (`Repel`, `Bike`), `3D Flight / Land`, `Field HUD` and `Companion`, and automatically hid the Map tab and empty minimap box on ROM hacks without valid region map art or player coordinates.
+- **Complete 7-language translations & DS Battle Strip badges**: synced the launcher language directly into GBA and PokeDaisy (`EN, FR, DE, IT, ES, BR, PT`), translated all Quick Menu actions and field toasts, and localized DS Battle Strip type badges (`AGUA`, `FUEGO`, `PLANTA`, `ELÉCTR`, `HADA`, etc.) with complete glyph coverage.
+- **GBA Fast Forward performance on Nintendo Switch**: eliminated the `run * speed` catch-up spiral, added a `13.5 ms` frame budget per presented frame, and skipped audio resampling (when `ff_mute=1`), `frame240` copies, rewind snapshots and PokeDaisy RAM reads on hidden fast-forward frames.
+
+
 ## v1.3.0-beta.6 — Modern Pause Drawer, Launcher Redesign & Original Branding
 
 - **Floating Pause Menu (`+`) side drawer**: redesigned the in-game pause menu on standard screens as a translucent left-hand drawer that keeps the live game visible beside a smooth horizontal fade, complete with vector icons per option, real ON/OFF switches, a tactile volume slider bar, 60 fps animated selection highlights, and an integrated footer for notes and button hints.

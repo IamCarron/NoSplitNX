@@ -35,15 +35,6 @@ bool field_items_supported(const struct pd_config *cfg, const uint8_t *rom, size
   return true;
 }
 
-bool pc_supported(const struct pd_config *cfg, const uint8_t *rom, size_t len) {
-  if (!field_items_supported(cfg, rom, len) || !cfg->pcSetupScript)
-    return false;
-  const uint8_t *entry = rom_at(rom, len, cfg->pcSpecials + 4u * (uint32_t)cfg->pcSpecial, 4);
-  uint32_t fn = entry ? (uint32_t)entry[0] | entry[1] << 8 | entry[2] << 16 | (uint32_t)entry[3] << 24 : 0;
-  return fn == cfg->pcFn && crc_is(rom, len, cfg->pcSetupScript, cfg->pcCrcs[0]) &&
-         crc_is(rom, len, cfg->pcFn, cfg->pcCrcs[1]);
-}
-
 bool bike_supported(const struct pd_config *cfg) {
   return cfg && cfg->fieldVarGet && (cfg->moneyOff == 0x290 || cfg->moneyOff == 0x490);
 }
@@ -133,23 +124,6 @@ enum item_result repel_use(struct mCore *core, const struct pd_config *cfg, cons
     return ITEM_FAILED;
   *steps = *p;
   return ITEM_USED;
-}
-
-enum item_result pc_open(struct mCore *core, const struct pd_config *cfg, const uint8_t *rom, size_t len, bool busy,
-                         bool battle) {
-  if (!pc_supported(cfg, rom, len))
-    return ITEM_FAILED;
-  enum item_result r = gate(core, cfg, rom, len, busy, battle);
-  if (r != ITEM_USED)
-    return r;
-  // lockall; special N; waitstate; releaseall; end (Gen 3's script opcodes, the same in both engines).
-  const uint8_t script[7] = {0x69, 0x25, (uint8_t)cfg->pcSpecial, (uint8_t)(cfg->pcSpecial >> 8), 0x27, 0x6B, 0x02};
-  for (int i = 0; i < 7; i++)
-    core->busWrite8(core, cfg->pcScript + (uint32_t)i, script[i]);
-  for (int i = 0; i < 7; i++)
-    if (core->busRead8(core, cfg->pcScript + (uint32_t)i) != script[i])
-      return ITEM_FAILED;
-  return call(core, cfg->pcSetupScript, cfg->pcScript, 0, NULL) ? ITEM_USED : ITEM_FAILED;
 }
 
 enum item_result bike_register(struct mCore *core, const struct pd_config *cfg, const uint8_t *rom, size_t len,

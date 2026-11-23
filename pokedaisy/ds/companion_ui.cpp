@@ -23,7 +23,7 @@ extern "C" {
 #include "pd_ui_internal.h" // the shared hit ids (HIT_OPTION)
 }
 namespace {
-constexpr int dsTabs=(1<<PD_TAB_PARTY)|(1<<PD_TAB_BAG)|(1<<PD_TAB_MAP)|(1<<PD_TAB_GUIDE)|(1<<PD_TAB_DEX);
+constexpr int dsTabs=(1<<PD_TAB_PARTY)|(1<<PD_TAB_BAG)|(1<<PD_TAB_MAP)|(1<<PD_TAB_DEX);
 }
 void DsCompanionUi::defaults(){
   pd_settings_defaults(&settings);settings.hud=false;
@@ -65,7 +65,6 @@ void DsCompanionUi::init(const std::string& directory,int legacyLayout,bool lega
   frame.shoulderTabs=true;
   frame.hideSettingsTab=true;
   frame.hudLayoutFixed=true; // hud_ds_draw has one layout
-  frame.guideController=true;
   frame.contentCtx=this;frame.content=[](void* ctx,pd_ui* u,pd_canvas* c){static_cast<DsCompanionUi*>(ctx)->draw_body(u,c);};
   (void)loaded;
 }
@@ -151,19 +150,7 @@ void DsCompanionUi::draw_body(pd_ui* u,pd_canvas* c){
       ds_dex_view(c,*snapshot,filter,dexRow,dexFilterFocus,icons,regional,label);
     }
   }
-  if(u->tab==PD_TAB_GUIDE){
-    if(guideMap!=snapshot->map){
-      guideMap=snapshot->map;
-      guideLoadedPage=-1;
-      if(u->guidePage==int(GuidePage::Here))pd_ui_guide_reset(u);
-    }
-    if(guideLoadedPage!=u->guidePage){
-      guideLoadedPage=u->guidePage;
-      guideRows=ds_guide_rows(*snapshot,static_cast<GuidePage>(u->guidePage),soulSilver);
-    }
-    ds_guide_view(u,c,*snapshot,guideRows,soulSilver);
-  }
-  if(u->tab==PD_TAB_MAP){
+  if(u->tab==PD_TAB_MAP && !art->background.empty()){
     mapView=ds_map_view(c,*snapshot,*art,mapX,mapY,mapAction,&hits);
   }
 }
@@ -174,6 +161,12 @@ void DsCompanionUi::update_battle(){
 }
 void DsCompanionUi::draw(pd_canvas* c,const DsCompanion& s,bool match,const DsMapArt& map,const std::vector<std::vector<uint32_t>>& monIcons){
   snapshot=&s;art=&map;icons=&monIcons;supported=match;hits.clear();
+  if(game!=DsGame::Unsupported){
+    unsigned tabs=dsTabs;
+    if(map.background.empty())tabs&=~(1u<<PD_TAB_MAP);
+    frame.availableTabs=tabs;
+    if(frame.tab==PD_TAB_MAP && map.background.empty())frame.tab=PD_TAB_PARTY;
+  }
   pd_look_apply(nullptr,&settings);
   battleSource={
     this,
@@ -239,7 +232,6 @@ bool DsCompanionUi::control(unsigned pressed){
   if(placeRow<0 && (frame.overlay==PD_OVERLAY_NONE || frame.overlay==PD_OVERLAY_MORE) &&
      (hit(RETRO_DEVICE_ID_JOYPAD_L) || hit(RETRO_DEVICE_ID_JOYPAD_R))){
     pd_ui_next_tab(&frame,hit(RETRO_DEVICE_ID_JOYPAD_R)?1:-1);
-    pd_ui_guide_reset(&frame);
     choice=0;
     scroll=dexEntry=0;placeRow=mapAction=dexFilterFocus=-1;bagTabKey=-1;summary=details=false;error.clear();return false;
   }
@@ -254,12 +246,6 @@ bool DsCompanionUi::control(unsigned pressed){
         summary=details=false;dexEntry=0;placeRow=mapAction=-1;
       }
     }
-    return false;
-  }
-  if(frame.overlay==PD_OVERLAY_GUIDE_NOTICE){
-    if(hit(RETRO_DEVICE_ID_JOYPAD_B))pd_ui_back(&frame);
-    else pd_ui_guide_control(&frame,dx,dy,hit(RETRO_DEVICE_ID_JOYPAD_A));
-    if(pd_ui_take_action(&frame)==PD_ACTION_SETTINGS_CHANGED)save();
     return false;
   }
   if(frame.tab==PD_TAB_BATTLE){
@@ -366,9 +352,6 @@ bool DsCompanionUi::control(unsigned pressed){
       }
     }
     if(hit(RETRO_DEVICE_ID_JOYPAD_B))return true;
-  }else if(frame.tab==PD_TAB_GUIDE){
-    if(hit(RETRO_DEVICE_ID_JOYPAD_B))return !pd_ui_back(&frame);
-    pd_ui_guide_control(&frame,dx,dy,hit(RETRO_DEVICE_ID_JOYPAD_A));
   }else if(frame.tab==PD_TAB_MAP){
     auto openPlaces=[&](){
       if(!snapshot)return;
@@ -504,7 +487,6 @@ bool DsCompanionUi::touch(int x,int y,bool down){
   if(!frameTap && id>=0 && tap_at(x,y)==id)tap_act(id);
   if(pd_ui_take_action(&frame)==PD_ACTION_SETTINGS_CHANGED)save();
   if(frame.tab!=tapTab){
-    pd_ui_guide_reset(&frame);
     choice=0;scroll=dexEntry=0;placeRow=mapAction=dexFilterFocus=-1;bagTabKey=-1;summary=details=false;error.clear();
   }
   return true;

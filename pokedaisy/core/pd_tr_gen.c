@@ -2,7 +2,7 @@
 // hand: change those and run `make -C 3ds tables`. The keys the 3DS / Linux code uses, in strcmp order (pd_tr.h).
 #include "pd_tr.h"
 
-const struct pd_tr_entry pd_tr_table[738] = {
+const struct pd_tr_entry pd_tr_table[753] = {
     { "  HACK", { "  HACK", NULL, NULL, NULL, NULL, NULL, NULL } },
     { "  NONE", { "  NONE", "  AUCUN", "  KEINS", "  NESSUNO", "  NINGUNO", "  NENHUM", "  NENHUM" } },
     { "  SHINY", { "  SHINY", "  CHROMATIQUE", "  SCHILLERND", "  CROMATICO", "  VARIOCOLOR", "  BRILHANTE", "  BRILHANTE" } },
@@ -194,6 +194,7 @@ const struct pd_tr_entry pd_tr_table[738] = {
     { "FLASH", { "FLASH", NULL, "BLITZ", NULL, "DESTELLO", NULL, NULL } },
     { "FLASH needs a new BADGE first.", { "FLASH needs a new BADGE first.", "FLASH demande d'abord un nouveau BADGE.", "BLITZ braucht erst einen neuen ORDEN.", "FLASH richiede prima una nuova MEDAGLIA.", "DESTELLO necesita antes una nueva MEDALLA.", "FLASH precisa antes de uma nova INSÍGNIA.", "FLASH precisa antes de uma nova INSÍGNIA." } },
     { "FLIGHT AREA", { "FLIGHT AREA", "ZONE DE VOL", "FLUGGEBIET", "AREA DI VOLO", "ZONA DE VUELO", "ÁREA DE VOO", "ÁREA DE VOO" } },
+    { "FLIGHT AREA EDGE", { "FLIGHT AREA EDGE", "LIMITE ZONE DE VOL", "FLUGGEBIET-RAND", "BORDO AREA VOLO", "BORDE ZONA DE VUELO", "LIMITE DA ÁREA DE VOO", "LIMITE DA ÁREA DE VOO" } },
     { "FLY", { "FLY", "VOL", "FLIEGEN", "VOLO", "VUELO", "VOAR", "VOAR" } },
     { "FLY ON", { "FLY ON", "MONTURE", "FLUGGERÄT", "MEZZO DI VOLO", "VEHÍCULO", "VEÍCULO", "VEÍCULO" } },
     { "FLY STYLE", { "FLY STYLE", "STYLE DE VOL", "FLUGSTIL", "STILE VOLO", "ESTILO DE VUELO", "ESTILO DE VOO", "ESTILO DE VOO" } },
@@ -261,6 +262,8 @@ const struct pd_tr_entry pd_tr_table[738] = {
     { "HP", { "HP", "PV", "KP", "PS", "PS", "PS", "PS" } },
     { "HUD", { "HUD", NULL, NULL, NULL, NULL, NULL, NULL } },
     { "HUD CURSOR BUTTON", { "HUD CURSOR BUTTON", "BOUTON CURSEUR HUD", "HUD-CURSOR-TASTE", "TASTO CURSORE HUD", "BOTÓN CURSOR HUD", "BOTÃO CURSOR HUD", "BOTÃO CURSOR HUD" } },
+    { "HUD OFF", { "HUD OFF", "HUD DÉSACTIVÉ", "HUD AUS", "HUD DISATTIVO", "HUD DESACTIVADO", "HUD DESATIVADO", "HUD DESATIVADO" } },
+    { "HUD ON", { "HUD ON", "HUD ACTIVÉ", "HUD AN", "HUD ATTIVO", "HUD ACTIVADO", "HUD ATIVADO", "HUD ATIVADO" } },
     { "How loud the game plays.", { "How loud the game plays.", "Le volume du jeu.", "Wie laut das Spiel ist.", "Il volume del gioco.", "El volumen del juego.", "O volume do jogo.", "O volume do jogo." } },
     { "How the game is drawn on the top screen: its own picture at a size, or EXPAND's map past its edges.", { "How the game is drawn on the top screen: its own picture at a size, or EXPAND's map past its edges.", "Comment le jeu s'affiche en haut : son image à une taille, ou la carte d'EXPAND au delà des bords.", "Wie das Spiel oben gezeigt wird: sein Bild in einer Größe oder die Karte von EXPAND über die Ränder hinaus.", "Come appare il gioco in alto: la sua immagine a una misura, o la mappa di EXPAND oltre i bordi.", "Cómo se ve el juego arriba: su imagen a un tamaño, o el mapa de EXPAND más allá de los bordes.", "Como o jogo aparece em cima: a imagem num tamanho, ou o mapa do EXPAND além das bordas.", "Como o jogo aparece em cima: a imagem num tamanho, ou o mapa do EXPAND além das margens." } },
     { "I UNDERSTAND", { "I UNDERSTAND", "COMPRIS", "VERSTANDEN", "HO CAPITO", "ENTENDIDO", "ENTENDI", "ENTENDI" } },
@@ -376,7 +379,9 @@ const struct pd_tr_entry pd_tr_table[738] = {
     { "NO", { "NO", "NON", "NEIN", NULL, NULL, "NÃO", "NÃO" } },
     { "NO BAG YET", { "NO BAG YET", "PAS ENCORE DE SAC", "NOCH KEIN BEUTEL", "ANCORA NESSUNA BORSA", "AÚN NO HAY MOCHILA", "AINDA SEM MOCHILA", "AINDA SEM MOCHILA" } },
     { "NO BATTLE", { "NO BATTLE", "PAS DE COMBAT", "KEIN KAMPF", "NESSUNA LOTTA", "SIN COMBATE", "SEM BATALHA", "SEM COMBATE" } },
+    { "NO BIKE IN BAG", { "NO BIKE IN BAG", "AUCUN VÉLO DANS LE SAC", "KEIN RAD IM BEUTEL", "NESSUNA BICI IN BORSA", "SIN BICI EN LA MOCHILA", "SEM BICICLETA NA MOCHILA", "SEM BICICLETA NA MOCHILA" } },
     { "NO BOXES YET", { "NO BOXES YET", "PAS ENCORE DE BOÎTES", "NOCH KEINE BOXEN", "ANCORA NESSUN BOX", "AÚN NO HAY CAJAS", "AINDA SEM CAIXAS", "AINDA SEM CAIXAS" } },
+    { "NO FLY DESTINATIONS YET", { "NO FLY DESTINATIONS YET", "AUCUNE DESTINATION DE VOL", "NOCH KEIN FLUGZIEL", "NESSUNA META DI VOLO", "SIN DESTINOS DE VUELO AÚN", "SEM DESTINOS DE VOO AINDA", "SEM DESTINOS DE VOO AINDA" } },
     { "NO FOE", { "NO FOE", "PAS D'ADVERSAIRE", "KEIN GEGNER", "NESSUN AVVERSARIO", "SIN RIVAL", "SEM OPONENTE", "SEM ADVERSÁRIO" } },
     { "NO FOE ON THE FIELD", { "NO FOE ON THE FIELD", "AUCUN ENNEMI SUR LE TERRAIN", "KEIN GEGNER IM KAMPF", "NESSUN NEMICO IN CAMPO", "NINGÚN ENEMIGO EN CAMPO", "NENHUM OPONENTE EM CAMPO", "NENHUM OPONENTE EM CAMPO" } },
     { "NO GUIDE", { "NO GUIDE", "PAS DE GUIDE", "KEIN GUIDE", "NESSUNA GUIDA", "SIN GUÍA", "SEM GUIA", "SEM GUIA" } },
@@ -385,11 +390,14 @@ const struct pd_tr_entry pd_tr_table[738] = {
     { "NO MATCHUP DATA", { "NO MATCHUP DATA", "PAS DE DONNÉES DE TYPES", "KEINE TYPDATEN", "NESSUN DATO SUI TIPI", "SIN DATOS DE TIPOS", "SEM DADOS DE TIPOS", "SEM DADOS DE TIPOS" } },
     { "NO POKéDEX YET", { "NO POKéDEX YET", "PAS ENCORE DE POKéDEX", "NOCH KEIN POKéDEX", "ANCORA NESSUN POKéDEX", "AÚN NO HAY POKéDEX", "AINDA SEM POKéDEX", "AINDA SEM POKéDEX" } },
     { "NO PP", { "NO PP", "SANS PP", "KEINE AP", "SENZA PP", "SIN PP", "SEM PP", "SEM PP" } },
+    { "NO REPEL IN BAG", { "NO REPEL IN BAG", "AUCUN REPOUSSE DANS LE SAC", "KEIN SCHUTZ IM BEUTEL", "NESSUN REPELLENTE IN BORSA", "SIN REPELENTE EN LA MOCHILA", "SEM REPELENTE NA MOCHILA", "SEM REPELENTE NA MOCHILA" } },
+    { "NO REPEL LEFT", { "NO REPEL LEFT", "PLUS DE REPOUSSE", "KEIN SCHUTZ MEHR", "REPELLENTI ESAURITI", "NO QUEDA REPELENTE", "SEM REPELENTE RESTANTE", "SEM REPELENTE RESTANTE" } },
     { "NO SAVE", { "NO SAVE", "PAS DE SAUVEGARDE", "KEIN SPIELSTAND", "NESSUN SALVATAGGIO", "SIN PARTIDA", "SEM SAVE", "SEM JOGO GUARDADO" } },
     { "NO TRAINER CARD", { "NO TRAINER CARD", "PAS DE CARTE DRESSEUR", "KEIN TRAINERPASS", "NESSUNA SCHEDA ALLENATORE", "SIN FICHA DE ENTRENADOR", "SEM CARTÃO DE TREINADOR", "SEM CARTÃO DE TREINADOR" } },
     { "NO USABLE DAMAGING MOVES IN YOUR PARTY", { "NO USABLE DAMAGING MOVES IN YOUR PARTY", "AUCUNE CAPACITÉ OFFENSIVE UTILISABLE DANS TON ÉQUIPE", "KEINE NUTZBARE SCHADENSATTACKE IM TEAM", "NESSUNA MOSSA OFFENSIVA USABILE IN SQUADRA", "NINGÚN MOVIMIENTO OFENSIVO USABLE EN TU EQUIPO", "NENHUM GOLPE DE DANO UTILIZÁVEL NA EQUIPE", "NENHUM GOLPE DE DANO UTILIZÁVEL NA EQUIPE" } },
     { "NONE", { "NONE", "AUCUN", "KEINE", "NESSUNO", "NINGUNO", "NENHUM", "NENHUM" } },
     { "NORMAL", { "NORMAL", NULL, NULL, "NORMALE", NULL, NULL, NULL } },
+    { "NOT AVAILABLE HERE", { "NOT AVAILABLE HERE", "INDISPONIBLE ICI", "HIER NICHT VERFÜGBAR", "NON DISPONIBILE QUI", "NO DISPONIBLE AQUÍ", "INDISPONÍVEL AQUI", "INDISPONÍVEL AQUI" } },
     { "NOT SEEN", { "NOT SEEN", "NON VUS", "UNGESEHEN", "NON VISTI", "NO VISTOS", "NÃO VISTOS", "NÃO VISTOS" } },
     { "NOT SUPPORTED", { "NOT SUPPORTED", "NON PRIS EN CHARGE", "NICHT UNTERSTÜTZT", "NON SUPPORTATO", "NO COMPATIBLE", "NÃO SUPORTADO", "NÃO SUPORTADO" } },
     { "NOT THAT ONE", { "NOT THAT ONE", "PAS CELUI-LÀ", "NICHT DIESES", "NON QUELLO", "ESE NO", "ESSE NÃO", "ESSE NÃO" } },
@@ -496,6 +504,9 @@ const struct pd_tr_entry pd_tr_table[738] = {
     { "RELEASE", { "RELEASE", "RELÂCHER", "FREILASSEN", "LIBERA", "LIBERAR", "SOLTAR", "LIBERTAR" } },
     { "RENAME THE BOX", { "RENAME THE BOX", "RENOMMER LA BOÎTE", "BOX UMBENENNEN", "RINOMINA IL BOX", "RENOMBRAR LA CAJA", "RENOMEAR A CAIXA", "RENOMEAR A CAIXA" } },
     { "REPEL", { "REPEL", "REPOUSSE", "SCHUTZ", "REPELLENTE", "REPELENTE", "REPELENTE", "REPELENTE" } },
+    { "REPEL ACTIVE", { "REPEL ACTIVE", "REPOUSSE ACTIF", "SCHUTZ AKTIV", "REPELLENTE ATTIVO", "REPELENTE ACTIVO", "REPELENTE ATIVO", "REPELENTE ATIVO" } },
+    { "REPEL ALREADY ACTIVE", { "REPEL ALREADY ACTIVE", "REPOUSSE DÉJÀ ACTIF", "SCHUTZ BEREITS AKTIV", "REPELLENTE GIÀ ATTIVO", "REPELENTE YA ACTIVO", "REPELENTE JÁ ATIVO", "REPELENTE JÁ ATIVO" } },
+    { "REPEL NOT AVAILABLE HERE", { "REPEL NOT AVAILABLE HERE", "REPOUSSE INDISPONIBLE ICI", "SCHUTZ HIER NICHT VERFÜGBAR", "REPELLENTE NON DISPONIBILE QUI", "REPELENTE NO DISPONIBLE AQUÍ", "REPELENTE INDISPONÍVEL AQUI", "REPELENTE INDISPONÍVEL AQUI" } },
     { "REPEL STEPS", { "REPEL STEPS", "PAS DE REPOUSSE", "SCHUTZ-SCHRITTE", "PASSI REPELLENTE", "PASOS DE REPELENTE", "PASSOS DE REPELENTE", "PASSOS DE REPELENTE" } },
     { "RESERVE", { "RESERVE", "RÉSERVE", NULL, "RISERVA", "RESERVA", "RESERVA", "RESERVA" } },
     { "RESET", { "RESET", "RÉINIT.", "ZURÜCKSETZEN", "RIPRISTINA", "RESTABLECER", "REDEFINIR", "REPOR" } },
@@ -567,6 +578,7 @@ const struct pd_tr_entry pd_tr_table[738] = {
     { "STATES", { "STATES", "ÉTATS", NULL, "STATI", "ESTADOS", "ESTADOS", "ESTADOS" } },
     { "STATS", { "STATS", NULL, "WERTE", NULL, NULL, NULL, NULL } },
     { "STATUS", { "STATUS", "STATUT", NULL, "STATO", "ESTADO", "ESTADO", "ESTADO" } },
+    { "STEPS", { "STEPS", "PAS", "SCHRITTE", "PASSI", "PASOS", "PASSOS", "PASSOS" } },
     { "STRETCH", { "STRETCH", "ÉTIRÉ", "GESTRECKT", "ESTESO", "ESTIRADO", "ESTICAR", "ESTICAR" } },
     { "STUCK?", { "STUCK?", "BLOQUÉ ?", "HILFE?", "BLOCCATO?", "¿ATASCADO?", "TRAVADO?", "BLOQUEADO?" } },
     { "SUGGESTIONS", { "SUGGESTIONS", "CONSEILS", "TIPPS", "CONSIGLI", "CONSEJOS", "SUGESTÕES", "SUGESTÕES" } },
@@ -693,6 +705,8 @@ const struct pd_tr_entry pd_tr_table[738] = {
     { "WHITE GLASS", { "WHITE GLASS", "VERRE BLANC", "WEISSGLAS", "VETRO BIANCO", "CRISTAL BLANCO", "VIDRO BRANCO", "VIDRO BRANCO" } },
     { "WILD", { "WILD", "SAUVAGES", "WILDE", "SELVATICI", "SALVAJES", "SELVAGENS", "SELVAGENS" } },
     { "WILD ENCOUNTERS", { "WILD ENCOUNTERS", "POKéMON SAUVAGES", "WILDE POKéMON", "POKéMON SELVATICI", "POKéMON SALVAJES", "POKéMON SELVAGENS", "POKéMON SELVAGENS" } },
+    { "WILD ENCOUNTERS OFF", { "WILD ENCOUNTERS OFF", "POKéMON SAUVAGES : NON", "WILDE POKéMON: AUS", "POKéMON SELVATICI: NO", "POKéMON SALVAJES: NO", "POKéMON SELVAGENS: NÃO", "POKéMON SELVAGENS: NÃO" } },
+    { "WILD ENCOUNTERS ON", { "WILD ENCOUNTERS ON", "POKéMON SAUVAGES : OUI", "WILDE POKéMON: AN", "POKéMON SELVATICI: SÌ", "POKéMON SALVAJES: SÍ", "POKéMON SELVAGENS: SIM", "POKéMON SELVAGENS: SIM" } },
     { "WILD POKéMON", { "WILD POKéMON", "POKéMON SAUVAGES", "WILDE POKéMON", "POKéMON SELVATICI", "POKéMON SALVAJES", "POKéMON SELVAGENS", "POKéMON SELVAGENS" } },
     { "WINDOW", { "WINDOW", "FENÊTRE", "FENSTER", "FINESTRA", "VENTANA", "JANELA", "JANELA" } },
     { "WITH %s - %s", { "WITH %s - %s", "AVEC %s - %s", "MIT %s - %s", "CON %s - %s", "CON %s - %s", "COM %s - %s", "COM %s - %s" } },
@@ -707,6 +721,7 @@ const struct pd_tr_entry pd_tr_table[738] = {
     { "You can turn it off again in SETTINGS, under GAMEPLAY.", { "You can turn it off again in SETTINGS, under GAMEPLAY.", "Vous pourrez le désactiver dans OPTIONS, sous GAMEPLAY.", "Ausschalten kannst du es unter OPTIONEN, GAMEPLAY.", "Puoi disattivarlo in OPZIONI, sotto GAMEPLAY.", "Puedes desactivarlo en AJUSTES, en JUGABILIDAD.", "Dá para desligar em CONFIGURAÇÕES, em JOGABILIDADE.", "Podes desligá-lo nas DEFINIÇÕES, em JOGABILIDADE." } },
     { "You can't FLY from here.", { "You can't FLY from here.", "Impossible d'utiliser VOL ici.", "Hier kann FLIEGEN nicht eingesetzt werden.", "Da qui non si può usare VOLO.", "Desde aquí no se puede usar VUELO.", "Não dá para usar VOAR daqui.", "Não é possível usar VOAR daqui." } },
     { "You can't do that during a battle.", { "You can't do that during a battle.", "Impossible pendant un combat.", "Im Kampf geht das nicht.", "Non si può durante una lotta.", "No se puede durante un combate.", "Não é possível durante uma batalha.", "Não é possível durante uma batalha." } },
+    { "You can't do that right now.", { "You can't do that right now.", "Impossible pour le moment.", "Das geht gerade nicht.", "Non puoi farlo adesso.", "No puedes hacerlo ahora mismo.", "Não é possível fazer isso agora.", "Não é possível fazer isso agora." } },
     { "You haven't been there yet.", { "You haven't been there yet.", "Vous n'êtes pas encore allé là-bas.", "Dort warst du noch nicht.", "Non ci sei ancora stato.", "Todavía no has estado allí.", "Você ainda não esteve lá.", "Ainda não estiveste lá." } },
     { "Your %s Lv%d (%s) evolves into it on a trip to %s and back: TRADE SAVES, pick it alone, then Y.", { "Your %s Lv%d (%s) evolves into it on a trip to %s and back: TRADE SAVES, pick it alone, then Y.", "Votre %s N.%d (%s) évolue en lui par un aller retour vers %s : ÉCHANGER SAUVEGARDES, choisissez-le seul, puis Y.", "Dein %s Lv%d (%s) entwickelt sich dazu mit einem Tausch nach %s und zurück: SPIELSTÄNDE TAUSCHEN, allein wählen, dann Y.", "Il tuo %s Lv%d (%s) si evolve in lui con andata e ritorno su %s: SCAMBIA SALVATAGGI, sceglilo da solo, poi Y.", "Tu %s Nv%d (%s) evoluciona a él con ida y vuelta a %s: CAMBIAR PARTIDAS, elígelo solo y luego Y.", "Seu %s Nv%d (%s) evolui para ele com ida e volta a %s: TROCAR SAVES, escolha só ele, depois Y.", "O teu %s Nv%d (%s) evolui para ele com ida e volta a %s: TROCAR JOGOS, escolhe só ele, depois Y." } },
     { "Your changes aren't saved.", { "Your changes aren't saved.", "Vos changements ne sont pas sauvés.", "Deine Änderungen sind nicht gesichert.", "Le modifiche non sono salvate.", "Tus cambios no se han guardado.", "Suas mudanças não foram salvas.", "As tuas alterações não foram guardadas." } },
@@ -742,4 +757,4 @@ const struct pd_tr_entry pd_tr_table[738] = {
     { "the game.", { "the game.", "dans le jeu.", "im Spiel ab.", "nel gioco.", "en el juego.", "no jogo.", "no jogo." } },
     { "x%d  (a stack holds %d)", { "x%d  (a stack holds %d)", "x%d  (une pile en contient %d)", "x%d  (ein Stapel fasst %d)", "x%d  (una pila ne tiene %d)", "x%d  (un montón lleva %d)", "x%d  (uma pilha tem %d)", "x%d  (uma pilha tem %d)" } },
 };
-const int pd_tr_table_count = 738;
+const int pd_tr_table_count = 753;

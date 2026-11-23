@@ -67,12 +67,16 @@ void WriteRam8(uint32_t addr, uint8_t v)
 
 int ToPdLang(const std::string& code)
 {
-    if (code == "es") return PD_LANG_ES;
-    if (code == "fr") return PD_LANG_FR;
-    if (code == "de") return PD_LANG_DE;
-    if (code == "it") return PD_LANG_IT;
-    if (code == "pt") return PD_LANG_PT;
-    if (code == "en") return PD_LANG_EN;
+    std::string lo;
+    lo.reserve(code.size());
+    for (unsigned char c : code) lo.push_back((c >= 'A' && c <= 'Z') ? (char)(c + ('a' - 'A')) : (char)c);
+    if (lo == "es") return PD_LANG_ES;
+    if (lo == "fr") return PD_LANG_FR;
+    if (lo == "de") return PD_LANG_DE;
+    if (lo == "it") return PD_LANG_IT;
+    if (lo == "pt-br" || lo == "br") return PD_LANG_BR;
+    if (lo == "pt") return PD_LANG_PT;
+    if (lo == "en") return PD_LANG_EN;
     return PD_LANG_AUTO;
 }
 
@@ -158,7 +162,6 @@ struct Bridge::Impl
 
     int tickCounter = 0;
     int repelFull = 0;
-    int hudWild = -1;
     uint32_t hudHash = 0;
     hud_hits hudHits{};
 
@@ -237,7 +240,6 @@ struct Bridge::Impl
         if (next.valid || game == DsGame::Platinum)
         {
             snapshot = std::move(next);
-            shell.guideLoadedPage = -1;
         }
         if (assetsLoaded) ds_map_update(mapArt, snapshot);
         if (inBattle && fieldGame)
@@ -258,28 +260,6 @@ struct Bridge::Impl
             shell.mapX = snapshot.mapX;
             shell.mapY = snapshot.mapY;
         }
-        // Count uncaught wild species on the current map for the HUD badge.
-        hudWild = -1;
-        if (snapshot.valid && snapshot.dexValid)
-        {
-            const DsGuideHere here = ds_guide_here(snapshot, soulSilver);
-            if (here.entries && here.count > 0)
-            {
-                std::vector<int> seen;
-                int uncaught = 0;
-                for (int i = 0; i < here.count; i++)
-                {
-                    const int sp = here.entries[i].species;
-                    if (sp <= 0 || std::find(seen.begin(), seen.end(), sp) != seen.end()) continue;
-                    seen.push_back(sp);
-                    const size_t byteIdx = (size_t)(sp - 1) / 8;
-                    const uint8_t bit = (uint8_t)(1u << ((sp - 1) & 7));
-                    const bool caught = byteIdx < snapshot.dexCaught.size() && (snapshot.dexCaught[byteIdx] & bit);
-                    if (!caught) uncaught++;
-                }
-                hudWild = uncaught;
-            }
-        }
     }
 
     int BuildQuickItems(struct quick_item out[QUICK_COUNT], const HostActions& actions) const
@@ -292,11 +272,6 @@ struct Bridge::Impl
             return out[n++];
         };
         add(QUICK_REPEL);
-        if (fieldGame)
-        {
-            auto& it = add(QUICK_WILD);
-            it.off = wildOff;
-        }
         {
             auto& it = add(QUICK_HUD);
             it.lit = shell.settings.hud;
@@ -307,7 +282,7 @@ struct Bridge::Impl
 
     void RunQuickAction(const struct quick_item& item, uint8_t* mainRam, size_t mainRamSize, const HostActions& actions)
     {
-        auto toast = [&](const char* s) { if (s && *s && actions.toast) actions.toast(s); };
+        auto toast = [&](const char* s) { if (s && *s && actions.toast) actions.toast(pd_tr(s)); };
         switch (item.action)
         {
         case QUICK_REPEL:
@@ -337,11 +312,6 @@ struct Bridge::Impl
             else { repelSel = 0; repelList = true; }
             break;
         }
-        case QUICK_WILD:
-            wildOff = !wildOff;
-            toast(wildOff ? "WILD ENCOUNTERS OFF" : "WILD ENCOUNTERS ON");
-            quickOpen = false;
-            break;
         case QUICK_HUD:
             shell.settings.hud = !shell.settings.hud;
             hudHash = 0;
@@ -382,10 +352,10 @@ struct Bridge::Impl
         g_ram = nullptr;
         g_ramSize = 0;
         if (!actions.toast) return;
-        if (r == DsRepelResult::Used) actions.toast("REPEL ACTIVE");
-        else if (r == DsRepelResult::StillActive) actions.toast("REPEL ALREADY ACTIVE");
-        else if (r == DsRepelResult::NoneLeft) actions.toast("NO REPEL LEFT");
-        else actions.toast("REPEL NOT AVAILABLE HERE");
+        if (r == DsRepelResult::Used) actions.toast(pd_tr("REPEL ACTIVE"));
+        else if (r == DsRepelResult::StillActive) actions.toast(pd_tr("REPEL ALREADY ACTIVE"));
+        else if (r == DsRepelResult::NoneLeft) actions.toast(pd_tr("NO REPEL LEFT"));
+        else actions.toast(pd_tr("REPEL NOT AVAILABLE HERE"));
     }
 
     uint32_t ComputeHudHash() const
@@ -397,7 +367,6 @@ struct Bridge::Impl
         mix((uint32_t)snapshot.mapX);
         mix((uint32_t)snapshot.mapY);
         mix((uint32_t)snapshot.repelSteps);
-        mix((uint32_t)hudWild);
         mix((uint32_t)shell.settings.hudLook);
         mix((uint32_t)shell.settings.hudLayout);
         mix((uint32_t)shell.settings.hudHidden);
@@ -586,7 +555,7 @@ void Bridge::SyncLanguage(const std::string& langCode)
     const int lang = ToPdLang(langCode);
     if (lang != PD_LANG_AUTO) pd_tr_set_system(lang);
     pd_tr_apply(lang, impl->headerLang);
-    impl->shell.settings.language = lang;
+    if (lang != PD_LANG_AUTO) impl->shell.settings.language = lang;
 }
 
 bool Bridge::Supported() const { return impl && impl->loaded && impl->supported; }
@@ -998,7 +967,6 @@ bool Bridge::HandleTouch(int sx, int sy, int ow, int oh, bool down, uint8_t* mai
                 impl->EnsureCartAssets();
                 impl->companionOpen = true;
                 if (r.id == HUD_BAG) impl->shell.frame.tab = PD_TAB_BAG;
-                else if (r.id == HUD_WILD) impl->shell.frame.tab = PD_TAB_GUIDE;
                 else if (r.id == HUD_MAP || r.id == HUD_MAP_BUTTON) impl->shell.frame.tab = PD_TAB_MAP;
                 else if (r.id >= HUD_SLOT && r.id < HUD_SLOT + 6) impl->shell.frame.tab = PD_TAB_PARTY;
                 return true;
@@ -1053,7 +1021,8 @@ void Bridge::Draw(SDL_Renderer* ren, int ow, int oh, bool onOverworld, const Hos
             if (hs.repel > 0) impl->repelFull = std::max(impl->repelFull, hud_repel_full(hs.repel));
             else impl->repelFull = 0;
             hs.repelFull = impl->repelFull;
-            hs.wild = impl->hudWild;
+            hs.noButtons = true;
+            hs.wild = -1;
             hs.focus = -1;
             hs.mini = impl->shell.settings.hudSize != PD_HUD_LARGE;
             impl->hudHits.n = 0;

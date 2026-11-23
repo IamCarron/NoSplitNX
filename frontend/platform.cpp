@@ -12,9 +12,6 @@
 #include "SPI_Firmware.h"
 #include "SsrThreads.h"
 #include "host.h"
-#ifdef __ANDROID__
-#include <dlfcn.h>
-#endif
 
 namespace Host { std::string FirmwarePath; }
 
@@ -228,17 +225,8 @@ void Addon_RumbleStart(u32, void*) {}
 void Addon_RumbleStop(void*) {}
 float Addon_MotionQuery(MotionQueryType, void*) { return 0.0f; }
 
-#ifdef __ANDROID__
-// The JIT's fast memory needs ASharedMemory_create from libandroid.so: without it melonDS
-// falls back to opening /dev/ashmem, which apps targeting Android 10 or later may not do (the
-// app was ended there).
-DynamicLibrary* DynamicLibrary_Load(const char* name) { return (DynamicLibrary*)dlopen(name, RTLD_NOW | RTLD_LOCAL); }
-void DynamicLibrary_Unload(DynamicLibrary* lib) { if (lib) dlclose(lib); }
-void* DynamicLibrary_LoadFunction(DynamicLibrary* lib, const char* name) { return lib ? dlsym(lib, name) : nullptr; }
-#else
 DynamicLibrary* DynamicLibrary_Load(const char*) { return nullptr; }
 void DynamicLibrary_Unload(DynamicLibrary*) {}
 void* DynamicLibrary_LoadFunction(DynamicLibrary*, const char*) { return nullptr; }
-#endif
 
 }
