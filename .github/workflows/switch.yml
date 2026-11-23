@@ -10,17 +10,6 @@ on:
     branches: [ main ]
     tags: [ 'v*', 'beta*' ]
   workflow_dispatch:
-    inputs:
-      target:
-        description: 'Package to build'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-          - 'all'
-          - 'bw'
-          - 'platinum'
-          - 'everything'
 
 permissions:
   contents: write
@@ -38,46 +27,16 @@ jobs:
           python-version: '3.12'
 
       - name: Build all-in-one NoSplitNX (nosplitnx.nro)
-        if: github.event_name == 'push' || github.event.inputs.target == 'all' || github.event.inputs.target == 'everything'
         run: |
           bash tools/switch/build_game.sh all
 
-      - name: Build standalone Black & White / Black 2 & White 2
-        if: github.event.inputs.target == 'bw' || github.event.inputs.target == 'everything'
-        run: |
-          bash tools/switch/build_game.sh bw
-
-      - name: Build standalone Platinum
-        if: github.event.inputs.target == 'platinum' || github.event.inputs.target == 'everything'
-        run: |
-          bash tools/switch/build_game.sh platinum
-
       - name: Upload NoSplitNX package
-        if: github.event_name == 'push' || github.event.inputs.target == 'all' || github.event.inputs.target == 'everything'
         uses: actions/upload-artifact@v4
         with:
           name: nosplitnx-switch
           path: |
             build-sd/nosplitnx-switch.zip
             build-sd/SHA256SUMS.txt
-          if-no-files-found: warn
-
-      - name: Upload standalone Black & White 1 & 2 NROs
-        if: github.event.inputs.target == 'bw' || github.event.inputs.target == 'everything'
-        uses: actions/upload-artifact@v4
-        with:
-          name: pokemon-bw-standalone-switch
-          path: |
-            build-sd/pokemon-black2-white2-wide-switch.zip
-            build-sd/pokemon-black-white-wide-switch.zip
-          if-no-files-found: warn
-
-      - name: Upload standalone Platinum NRO
-        if: github.event.inputs.target == 'platinum' || github.event.inputs.target == 'everything'
-        uses: actions/upload-artifact@v4
-        with:
-          name: pokemon-platinum-standalone-switch
-          path: build-sd/pokemon-platinum-wide-switch.zip
           if-no-files-found: warn
 
       - name: Prepare Beta Pre-release Package

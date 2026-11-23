@@ -204,7 +204,7 @@ public:
         quickOpen = false;
         flyList = false;
         repelList = false;
-        flyAsk = flyStage = flashAsk = scenicAsk = 0;
+        flyAsk = flyStage = scenicAsk = 0;
         job = JOB_NONE;
         snapTick = 0;
         hudDrawnKey = 0;
@@ -323,7 +323,7 @@ public:
         }
 #ifdef GBAW_POKEDAISY
         companionOpen = quickOpen = flyList = repelList = false;
-        flyAsk = flyStage = flashAsk = scenicAsk = 0;
+        flyAsk = flyStage = scenicAsk = 0;
         job = JOB_NONE;
         hudDrawnKey = 0;
         if (active && core)

@@ -3408,7 +3408,7 @@ struct App
                 return;
             }
         // (The list with no games, or no folder yet: a tap anywhere chooses the folder.)
-        if (screen == LIST && (games.empty() || needFolder)) in.accept = true;
+        if (screen == LIST && games.empty()) in.accept = true;
     }
 
     // Test scripts push their key presses as events, so they go the same way as real ones.
