@@ -80,10 +80,6 @@ extern "C" {
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #endif
-// A phone: on-screen controls, always full screen. Android's folder picker stays __ANDROID__.
-#if defined(__ANDROID__) || (defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
-#define GBAW_PHONE 1
-#endif
 
 using namespace gbaw;
 
@@ -148,7 +144,7 @@ const std::vector<Setting>& SettingsList()
           "auto",
           "AUTO: AS WIDE AS YOUR SCREEN. 3:2 AND 4:3: THE GBA'S OWN SHAPE, WITH BLACK AT THE SIDES. THE WORLD AND "
           "BATTLES FILL THE WIDTH; MENUS AND THE BAG STAY IN THE MIDDLE." },
-#if !defined(__SWITCH__) && !defined(GBAW_PHONE)
+#ifndef __SWITCH__
         { "fullscreen", "BORDERLESS FULLSCREEN", onOff, "1",
           "ON: FILLS YOUR SCREEN AS A BORDERLESS WINDOW AT ITS OWN RESOLUTION. F11 SWITCHES BETWEEN IT AND A WINDOW." },
 #endif
@@ -219,9 +215,7 @@ const std::vector<Setting>& SettingsList()
           "RESUME THIS ROM'S AUTOMATIC STATE ON THE NEXT START, KEEPING ITS NORMAL SAVE. TURN OFF TO START NORMALLY." },
 #endif
         { "ff_speed", "FAST FORWARD SPEED", { { "2", "2X" }, { "3", "3X" }, { "4", "4X" }, { "8", "8X" } }, "3",
-#if defined(GBAW_PHONE)
-          "HOW FAST FAST FORWARD GOES (THE >> BUTTON ON THE SCREEN, OR HOLD A CONTROLLER'S RIGHT TRIGGER)." },
-#elif defined(__SWITCH__)
+#ifdef __SWITCH__
           "HOW FAST FAST FORWARD GOES (HOLD ZR)." },
 #else
           "HOW FAST FAST FORWARD GOES (HOLD LEFT SHIFT, OR A CONTROLLER'S RIGHT TRIGGER)." },
@@ -691,11 +685,7 @@ struct App
     bool pickingFolder = false;   // Android: the folder picker is open
     // Touch: the on-screen controls (shown while the last input was a touch), the buttons each
     // finger is on, and where the menus' rows were drawn (for taps), in canvas pixels.
-#if defined(GBAW_PHONE)
-    bool touchUi = true;
-#else
     bool touchUi = false;
-#endif
     Touch::Layout touchLayout;
     TouchLayout::Profile touchProfile;
     std::map<SDL_FingerID, uint32_t> fingers;
@@ -914,7 +904,7 @@ struct App
     bool OpenWindow(int w, int h, int fullscreen = -1)
     {
         Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
-#if defined(__SWITCH__) || defined(GBAW_PHONE)
+#ifdef __SWITCH__
         flags |= SDL_WINDOW_FULLSCREEN;
         (void)fullscreen;
 #else
@@ -927,7 +917,7 @@ struct App
         }
         win = SDL_CreateWindow(embedded ? "Pokemon Widescreen" : "Pokemon GBA Widescreen", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags);
         if (!win) return false;
-#if !defined(__SWITCH__) && !defined(GBAW_PHONE)
+#ifndef __SWITCH__
         if (SDL_Surface* icon = SDL_CreateRGBSurfaceWithFormat(0, 64, 64, 32, SDL_PIXELFORMAT_ARGB8888))
         {
             for (int y = 0; y < 64; y++)
@@ -958,7 +948,7 @@ struct App
 
     void ToggleFullscreen()
     {
-#if !defined(__SWITCH__) && !defined(GBAW_PHONE)
+#ifndef __SWITCH__
         const bool full = SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP;
         SDL_SetWindowFullscreen(win, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
         set.values["fullscreen"] = full ? "0" : "1";
@@ -1903,9 +1893,6 @@ struct App
 #endif
             if (pausePage == P_GAMEPLAY)
                 pause.items.push_back({ "REWIND", companion.rewindEnabled ? "ON" : "OFF" });
-#ifdef GBAW_PHONE
-            if (pausePage == P_CONTROLS) pause.items.push_back({ "TOUCH CONTROLS", "EDIT LAYOUT" });
-#endif
             pause.items.push_back({ "BACK", "" });
             return;
         }
@@ -1968,9 +1955,6 @@ struct App
 #endif
                 pause.items.push_back({ "CHEATS", cheats.OnCount() ? std::to_string(cheats.OnCount()) + " ON" : "" });
         }
-#endif
-#if defined(GBAW_PHONE) && !defined(GBAW_EMBEDDED)
-        pause.items.push_back({ "TOUCH CONTROLS", "" });
 #endif
 #ifdef GBAW_EMBEDDED
         if (raReady && !uiHost) pause.items.push_back({ "RETROACHIEVEMENTS", "" });
@@ -2164,16 +2148,6 @@ struct App
             }
             return;
         }
-#ifdef GBAW_PHONE
-        if (in.accept && pause.items[i].label == "TOUCH CONTROLS")
-        {
-            const bool saved = TouchLayout::Edit<Canvas>(ren, touchProfile, data + "/touch-layout-gba.cfg", Touch::Defaults);
-            fingers.clear(); touchHeld = touchTap = 0; touchTapFrames = 0;
-            std::fill(std::begin(key), std::end(key), false);
-            Toast(saved ? "TOUCH LAYOUT SAVED" : "TOUCH LAYOUT UNCHANGED");
-            return;
-        }
-#endif
         if (in.left || in.right || in.accept)
         {
             const std::string& item = pause.items[i].label;
@@ -2330,13 +2304,6 @@ struct App
         {
             LoadState();
             Resume();
-        }
-        else if (item == "TOUCH CONTROLS")
-        {
-            const bool saved = TouchLayout::Edit<Canvas>(ren, touchProfile, data + "/touch-layout-gba.cfg", Touch::Defaults);
-            fingers.clear(); touchHeld = touchTap = 0; touchTapFrames = 0;
-            std::fill(std::begin(key), std::end(key), false);
-            Toast(saved ? "TOUCH LAYOUT SAVED" : "TOUCH LAYOUT UNCHANGED");
         }
         else if (item == "SETTINGS")
         {
@@ -2865,11 +2832,7 @@ struct App
         SDL_GetRendererOutputSize(ren, &ow, &oh);
         if (core && screen == PLAY && !paused)
             companion.Draw(ren, ow, oh, CompanionActions());
-#if defined(GBAW_PHONE)
-        int lines = 300;
-#else
         int lines = 360;
-#endif
         if (testMode && getenv("GBAW_TEST_LINES")) lines = std::max(100, atoi(getenv("GBAW_TEST_LINES"))); // (a phone's, on a PC)
         const int k = std::max(1, std::min(oh / lines, ow / 600));
         ui.Resize(std::max(1, ow / k), std::max(1, oh / k));
@@ -3864,21 +3827,6 @@ bool InitSdl()
     mLogSetDefaultLogger(&gQuiet);
     // (Controllers keep working while another window has the focus, as in the DS project.)
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
-#if defined(GBAW_PHONE)
-    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
-    // Fingers are read one by one (the on-screen controls), not as a mouse; tilting the phone
-    // must not move the player.
-    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
-    SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
-#if defined(__ANDROID__)
-    // (Controllers come through Android's own input, as in the DS project: with SDL's HIDAPI
-    // drivers some pads go missing.)
-    SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
-    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "0");
-#elif defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
-    SDL_SetHint(SDL_HINT_IOS_HIDE_HOME_INDICATOR, "2");
-#endif
-#endif
 #ifdef _WIN32
     // The program's own icon (resource 1) for its window.
     SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");
@@ -3954,7 +3902,7 @@ bool Art(const std::string& name, const unsigned char*& jpeg, size_t& size)
 // list and the game.)
 static void LeaveSdl()
 {
-#if !defined(GBAW_PHONE) && !defined(__SWITCH__) && !defined(__ANDROID__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+#if !defined(__SWITCH__) && !defined(__ANDROID__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
     SDL_Quit();
 #endif
 }

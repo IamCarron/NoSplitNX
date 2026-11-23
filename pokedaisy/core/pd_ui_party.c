@@ -1666,11 +1666,9 @@ void ui_party_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g
         for (int i = 0; i < s->partyCount; i++) column[i] = &s->party[i];
         ui_mon_summary(ui, c, g, s, &s->party[ui->summarySlot], column, s->partyCount, ui->summarySlot, host && host->canTake,
                        ui->boxMoves ? pd_tr("DEPOSIT") : NULL);
-        if (*ui->boxMessage) ui_box_message(ui, c);
         return;
     }
     ui_party_grid(ui, c, g, s, -1, 0);
-    if (*ui->boxMessage) ui_box_message(ui, c);
 }
 
 void ui_item_grid(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s) {

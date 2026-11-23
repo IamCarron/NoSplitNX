@@ -13,7 +13,6 @@
 #include "pd_tr.h"
 #include "pd_gb_world.h"
 #include "pd_guide.h"
-#include "pd_randomized.h"
 #include "pd_tables.h"
 #include "pd_ui_internal.h"
 
@@ -126,9 +125,9 @@ static void static_entry(const struct pd_game* g, const struct pd_snapshot* s, c
     e->owned = pd_guide_has(g, s, src);
 }
 
-// Guide.kt's Randomized: whether a line marked so holds on this game (the app's shownPages).
 static bool shows(const struct pd_game* g, uint8_t randomized) {
-    return randomized == 0 || (randomized == 2) == (g->randomized != NULL);
+    (void) g;
+    return randomized == 0 || randomized == 1;
 }
 
 static void build_static(const struct pd_game* g, const struct pd_snapshot* s, const struct pd_guide_page* p) {
@@ -275,9 +274,7 @@ static void build_here(const struct pd_game* g, const struct pd_snapshot* s, con
         add_section(people ? "PEOPLE" : "ITEMS", people ? "Some want something done first." : NULL);
         for (int pass = 0; pass < 2; pass++) {
             for (int i = 0; i < n; i++) {
-                struct pd_area_thing view;
-                const struct pd_area_thing* t = pd_randomized_area(g, &things[i], &view); // as a randomized ROM has it
-                if (!t) continue;
+                const struct pd_area_thing* t = &things[i];
                 bool isItem = t->kind == PD_AREA_ITEM || t->kind == PD_AREA_HIDDEN;
                 if (!pd_area_here(g, s, t) || isItem == people) continue;
                 if (pd_area_done(g, s, t) != (pass == 1)) continue;
@@ -307,9 +304,7 @@ static void build_where(const struct pd_game* g, const struct pd_snapshot* s) {
         add_section(HEADINGS[sec], NULL);
         int first = entryCount;
         for (int i = 0; i < n; i++) {
-            struct pd_area_thing view;
-            const struct pd_area_thing* t = pd_randomized_area(g, &things[i], &view);
-            if (!t) continue;
+            const struct pd_area_thing* t = &things[i];
             bool gift = t->kind == PD_AREA_GIFT || t->kind == PD_AREA_KEY, mon = t->kind == PD_AREA_MON || t->kind == PD_AREA_EGG;
             char name[48], sp[40];
             if (mon) {

@@ -675,20 +675,6 @@ void ui_battle_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* 
         ui_notice(c, "NO BATTLE", "A battle opens this tab by itself,", "and its end takes you back.");
         return;
     }
-    bool controls = ui_battle_controls_usable(ui, s);
-    if (!ui_battle_info_on(ui)) {
-        // BATTLE INFO off: the buttons, waiting between turns too, or - where there are none (a double battle) - a word
-        // to use the game's own menu.
-        if (ui_battle_input_on(ui, s)) ui_battle_controls(ui, c, g, s);
-        else ui_notice(c, "BATTLE", "Use the game's own menu.", "");
-        return;
-    }
-    // RUN picked: the controls stay up until the battle ends (no INFO flashing by on the way out).
-    bool hold = ui->ranAway && ui_battle_input_on(ui, s);
-    if (!ui->battlePane && ((controls && !ui->battleInfoOpen) || hold)) {
-        ui_battle_controls(ui, c, g, s);
-        return;
-    }
     // The foe: the FOE TEAM's shown one, else the battler out.
     const char* foeState;
     const struct pd_mon* party = shown_foe(ui, s, &foeState);
@@ -726,11 +712,6 @@ void ui_battle_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* 
     if (ui->battlePane) nav_button(ui, c, x, barY, bw, BAR_H, label, INFO_PURPLE, INFO_PURPLE_DARK, HIT_BATTLE_INFO);
     else nav_button(ui, c, x, barY, bw, BAR_H, label, SUGGEST_GOLD, SUGGEST_GOLD_DARK, HIT_BATTLE_SUGGEST);
     int right = x + w;
-    // Back to the controls, while there are any to go back to.
-    if (controls) {
-        right -= BAR_H + 2;
-        nav_button(ui, c, right + 2, barY, BAR_H, BAR_H, NULL, 0x2892CB, 0x415971, HIT_BATTLE_CONTROLS);
-    }
     foe_strip(ui, c, &data, s, x + bw + 8, barY, right);
 }
 

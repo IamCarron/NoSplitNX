@@ -12,8 +12,6 @@
 #include "pd_settings.h"
 #include "pd_ui_internal.h"
 
-static void cycle_button(struct pd_settings* s, int row);
-
 #define CHIP_H TAB_BAR_H
 #define FF_W 28
 #define ICON_CHIP_W (pd_font_size_small() ? 24 : 30) // MORE / the gear: 12 px smoothed icons at SMALL
@@ -211,7 +209,7 @@ void pd_ui_update(struct pd_ui* ui, const struct pd_snapshot* s) {
         ui->overlay = PD_OVERLAY_NONE;
         ui->battlePane = 0;
         // BATTLE VIEW: INFO first, or the buttons (always the buttons with BATTLE INFO off).
-        ui->battleInfoOpen = ui->settings && ui->settings->battleInfoFirst && ui_battle_info_on(ui);
+        ui->battleInfoOpen = ui->settings && ui->settings->battleInfoFirst && !ui->settings->noBattleInfo;
         ui->ranAway = ui->ranWaited = false;
         ui->foeSeen = 0;
         ui->foeSelected = -1;
@@ -417,7 +415,9 @@ static void focus_ring(struct pd_ui* ui, struct pd_canvas* c) {
 const struct pd_game* ui_game;
 
 void pd_ui_warm(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g) {
-    if (ui_gen5_style(ui, g)) ui_gen5_warm(c);
+    (void) ui;
+    (void) c;
+    (void) g;
 }
 
 void pd_ui_draw(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g,
@@ -440,9 +440,7 @@ void pd_ui_draw(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g,
     // own plain look).
     if (!ui->keepBackdrop) {
         if (ui->tab == PD_TAB_BATTLE && ui->overlay != PD_OVERLAY_MORE && !pd_gb_look) {
-            // BATTLE STYLE > GEN 5: Black's dark closed-ball screen instead, behind INFO / SUGGESTIONS too.
-            if (ui_gen5_style(ui, g)) ui_gen5_backdrop(ui, c, s);
-            else pd_battle_backdrop(c);
+            pd_battle_backdrop(c);
         }
         else if (!pd_party_backdrop(c, g)) pd_backdrop(c);
     }
@@ -459,10 +457,8 @@ void pd_ui_draw(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g,
     } else if (ui->content) {
         // A backend's own tab content (libretro's DS companion) inside the shared frame and bar.
         ui->content(ui->contentCtx, ui, c);
-    } else if (ui->tab == PD_TAB_SETTINGS) {
-        ui_settings_tab(ui, c, g, s, host);
     } else if (!g->cfg) {
-        ui_notice(c, "NOT SUPPORTED", g->unsupported ? g->unsupported : "", "SETTINGS has what was detected.");
+        ui_notice(c, "NOT SUPPORTED", g->unsupported ? g->unsupported : "", "");
     } else if (ui->tab == PD_TAB_PARTY) {
         ui_party_tab(ui, c, g, s, host);
     } else if (ui->tab == PD_TAB_BAG) {
@@ -475,12 +471,6 @@ void pd_ui_draw(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g,
         ui_dex_tab(ui, c, g, s);
     } else if (ui->tab == PD_TAB_CARD) {
         ui_card_tab(ui, c, g, s);
-    } else if (ui->tab == PD_TAB_STATES) {
-        ui_states_tab(ui, c, host);
-    } else if (ui->tab == PD_TAB_NUZLOCKE) {
-        ui_nuzlocke_tab(ui, c, g, host);
-    } else if (ui->tab == PD_TAB_BOXES) {
-        ui_boxes_tab(ui, c, g, s);
     } else {
         ui_battle_tab(ui, c, g, s);
     }
@@ -494,8 +484,6 @@ void pd_ui_draw(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g,
         ui_guide_notice(ui, c);
     } else if (ui->overlay == PD_OVERLAY_DEX_PICK) {
         ui_dex_pick_overlay(ui, c);
-    } else if (ui->overlay == PD_OVERLAY_NUZ_PICK || ui->overlay == PD_OVERLAY_NUZ_CONFIRM) {
-        ui_nuzlocke_overlay(ui, c);
     } else if (ui->overlay != PD_OVERLAY_MORE) {
         ui_overlay(ui, c);
     }
@@ -510,8 +498,6 @@ static int* scroll_target(struct pd_ui* ui) {
     case PD_TAB_BAG: return &ui->bagScroll;
     case PD_TAB_DEX: return ui->dexOpen && ui->dexSection ? &ui->dexPageScroll : &ui->dexScroll;
     case PD_TAB_GUIDE: return &ui->guideScroll;
-    case PD_TAB_NUZLOCKE: return &ui->nuzScroll;
-    case PD_TAB_SETTINGS: return &ui->settingsScroll;
     default: return NULL;
     }
 }
@@ -540,8 +526,7 @@ bool ui_summary_learn(struct pd_ui* ui) {
 }
 
 static void act(struct pd_ui* ui, int id) {
-    if (ui_map_act(ui, id) || ui_dex_act(ui, id) || ui_nuzlocke_act(ui, id) || ui_guide_act(ui, id) || ui_battle_act(ui, id) || ui_card_act(ui, id) ||
-        ui_battle_controls_act(ui, id, ui->drawn) || ui_states_act(ui, id) || ui_boxes_act(ui, id, ui->drawn) ||
+    if (ui_map_act(ui, id) || ui_dex_act(ui, id) || ui_guide_act(ui, id) || ui_battle_act(ui, id) || ui_card_act(ui, id) ||
         ui_bag_act(ui, id, ui->drawn)) {
         return;
     }
@@ -557,38 +542,7 @@ static void act(struct pd_ui* ui, int id) {
         return;
     }
     if (ui->overlay != PD_OVERLAY_NONE) {
-        if (id >= HIT_OPTION && id < HIT_OPTION + 16) {
-            int i = id - HIT_OPTION;
-            if (ui->overlay == PD_OVERLAY_PICK_THEME) {
-                int n = 0;
-                for (int k = 0; k < pd_theme_count; k++) {
-                    if (pd_themes[k].seasonal) continue;
-                    if (n++ == i) ui->settings->theme = pd_themes[k].id;
-                }
-            }
-            if (ui->overlay == PD_OVERLAY_PICK_SCREEN) ui->settings->screenMode = i + (ui->pixelOff ? 1 : 0);
-            if (ui->overlay == PD_OVERLAY_PICK_FF && i < PD_FF_CHOICES) ui->settings->ffSpeed = PD_FF_SPEEDS[i];
-            if (ui->overlay == PD_OVERLAY_PICK_ASPECT && i < PD_ASPECTS) ui->settings->aspect = i;
-            if (ui->overlay == PD_OVERLAY_PICK_ZOOM && i < ui->zoomCount) ui->settings->zoom = i;
-            if (ui->overlay == PD_OVERLAY_PICK_VIEW) pd_view_set(ui->settings, i, ui->viewExpand);
-            if (ui->overlay == PD_OVERLAY_PICK_SPEED) ui->settings->gameSpeed = i;
-            if (ui->overlay == PD_OVERLAY_PICK_SCENE && i < PD_SCENE_SPEED_COUNT) ui->settings->sceneSpeed[ui->scenePick] = i;
-            if (ui->overlay == PD_OVERLAY_PICK_VOLUME) ui->settings->gameVolume = (i + 1) * 20;
-            if (ui->overlay == PD_OVERLAY_PICK_FLY_ON && i < 4) ui->settings->flightVehicle = i;
-            if (ui->overlay == PD_OVERLAY_PICK_LANGUAGE && i <= PD_LANGS) ui->settings->language = i == 0 ? PD_LANG_AUTO : i - 1;
-            close_overlay(ui, PD_ACTION_SETTINGS_CHANGED);
-        } else if (id == HIT_YES && ui->overlay == PD_OVERLAY_CONFIRM_RESET) {
-            pd_settings_defaults(ui->settings);
-            close_overlay(ui, PD_ACTION_SETTINGS_CHANGED);
-        } else if (id == HIT_YES) {
-            enum pd_action a = ui->overlay == PD_OVERLAY_CONFIRM_SAVE ? PD_ACTION_SAVE_STATE
-                : ui->overlay == PD_OVERLAY_CONFIRM_LOAD ? PD_ACTION_LOAD_STATE
-                : ui->overlay == PD_OVERLAY_CONFIRM_LEAVE ? PD_ACTION_LEAVE_GAME
-                : ui->overlay == PD_OVERLAY_CONFIRM_RESTART ? PD_ACTION_RESTART_GAME : PD_ACTION_NONE;
-            close_overlay(ui, a);
-        } else if (id == HIT_NO || id == HIT_SCRIM) {
-            close_overlay(ui, PD_ACTION_NONE);
-        }
+        if (id == HIT_NO || id == HIT_SCRIM) close_overlay(ui, PD_ACTION_NONE);
         return;
     }
     if (id == HIT_SHOULDER_L || id == HIT_SHOULDER_R) {
@@ -598,61 +552,12 @@ static void act(struct pd_ui* ui, int id) {
         ui->summarySlot = -1;
         ui->moreOpened = false;
         // BATTLE VIEW: the tab opens on what it says.
-        if (ui->tab == PD_TAB_BATTLE) ui->battleInfoOpen = ui->settings && ui->settings->battleInfoFirst && ui_battle_info_on(ui);
+        if (ui->tab == PD_TAB_BATTLE) ui->battleInfoOpen = ui->settings && ui->settings->battleInfoFirst && !ui->settings->noBattleInfo;
     } else if (id == HIT_MORE) {
         ui->overlay = ui->overlay == PD_OVERLAY_MORE ? PD_OVERLAY_NONE : PD_OVERLAY_MORE;
     } else if (id == HIT_MORE_TAB_BAR) {
         if (!ui->hideSettingsTab) ui->tab = PD_TAB_SETTINGS;
         ui->overlay = PD_OVERLAY_TAB_BAR;
-    } else if (id >= HIT_SETTINGS_GROUP && id < HIT_SETTINGS_GROUP + 10) {
-        ui_settings_group(ui, id - HIT_SETTINGS_GROUP);
-    } else if (id == HIT_SETTING + SETTING_TAB_BAR) {
-        ui->overlay = PD_OVERLAY_TAB_BAR;
-    } else if (id == HIT_SETTING + SETTING_HUD) {
-        ui->overlay = PD_OVERLAY_HUD;
-    } else if (id == HIT_SETTING + SETTING_FF_TOGGLE) {
-        ui->action = PD_ACTION_TOGGLE_FF;
-    } else if (id == HIT_SETTING + SETTING_GAME_SPEED) {
-        ui->overlay = PD_OVERLAY_PICK_SPEED;
-    } else if (id == HIT_SETTING + SETTING_VOLUME) {
-        ui->overlay = PD_OVERLAY_PICK_VOLUME;
-    } else if (id == HIT_SETTING + SETTING_THEME) {
-        ui->overlay = PD_OVERLAY_PICK_THEME;
-    } else if (id >= HIT_SETTING + SETTING_SCENE && id < HIT_SETTING + SETTING_SCENE + PD_SCENES) {
-        ui->scenePick = id - HIT_SETTING - SETTING_SCENE;
-        ui->overlay = PD_OVERLAY_PICK_SCENE;
-    } else if (id == HIT_SETTING + SETTING_NUZLOCKE) {
-        ui->action = PD_ACTION_NUZLOCKE_TOGGLE;
-    } else if (id == HIT_SETTING + SETTING_FLY_ON) {
-        ui->overlay = PD_OVERLAY_PICK_FLY_ON;
-    } else if (id == HIT_SETTING + SETTING_LANGUAGE) {
-        ui->overlay = PD_OVERLAY_PICK_LANGUAGE;
-    } else if (id == HIT_SETTING + SETTING_DARK || id == HIT_SETTING + SETTING_FF_MODE || id == HIT_SETTING + SETTING_CHEATS) {
-        bool* flag = id == HIT_SETTING + SETTING_DARK ? &ui->settings->darkMode :
-            id == HIT_SETTING + SETTING_FF_MODE ? &ui->settings->ffNormal : &ui->settings->cheats;
-        *flag = !*flag;
-        ui->action = PD_ACTION_SETTINGS_CHANGED;
-    } else if (id == HIT_SETTING + SETTING_RESET) {
-        ui->overlay = PD_OVERLAY_CONFIRM_RESET;
-    } else if (id == HIT_SETTING + SETTING_RESTART) {
-        ui->overlay = PD_OVERLAY_CONFIRM_RESTART;
-    } else if (id == HIT_SETTING + SETTING_MUTE || id == HIT_SETTING + SETTING_WILD || id == HIT_SETTING + SETTING_AUTO_RUN ||
-               id == HIT_SETTING + SETTING_RUN_INDOORS || id == HIT_SETTING + SETTING_HINTS || id == HIT_SETTING + SETTING_ONE_TAP ||
-               id == HIT_SETTING + SETTING_BATTLE_STYLE || id == HIT_SETTING + SETTING_BATTLE_INFO ||
-               id == HIT_SETTING + SETTING_BATTLE_VIEW || id == HIT_SETTING + SETTING_FLY_STYLE ||
-               id == HIT_SETTING + SETTING_FLIGHT_AREA || id == HIT_SETTING + SETTING_REUSABLE_TMS ||
-               id == HIT_SETTING + SETTING_INSTANT_TEXT || id == HIT_SETTING + SETTING_TRADE_EVOS) {
-        struct pd_settings* st = ui->settings;
-        bool* flag = id == HIT_SETTING + SETTING_MUTE ? &st->gameMuted : id == HIT_SETTING + SETTING_WILD ? &st->wildOff
-            : id == HIT_SETTING + SETTING_AUTO_RUN ? &st->autoRun : id == HIT_SETTING + SETTING_RUN_INDOORS ? &st->runIndoors
-            : id == HIT_SETTING + SETTING_HINTS ? &st->hideHints : id == HIT_SETTING + SETTING_ONE_TAP ? &st->oneTapMoves
-            : id == HIT_SETTING + SETTING_BATTLE_INFO ? &st->noBattleInfo : id == HIT_SETTING + SETTING_BATTLE_VIEW ? &st->battleInfoFirst
-            : id == HIT_SETTING + SETTING_FLY_STYLE ? &st->flyClassic : id == HIT_SETTING + SETTING_FLIGHT_AREA ? &st->flightAnywhere
-            : id == HIT_SETTING + SETTING_REUSABLE_TMS ? &st->reusableTms
-            : id == HIT_SETTING + SETTING_INSTANT_TEXT ? &st->instantText : id == HIT_SETTING + SETTING_TRADE_EVOS ? &st->tradeEvos
-            : &st->battleGen5;
-        *flag = !*flag;
-        ui->action = PD_ACTION_SETTINGS_CHANGED;
     } else if (id == HIT_FF) {
         ui->action = PD_ACTION_TOGGLE_FF;
     } else if (id == HIT_SUMMARY_EVOLVE) {
@@ -694,72 +599,6 @@ static void act(struct pd_ui* ui, int id) {
         ui->bagScroll = 0;
     } else if (id >= HIT_BAG_ROW && id < HIT_BAG_ROW_END) {
         ui->bagSelected = id - HIT_BAG_ROW;
-    } else if (id == HIT_SETTING + SETTING_FILTER) {
-        ui->settings->lcdFilter = !ui->settings->lcdFilter;
-        ui->action = PD_ACTION_SETTINGS_CHANGED;
-    } else if (id == HIT_SETTING + SETTING_QUICK_MENU) {
-        ui->settings->quickGrid = !ui->settings->quickGrid;
-        ui->action = PD_ACTION_SETTINGS_CHANGED;
-    } else if (id >= HIT_SETTING + SETTING_QUICK_BTN && id <= HIT_SETTING + SETTING_HUD_BTN) {
-        cycle_button(ui->settings, id - HIT_SETTING);
-        ui->action = PD_ACTION_SETTINGS_CHANGED;
-    } else if (id == HIT_SETTING + SETTING_PERF) {
-        ui->settings->showPerf = !ui->settings->showPerf;
-        ui->action = PD_ACTION_SETTINGS_CHANGED;
-    } else if (id == HIT_SETTING + SETTING_VIEW) {
-        ui->overlay = PD_OVERLAY_PICK_VIEW;
-    } else if (id == HIT_SETTING + SETTING_AUTO_ZOOM) {
-        ui->settings->autoZoom = !ui->settings->autoZoom;
-        ui->action = PD_ACTION_SETTINGS_CHANGED;
-    } else if (id == HIT_SETTING + SETTING_ZOOM) {
-        ui->overlay = PD_OVERLAY_PICK_ZOOM;
-    } else if (id >= HIT_SETTING && id <= HIT_SETTING + SETTING_ASPECT) {
-        static const enum pd_overlay OPENS[] = {
-            [SETTING_SCREEN] = PD_OVERLAY_PICK_SCREEN,
-            [SETTING_FF] = PD_OVERLAY_PICK_FF,
-            [SETTING_SAVE_STATE] = PD_OVERLAY_CONFIRM_SAVE,
-            [SETTING_LOAD_STATE] = PD_OVERLAY_CONFIRM_LOAD,
-            [SETTING_LEAVE] = PD_OVERLAY_CONFIRM_LEAVE,
-            [SETTING_ASPECT] = PD_OVERLAY_PICK_ASPECT,
-        };
-        // With ZOOM's steps (a host that has them), ASPECT is the app's EXPAND on / off: two values, so it
-        // flips in place. A host without them keeps the pick-list.
-        if (id == HIT_SETTING + SETTING_ASPECT && ui->zoomCount > 1) {
-            ui->settings->aspect = ui->settings->aspect == PD_ASPECT_ORIGINAL ? PD_ASPECT_EXPAND : PD_ASPECT_ORIGINAL;
-            ui->action = PD_ACTION_SETTINGS_CHANGED;
-        } else {
-            ui->overlay = OPENS[id - HIT_SETTING];
-        }
-    }
-}
-
-bool pd_ui_settings_control(struct pd_ui* ui, int dy, bool accept) {
-    int count = ui->settingsNavCount, index = 0;
-    while (index < count && ui->settingsNav[index].id != ui->settingsNavId) ++index;
-    if (index == count) return false;
-    index = pd_ui_list_step(index, count, dy);
-    ui->settingsNavId = ui->settingsNav[index].id;
-    ui->settingsScroll = ui_settings_follow(ui->settingsScroll, ui->settingsNav[index].top, ui->settingsNavHeight);
-    if (accept) act(ui, ui->settingsNavId);
-    return true;
-}
-
-/* A BUTTON row: the next button (X, Y, L2, R2, L3; the HUD's also NONE). A button another action already uses goes to
- * this one's old button, so no two actions ever share one; the HUD's NONE can't be handed to the other two. */
-static void cycle_button(struct pd_settings* s, int row) {
-    int* mine = row == SETTING_QUICK_BTN ? &s->quickBtn : row == SETTING_COMPANION_BTN ? &s->companionBtn : &s->hudBtn;
-    int* all[3] = {&s->quickBtn, &s->companionBtn, &s->hudBtn};
-    int old = *mine;
-    for (int step = 1; step <= PD_BUTTONS; step++) {
-        int next = (old + step) % PD_BUTTONS;
-        if (next == PD_BTN_NONE && mine != &s->hudBtn) continue;
-        int* other = NULL;
-        for (int i = 0; i < 3; i++)
-            if (all[i] != mine && *all[i] == next && next != PD_BTN_NONE) other = all[i];
-        if (other && old == PD_BTN_NONE) continue;   // nothing to hand over
-        if (other) *other = old;
-        *mine = next;
-        return;
     }
 }
 

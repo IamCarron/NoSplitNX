@@ -59,8 +59,6 @@
 #include "layout.h"
 #include "ui.h"
 #include "ds_zoom.h" // ZOOM AND LOOK AROUND on the DS overworld
-#include "sm_buttons.h" // BATTLE BUTTONS: SUN AND MOON
-#include "sm_buttons_art.h" // BATTLE BUTTONS: SUN AND MOON's words
 #include "gen5strip.h" // Gen 5 battle buttons on the message box (BATTLE BUTTONS: STRIP)
 #include "merged.h"
 #include "audiostretch.h"
@@ -1392,11 +1390,6 @@ struct Pads
             fprintf(stderr, "controller: %s\n", name ? name : "?");
             return name ? name : "";
         }
-#ifdef SSR_PHONE
-        // Android reports some of a device's own keys as a joystick (and iOS its motion sensor),
-        // and using one hides the on-screen controls.
-        return nullptr;
-#endif
         SDL_Joystick* j = SDL_JoystickOpen(index);
         if (!j)
         {
@@ -1605,7 +1598,7 @@ struct Settings
     // the DS's: its controllers have a Guide button for the menu, as well as START and BACK
     // together, and players took START opening the menu for a fault (GitHub #21). The Switch
     // has no button of its own for it (HOME is the system's), and a phone has its MENU button.
-#if defined(__SWITCH__) || defined(SSR_PHONE)
+#ifdef __SWITCH__
     bool startMenu = true;
 #else
     bool startMenu = false;
@@ -1645,9 +1638,9 @@ struct Settings
 #endif
     bool ds3dGpu = true;         // with it, the DS-resolution 3D picture too
     bool zoom = true, zoomText = true; // ZOOM AND LOOK AROUND, AUTO ZOOM IN (ds_zoom.h)
-    // Black and Black 2: how a battle's buttons are shown beside the wide view (BATTLE BUTTONS):
-    // 0 CORNER, 1 STRIP, 2 PANEL, 3 STANDARD, 4 SUN AND MOON, 5 POKEDAISY (default: PokeDaisy's
-    // live battle strip across Gen 4 and Gen 5, falling back to STRIP during transitions).
+    // How battle buttons appear on wide views (BATTLE BUTTONS):
+    // 1 STRIP (Gen 5) / STANDARD (Gen 4), 5 MODERN (default: PokeDaisy live battle strip,
+    // falling back to STRIP / STANDARD during transitions).
     int battleButtons = 5;
     // The PC all-games program: the window's size when it last closed (0: 1280x720, a wide view).
     int windowW = 0, windowH = 0;
@@ -1743,7 +1736,7 @@ struct Settings
             else if (k == "last_game") lastGame = v;
             else if (k == "zoom") zoom = v != "0";
             else if (k == "zoom_text") zoomText = v != "0";
-            else if (k == "battle_buttons") battleButtons = v == "corner" ? 0 : v == "strip" ? 1 : v == "panel" ? 2 : (v == "standard" || v == "rounded") ? 3 : v == "sunmoon" ? 4 : 5;
+            else if (k == "battle_buttons") battleButtons = (v == "modern" || v == "pokedaisy") ? 5 : 1;
             else if (k == "window")
             {
                 const size_t x = v.find('x');
@@ -1790,8 +1783,7 @@ struct Settings
         f << "start_button=" << (startMenu ? "menu" : "ds") << "\n";
         f << "zoom=" << (zoom ? 1 : 0) << "\n";
         f << "zoom_text=" << (zoomText ? 1 : 0) << "\n";
-        static const char* const battleButtonNames[] = { "corner", "strip", "panel", "standard", "sunmoon", "modern" };
-        f << "battle_buttons=" << battleButtonNames[std::clamp(battleButtons, 0, 5)] << "\n";
+        f << "battle_buttons=" << (battleButtons == 5 ? "modern" : "strip") << "\n";
         controls.Save(f);
         f << "both_versions=" << (bothVersions ? 1 : 0) << "\n";
         f << "pd_hud=" << (pdHud ? 1 : 0) << "\n";
@@ -2375,18 +2367,6 @@ int main(int argc, char** argv)
 
     if (!opt.headless)
     {
-#ifdef SSR_PHONE
-        SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
-        SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
-        // Fingers are handled one by one (on-screen controls and the touch screen).
-        SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
-        // Tilting the phone must not move the player.
-        SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
-        // Controllers come through Android's own input, which knows every gamepad. With SDL's
-        // HIDAPI drivers on, a pad one of them claims (a Backbone One, a PlayStation pad) is
-        // left out of Android's list, and is lost if SDL cannot open it over USB itself.
-        SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "0");
-#endif
 #ifdef SSR_IOS
         // The home bar at the bottom fades away, and a swipe up from the bottom edge (where the
         // DS's SELECT and START are) needs a second swipe to leave the game.
@@ -2880,7 +2860,7 @@ int main(int argc, char** argv)
         // (Platinum has functions with Black 2's names, StartMenu_Main and CARD_WaitBackupAsync
         // among them: Black 2's layouts must not pick them up.)
         if (pt.on) bw2 = Bw2Funcs();
-        bw1.battleButtons = pdStripSupported() ? cfg.battleButtons : (cfg.battleButtons == 5 ? 1 : cfg.battleButtons);
+        bw1.battleButtons = pdStripSupported() ? cfg.battleButtons : 1;
         {
             char code[5] = {};
             if (FILE* rf = fopen(opt.rom.c_str(), "rb"))
@@ -2998,14 +2978,9 @@ int main(int argc, char** argv)
             // the four moves two by two.
             const float bandY = 144, bandH = 48, viewL = 128 - viewWidth / 2, viewR = 128 + viewWidth / 2;
             const bool translated = BaseGameCode(gameCode) != gameCode;
-            // BATTLE BUTTONS: SUN AND MOON: the command buttons in Sun and Moon's proportions (1025
-            // wide to 375 high) at the band's right end, the message box in the rest of it.
-            const bool sunMoon = cmd && SmButtons::S().on;
-            const float smWant = (bandH - 6) * 1025.0f / 375;
-            const int smRest = std::max(translated ? 186 : 150, (int)(viewWidth - smWant - 18));
-            const bool narrow = sunMoon ? viewWidth - smRest - 18 < 80 : viewWidth < 300;
+            const bool narrow = viewWidth < 300;
             const int edgeW = narrow ? 0 : 10, half = (int)(viewWidth / 2) - edgeW;
-            const int boxW = narrow ? 0 : sunMoon ? std::min(246, smRest)
+            const int boxW = narrow ? 0
                 : std::min(246, translated ? std::max(half, std::min(240, (int)(viewWidth * 0.6f) - edgeW)) : half);
             const float panelX = viewL + boxW + edgeW, panelY = bandY, panelR = viewR, panelB = bandY + bandH;
             const float panelW = panelR - panelX, panelH = panelB - panelY, pad = 3, gap = 4;
@@ -3102,14 +3077,7 @@ int main(int argc, char** argv)
                 }
                 piece(lx0, lx1 - lx0, dx + (dw - (lx1 - lx0) * scl) / 2);
             };
-            if (cmd && SmButtons::S().on)
-            {
-                static const int hgTouch[SmButtons::COUNT][4] = { { 30, 40, 196, 90 }, { 182, 151, 68, 34 }, { 6, 152, 66, 34 }, { 94, 158, 68, 34 } };
-                static const int ptTouch[SmButtons::COUNT][4] = { { 39, 40, 178, 90 }, { 188, 154, 56, 33 }, { 12, 154, 56, 33 }, { 100, 162, 56, 30 } };
-                const float bandRoom = 2 * rowH + gap, smWide = std::min(innerW, bandRoom * 1025.0f / 375), smH = smWide * 375 / 1025;
-                SmButtons::Draw(sc, innerX + innerW - smWide, rowY + (bandRoom - smH) / 2, smWide, smH, pt.on ? ptTouch : hgTouch, battleFightOnly);
-            }
-            else if (cmd)
+            if (cmd)
             {
                 static const Cut cuts[4] = { { 30, 60, 196, 34, 80, 147, 33, 4 }, { 6, 152, 66, 34, 30, 51, 9, 4 },
                                              { 182, 151, 68, 34, 192, 241, 185, 4 }, { 94, 158, 68, 34, 118, 139, 97, 4 } };
@@ -3596,8 +3564,7 @@ int main(int argc, char** argv)
             {
                 if (funcWatch.CurrentFrame() - bw2BoxesFrame < 600 && !topScreenFaded())
                     Gen5Strip::KeepBoxes(sc, bw2BoxesTop, bw2Boxes, 1);
-                if (cfg.battleButtons == 1 || cfg.battleButtons == 3 || cfg.battleButtons == 4 ||
-                    (cfg.battleButtons == 5 && !pdStripSupported()))
+                if (cfg.battleButtons == 1 || (cfg.battleButtons == 5 && !pdStripSupported()))
                 {
                     const Scene cut = sc;
                     float availRoom = -1.0f;
@@ -3660,9 +3627,8 @@ int main(int argc, char** argv)
                 const int enemyH = height(0, 0, 128, 100), mineH = height(128, 60, 256, 142);
                 kind = enemyH > 0 && enemyH <= 32 && mineH > 0 && mineH <= 34 ? 1 : 2;
             }
-            // (The compositor leaves the boxes where they are in any frame without the wide arena.)
-            // The player's box is lifted higher when STRIP / STANDARD / SUNMOON draws party balls under it.
-            const int BattleBoxLift = !bw1.on && (cfg.battleButtons == 1 || cfg.battleButtons == 3 || cfg.battleButtons == 4 || cfg.battleButtons == 5) ? 8 : 4;
+            // The player's box is lifted higher when STRIP / MODERN draws party balls under it.
+            const int BattleBoxLift = !bw1.on ? 8 : 4;
             // How much of a part of the top screen is 2D, in tenths: where the HP boxes are, some
             // of it; none when the boxes are not shown (the screen going black into an evolution,
             // where the wide arena can still show the last picture through the holes); nearly all
@@ -3773,8 +3739,8 @@ int main(int argc, char** argv)
             }
             else
             {
-                int style = bw1.on || !screens ? 0 : (cfg.battleButtons == 5 ? 1 : cfg.battleButtons);
-                const bool stripStyle = style == 1 || style == 3 || style == 4;
+                int style = bw1.on || !screens ? 0 : 1;
+                const bool stripStyle = style == 1;
                 const bool strip = stripStyle && (funcWatch.Ran(bw2.battleMove, 4) ||
                     funcWatch.Ran(bw2.battleCommand, 4) || funcWatch.Ran(bw2.battleTarget, 4));
                 if (!wideView && !stripStyle) style = 0;
@@ -5503,10 +5469,8 @@ int main(int argc, char** argv)
             add(M_WIDE, "WIDESCREEN WORLD", onOff(cfg.wide));
             add(M_SMOOTH, "SMOOTH SCALING", onOff(cfg.smooth));
             {
-                static const char* const btnNames[] = { "CORNER", "STRIP", "PANEL", "STANDARD", "SUN AND MOON", "MODERN" };
                 const bool gen4Own = pt.on || !funcWatchOn;
-                const char* btnVal = gen4Own ? (cfg.battleButtons == 5 ? "MODERN" : cfg.battleButtons == 4 ? "SUN AND MOON" : "STANDARD")
-                                             : btnNames[std::clamp(cfg.battleButtons, 0, 5)];
+                const char* btnVal = cfg.battleButtons == 5 ? "MODERN" : (gen4Own ? "STANDARD" : "STRIP");
                 add(M_BATTLEBUTTONS, "BATTLE BUTTONS", btnVal);
             }
 #ifdef SSR_POKEDAISY
@@ -5521,9 +5485,7 @@ int main(int argc, char** argv)
 #else
             add(M_LAYOUT, "SCREEN LAYOUT", LayoutName(layout.mode));
             add(M_LARGE, "LARGE SCREEN", large[focus.mode]);
-#if !defined(SSR_PHONE)
             add(M_FULLSCREEN, "BORDERLESS FULLSCREEN", onOff(cfg.fullscreen));
-#endif
 #endif
             add(M_BACK, "BACK", "");
         }
@@ -5987,7 +5949,7 @@ int main(int argc, char** argv)
         SDL_Rect rects[2] {};
         const u32* top = nullptr;
         const u32* bot = nullptr;
-        ScreenImage screens[7] {}; // (2 to 5: g_dexCover and g_dexPages; 6: SmButtons words)
+        ScreenImage screens[6] {}; // (2 to 5: g_dexCover and g_dexPages)
         Scene scene;
         WideImage wide;
         bool battleRender = false; // the widened battle picture is still to be made (BattleRender)
@@ -7538,15 +7500,8 @@ int main(int argc, char** argv)
                 cfg.aspect = (cfg.aspect + (dir < 0 ? 4 : 1)) % 5;
                 break;
             case M_BATTLEBUTTONS:
-                if (pt.on || !funcWatchOn)
-                {
-                    // Gen 4 cycles POKEDAISY (5) -> STANDARD (1) -> SUN AND MOON (4).
-                    static const int gen4Order[] = { 5, 1, 4 };
-                    int idx = cfg.battleButtons == 1 ? 1 : cfg.battleButtons == 4 ? 2 : 0;
-                    cfg.battleButtons = gen4Order[(idx + (dir < 0 ? 2 : 1)) % 3];
-                }
-                else cfg.battleButtons = (cfg.battleButtons + (dir < 0 ? 5 : 1)) % 6; // CORNER, STRIP, PANEL, STANDARD, SUN AND MOON, POKEDAISY
-                bw1.battleButtons = pdStripSupported() ? cfg.battleButtons : (cfg.battleButtons == 5 ? 1 : cfg.battleButtons);
+                cfg.battleButtons = cfg.battleButtons == 5 ? 1 : 5;
+                bw1.battleButtons = pdStripSupported() ? cfg.battleButtons : 1;
                 break;
             case M_ZOOM:
                 cfg.zoom = !cfg.zoom;
@@ -7564,7 +7519,7 @@ int main(int argc, char** argv)
                 nds->GPU.GPU3D.RawCurrent.clear();
                 nds->GPU.GPU3D.RawPrevious.clear();
                 break;
-#if !defined(__SWITCH__) && !defined(SSR_PHONE)
+#ifndef __SWITCH__
             case M_FULLSCREEN:
                 cfg.fullscreen = !cfg.fullscreen;
                 if (window)
@@ -7730,7 +7685,7 @@ int main(int argc, char** argv)
             case M_FFMUTE:
                 cfg.ffMute = !cfg.ffMute;
                 break;
-#if !defined(__SWITCH__) && !defined(SSR_PHONE)
+#ifndef __SWITCH__
             case M_FFLOWRES:
                 cfg.ffLowRes = !cfg.ffLowRes;
                 break;
@@ -7791,8 +7746,6 @@ int main(int argc, char** argv)
         speed = 1;
         bool ffTapSlow = false; // fast forward held, briefly slowed for a newly pressed direction
         ffRefreshes = 1;
-        SmButtons::S().clock = frame;
-        SmButtons::S().on = cfg.battleButtons == 4;
         if (!paused && !swallowMenuButtons
 #ifdef SSR_POKEDAISY
             && !dsCompanion.AnyMenuOpen()
@@ -8350,39 +8303,6 @@ int main(int argc, char** argv)
             }
         }
 
-        // BATTLE BUTTONS: SUN AND MOON's command buttons (sm_buttons.h), in any DS game: arrows
-        // move the white outline and A presses the game's own button.
-        {
-            static uint32_t prevSmKeys = 0;
-            static bool smWasShown = false;
-            static int smTouch = 0, smX = 0, smY = 0;
-            SmButtons::State& sm = SmButtons::S();
-            if (!paused && merged && SmButtons::Shown())
-            {
-                if (!smWasShown) { prevSmKeys = keys; sm.sel = SmButtons::FIGHT; smWasShown = true; }
-                const uint32_t edge = keys & ~prevSmKeys;
-                prevSmKeys = keys;
-                const int keyOf[4] = { KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN };
-                for (int k = 0; k < 4; k++)
-                    if (edge & (1u << keyOf[k])) sm.sel = SmButtons::Move(sm.sel, k);
-                if (edge & (1u << KEY_A))
-                {
-                    smTouch = 4;
-                    smX = sm.touch[sm.sel][0];
-                    smY = sm.touch[sm.sel][1];
-                }
-                keys &= ~((1u << KEY_LEFT) | (1u << KEY_RIGHT) | (1u << KEY_UP) | (1u << KEY_DOWN) | (1u << KEY_A));
-            }
-            else if (!SmButtons::Shown())
-                smWasShown = false;
-            if (!paused && smTouch > 0)
-            {
-                touching = true;
-                touchX = smX;
-                touchY = smY;
-                smTouch--;
-            }
-        }
         // Battle buttons (the panel in the lower right; the single-screen build's strip): the
         // arrows move the outline and A presses the chosen button by touching it on the touch
         // screen. The game's own cursor is not used (its red corners would show on the
@@ -8391,8 +8311,7 @@ int main(int argc, char** argv)
             static std::string stripKind;
             static uint32_t prevStripKeys = 0;
             static int stripTouch = 0, stripTouchX = 0, stripTouchY = 0;
-            // (SUN AND MOON's command buttons have their own keys, above.)
-            const bool cmd = merged && !strcmp(scene.name, "battle-cmd") && !SmButtons::Shown(), moves = merged && !strcmp(scene.name, "battle-moves");
+            const bool cmd = merged && !strcmp(scene.name, "battle-cmd"), moves = merged && !strcmp(scene.name, "battle-moves");
             if (!paused && (cmd || moves))
             {
                 // The move list starts on the move chosen last in this battle, as the game's own
@@ -9059,15 +8978,13 @@ int main(int argc, char** argv)
         // The two screens with their per-pixel layer flags, for the merged view.
         auto& renderer2d = static_cast<GPU2D::SoftRenderer&>(nds->GPU.GetRenderer2D());
         const int topUnit = topUnitOf();
-        SmButtonsArt::Ensure(UiLang::lang);
-        ScreenImage screenImages[7] = {
+        ScreenImage screenImages[6] = {
             { top, renderer2d.LayerFlags[topUnit], renderer2d.EdgeColour[topUnit], renderer2d.EdgeBlend[topUnit], renderer2d.EdgeFlat[topUnit] },
             { bot, renderer2d.LayerFlags[1 - topUnit], renderer2d.EdgeColour[1 - topUnit], renderer2d.EdgeBlend[1 - topUnit], renderer2d.EdgeFlat[1 - topUnit] },
             { g_dexCover[0], nullptr },
             { g_dexCover[1], nullptr },
             { g_dexPages[0], nullptr },
             { g_dexPages[1], nullptr },
-            { SmButtonsArt::Pixels(), nullptr },
         };
         bool appBottom = sectionActive("OVY_40"); // Vs. Recorder: its controls and menus are on the touch screen
         for (const RcApp* app : focus.bottomApps)
@@ -9133,7 +9050,7 @@ int main(int argc, char** argv)
             Scene picked = funcWatchOn ? pickSceneBw2(view.width, screenImages)
                                        : pickScene(frame < cursorShownUntil, view.width, screenImages);
             bw1.topFaded = bw1.on && topScreenFaded();
-            bw1.battleButtons = pdStripSupported() ? cfg.battleButtons : (cfg.battleButtons == 5 ? 1 : cfg.battleButtons);
+            bw1.battleButtons = pdStripSupported() ? cfg.battleButtons : 1;
             if (funcWatchOn) bw1.Adjust(picked, view.width, screenImages); // Pokemon Black and White
             // A whole screen shown alone whose sides are one colour, not black (a fade to white:
             // the starter chosen, whiting out and its message on white) fills the view with that
@@ -9732,7 +9649,7 @@ int main(int argc, char** argv)
             }
             else
             {
-#if !defined(__SWITCH__) && !defined(SSR_PHONE)
+#ifndef __SWITCH__
                 if (selId == M_FFLOWRES) menuHint = "ON: MORE FPS IN FAST FORWARD";
 #endif
 #ifdef __SWITCH__
@@ -9740,7 +9657,7 @@ int main(int argc, char** argv)
                 if (selId == M_FAST && !cfg.switchFastForward) menuHint = "ENABLE IN SETTINGS -> GRAPHICS FIRST";
 #endif
                 if (selId == M_SETTINGS) menuHint = "AUDIO, VIDEO AND SYSTEM OPTIONS";
-                if (selId == M_BATTLEBUTTONS) menuHint = (pt.on || !funcWatchOn) ? "STANDARD OR SUN AND MOON STYLE" : "BATTLE BUTTONS STYLE IN GEN 5";
+                if (selId == M_BATTLEBUTTONS) menuHint = (pt.on || !funcWatchOn) ? "MODERN OR STANDARD STYLE" : "MODERN OR STRIP STYLE";
                 if (selId == M_ZOOM) menuHint = "RIGHT STICK CLICK OR C TO ZOOM OUT";
                 if (selId == M_ZOOM_TEXT) menuHint = "ZOOMS BACK IN FOR OVERWORLD DIALOGUE";
                 if (selId == M_VOLUME) menuHint = "SOUND AND MUSIC: LEFT / RIGHT";
@@ -10179,7 +10096,7 @@ int main(int argc, char** argv)
             job.rects[1] = rects[1];
             job.top = top;
             job.bot = bot;
-            for (int s = 0; s < 7; s++) job.screens[s] = screenImages[s];
+            for (int s = 0; s < 6; s++) job.screens[s] = screenImages[s];
             job.scene = scene;
             job.wide = wideImage;
             job.battleRender = battleRenderLater;

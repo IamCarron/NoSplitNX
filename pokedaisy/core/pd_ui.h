@@ -455,7 +455,6 @@ struct pd_ui {
     int summaryPage;
     bool pixelOff; // SCREEN doesn't offer PIXEL 1x: EXPAND can't hold its speed that wide
     const struct pd_battle_source* battleSource;
-    struct pd_binput* battleInput; // the host's, NULL = no touch controls
     const struct pd_snapshot* drawn; // what the last pd_ui_draw showed, for the taps on it
     const struct pd_game* drawnGame;
     bool hostHasStates;              // the host's STATES tab has slots to show
@@ -584,9 +583,7 @@ enum pd_map_input {
 // action is -1 on the grid, or the index of the focused button.
 enum pd_map_input pd_ui_map_control(int* action, int count, int dx, int dy, bool accept, bool back, bool places);
 int pd_ui_list_step(int selected, int count, int step);
-bool pd_ui_settings_control(struct pd_ui*, int dy, bool accept);
 void pd_ui_format_money(long, char*, size_t);
-void pd_ui_options_view(struct pd_ui*,struct pd_canvas*,const struct pd_game*,const struct pd_snapshot*);
 void pd_ui_guide_view(struct pd_ui*, struct pd_canvas*, const struct pd_guide_source*);
 void pd_ui_guide_reset(struct pd_ui*);
 void pd_ui_guide_control(struct pd_ui*, int dx, int dy, bool confirm);
@@ -633,16 +630,5 @@ enum pd_action pd_ui_take_action(struct pd_ui* ui);
 // screen animates and needs a redraw (the MAP cursor's blink, the TRAINER
 // CARD's colon and flip).
 bool pd_ui_tick(struct pd_ui* ui, unsigned ms);
-
-const char* pd_screen_mode_name(int mode);
-const char* pd_aspect_name(int aspect);
-// VIEW: SCREEN and ASPECT as one pick-list - SHARP 1.5x and STRETCH (the game's own picture), then EXPAND 1.5x, 1.25x
-// and 1x (ASPECT's ZOOM OUT) where the game can EXPAND ([expand]). pd_view_set in a game without EXPAND sets the
-// picture's size alone. PIXEL 1x and SHARP 1.25x of the game's own picture are gone (pd_settings_load moves them).
-#define PD_VIEWS 5
-int pd_view_count(bool expand);
-const char* pd_view_name(int view);
-int pd_view_of(const struct pd_settings* s, bool expand);
-void pd_view_set(struct pd_settings* s, int view, bool expand);
 
 #endif

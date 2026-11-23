@@ -39,7 +39,7 @@ class PokeDaisyIntegrationTests(unittest.TestCase):
 
         c_files = sorted((ROOT / 'pokedaisy/core').glob('*.c')) + sorted((ROOT / 'pokedaisy/ui').glob('*.c'))
         cpp_files = sorted((ROOT / 'pokedaisy/ds').glob('*.cpp'))
-        self.assertGreater(len(c_files), 40)
+        self.assertGreater(len(c_files), 25)
         self.assertGreater(len(cpp_files), 10)
 
         with tempfile.TemporaryDirectory() as folder:

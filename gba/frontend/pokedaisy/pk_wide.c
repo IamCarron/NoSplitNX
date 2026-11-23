@@ -26,7 +26,6 @@
 // this port against the same captures (native-capture/mgba_dump's `wide` / `widecheck`).
 
 #include "pk_wide.h"
-#include "pk_cheats.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -54,7 +53,21 @@
 // literal pools: only FireRed's VMap and gSaveBlock1Ptr differ from them) and checked frame by frame
 // headless (scripts/verify_wide.py).
 #include "pk_wide_games.h"
-#include "pk_coop_emerald.h"   // gPaletteFade, for the co-op partner's colours
+
+// gPaletteFade offsets for co-op / overworld fades.
+#define COOP_EM_gPaletteFade           0x02037FD4u
+#define COOP_EM_PALFADE_SELECTED_OFF   0
+#define COOP_EM_PALFADE_Y_OFF          4
+#define COOP_EM_PALFADE_Y_SHIFT        6
+#define COOP_EM_PALFADE_Y_MASK         0x07C0u
+#define COOP_EM_PALFADE_BLEND_OFF      6
+#define COOP_EM_PALFADE_BLEND_SHIFT    0
+#define COOP_EM_PALFADE_BLEND_MASK     0x7FFFu
+#define COOP_EM_PALFADE_ACTIVE_OFF     6
+#define COOP_EM_PALFADE_ACTIVE_MASK    0x8000u
+#define COOP_EM_PALFADE_MODE_OFF       8
+#define COOP_EM_PALFADE_MODE_SHIFT     8
+#define COOP_EM_PALFADE_MODE_MASK      0x0300u
 
 #ifdef far
 #undef far

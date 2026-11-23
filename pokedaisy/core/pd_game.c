@@ -7,11 +7,23 @@
 
 #include "pd_gb.h"
 #include "pd_games.h"
-#include "pd_randomized.h"
 #include "pd_sha1.h"
 
 // The configs come from gamedata/ (gamedata/targets/3ds.toml picks the fields
 // this port reads), generated with the app's: `make gamedata`.
+#define CFRU_RECORD 58
+#define VANILLA_BOXES 14
+#define BOX_RECORD 80
+#define CFRU_PC(moves) { .format = 2, .boxes = 25, .record = CFRU_RECORD, .cfruStorage = 0x02029314u, .cfruMoves = (moves), \
+    .cfruExtra = { 0x0203CB44u, 0x0203CB44u + 30 * 58, 0x0203CB44u + 60 * 58, 0x02027434u, 0x02027434u + 30 * 58, 0x02024638u } }
+const struct pd_pc_storage pd_pc_vanilla = { .format = 0, .boxes = VANILLA_BOXES, .record = BOX_RECORD };
+const struct pd_pc_storage pd_pc_static = { .format = 0, .boxes = VANILLA_BOXES, .record = BOX_RECORD, .direct = true };
+const struct pd_pc_storage pd_pc_plain = { .format = 1, .boxes = VANILLA_BOXES, .record = BOX_RECORD };
+const struct pd_pc_storage pd_pc_soulgold = { .format = 1, .boxes = 15, .record = 0x4C };
+const struct pd_pc_storage pd_pc_unbound = CFRU_PC(0x08A769AFu), pd_pc_radical_red = CFRU_PC(0x091521D0u),
+    pd_pc_amethyst = CFRU_PC(0x089B6358u), pd_pc_amethyst_v141 = CFRU_PC(0x089FFCA8u), pd_pc_sword_shield = CFRU_PC(0x094BFA7Cu),
+    pd_pc_gs_chronicles = CFRU_PC(0x09D10BE3u);
+
 const struct pd_party_layout pd_party_layout_vanilla = {
     .size = 100, .status = 0x50, .level = 0x54, .hp = 0x56, .maxHp = 0x58, .flags = 0x13, .eggMask = 0x04,
     .plainBox = 0x20, .plainSpeciesMask = 0xFFFF, .plainItemMask = 0xFFFF, .hpBits = 16, .statusMask = 0xFFFFFFFFu,
@@ -729,15 +741,6 @@ static void identify(struct pd_game* g) {
     for (size_t i = 0; i < sizeof RETAIL_SHA1S / sizeof *RETAIL_SHA1S; i++)
         if (!strcmp(RETAIL_SHA1S[i], g->sha1)) { g->shinyBelow = 8; g->retail = true; return; }
     if (retail_dump(g)) { g->shinyBelow = 8; g->retail = true; return; }
-    // Retail as Universal Pokemon Randomizer ZX left it (the app's RandomizedRetail): retail's config and guide, what the
-    // randomizer changed read from the ROM.
-    g->randomized = pd_randomized_match(g);
-    if (g->randomized) {
-        g->shinyBelow = 8;
-        g->retail = true;
-        g->title = g->kind == PD_GAME_FIRERED ? "Pokémon FireRed (Randomized)" : "Pokémon Emerald (Randomized)";
-        return;
-    }
     g->cfg = NULL;
     g->guide = PD_GUIDE_NONE;
     g->title = g->kind == PD_GAME_FIRERED ? "FireRed ROM hack" : "Emerald ROM hack";

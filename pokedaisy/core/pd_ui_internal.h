@@ -117,59 +117,6 @@ enum {
     HIT_FOE_DETAILS = 3120,    // INFO's expand / shrink
 };
 
-enum setting_row {
-    SETTING_SCREEN,
-    SETTING_FF,
-    SETTING_SAVE_STATE,
-    SETTING_LOAD_STATE,
-    SETTING_LEAVE,
-    SETTING_ASPECT,    // hosts with hasExpand
-    SETTING_AUTO_ZOOM,
-    SETTING_TAB_BAR,   // opens its page
-    SETTING_HUD,       // hosts with hasHud: opens its page
-    SETTING_FILTER, // optional host LCD display mask
-    SETTING_QUICK_MENU, // hosts with hasQuickMenu: two styles, flips in place
-    SETTING_QUICK_BTN,  // hosts with hasButtonRows: cycle X / Y / L2 / R2 / L3
-    SETTING_COMPANION_BTN,
-    SETTING_HUD_BTN,    // also NONE
-    SETTING_PERF,      // hosts with hasPerf: flips in place
-    SETTING_FF_TOGGLE,
-    SETTING_GAME_SPEED,
-    SETTING_VOLUME,
-    SETTING_MUTE,
-    SETTING_DARK,
-    SETTING_FF_MODE,
-    SETTING_CHEATS,
-    SETTING_THEME,
-    SETTING_WILD,
-    SETTING_AUTO_RUN,
-    SETTING_RUN_INDOORS,
-    SETTING_HINTS,
-    SETTING_ONE_TAP,
-    SETTING_BATTLE_STYLE,
-    SETTING_BATTLE_INFO,
-    SETTING_BATTLE_VIEW,
-    SETTING_FLY_STYLE,
-    SETTING_FLIGHT_AREA,
-    SETTING_FLY_ON,
-    SETTING_RESTART,
-    SETTING_RESET,      // hosts with hasCoreRows: every setting back to its default, after a confirm
-    SETTING_VIEW,       // VIEW: SCREEN and ASPECT as one pick-list (the full SETTINGS)
-    SETTING_REUSABLE_TMS,
-    SETTING_INSTANT_TEXT,
-    SETTING_TRADE_EVOS,
-    SETTING_NUZLOCKE,
-    SETTING_LANGUAGE,   // LANGUAGE: a pick-list, AUTO first
-    // ZOOM must stay out of SETTING_SCENE's block: its rows are SETTING_SCENE + i, so a setting sat inside it read
-    // as a scene row (ZOOM's tap opened a scene's pick-list instead and the step never changed).
-    SETTING_ZOOM,       // hosts with zoomCount > 1: EXPAND's steps out (the app's SETTINGS > SCREEN > ZOOM)
-    SETTING_SCENE,      // + enum pd_scene: SCENE SPEEDS' rows, each a pick-list; the last, so nothing follows its ids
-};
-
-int ui_settings_follow(int scroll, int y, int height);
-// SETTINGS' rail: a tap on group [i]'s tab scrolls the list to it.
-void ui_settings_group(struct pd_ui* ui, int i);
-
 // The tabs TAB BAR offers, in the bar's order.
 #define UI_BAR_CHOICES 10
 extern const enum pd_tab UI_BAR_CHOICE[UI_BAR_CHOICES];
@@ -213,18 +160,10 @@ void ui_bag_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, 
 bool ui_bag_act(struct pd_ui* ui, int id, const struct pd_snapshot* s);
 // The party's slots for USE / GIVE's pick, the ones it can't go to faded.
 void ui_item_grid(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s);
-void ui_settings_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s,
-                     const struct pd_host_info* host);
 void ui_map_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s,
                 const struct pd_host_info* host);
 void ui_guide_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s);
 void ui_dex_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s);
-void ui_states_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_host_info* host);
-bool ui_states_act(struct pd_ui* ui, int id);
-void ui_boxes_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s);
-bool ui_boxes_act(struct pd_ui* ui, int id, const struct pd_snapshot* s);
-void ui_boxes_overlay(struct pd_ui* ui, struct pd_canvas* c);
-void ui_box_message(struct pd_ui* ui, struct pd_canvas* c);
 void ui_mon_summary(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s, const struct pd_mon* m,
                     const struct pd_mon* const* column, int columnCount, int shown, bool canTake, const char* pcLabel);
 void ui_overlay(struct pd_ui* ui, struct pd_canvas* c);
@@ -240,10 +179,6 @@ void ui_places_overlay(struct pd_ui* ui, struct pd_canvas* c, const struct pd_ga
 void ui_fly_overlay(struct pd_ui* ui, struct pd_canvas* c);
 void ui_guide_notice(struct pd_ui* ui, struct pd_canvas* c);
 void ui_dex_pick_overlay(struct pd_ui* ui, struct pd_canvas* c);
-// NUZLOCKE (pd_ui_nuzlocke.c): the tab, its pick / confirm, a tap on them.
-void ui_nuzlocke_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_host_info* host);
-void ui_nuzlocke_overlay(struct pd_ui* ui, struct pd_canvas* c);
-bool ui_nuzlocke_act(struct pd_ui* ui, int id);
 
 // A tap each tab's file handles; true if it was theirs.
 bool ui_map_act(struct pd_ui* ui, int id);
@@ -255,10 +190,6 @@ bool ui_card_act(struct pd_ui* ui, int id);
 void ui_card_tab(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s);
 bool ui_card_tick(struct pd_ui* ui, unsigned ms);
 
-// BATTLE's touch controls (pd_ui_battle_controls.c): whether they show now, the pane, a tap on it.
-bool ui_battle_controls_usable(const struct pd_ui* ui, const struct pd_snapshot* s);
-void ui_battle_controls(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s);
-bool ui_battle_controls_act(struct pd_ui* ui, int id, const struct pd_snapshot* s);
 // The party's slot SUGGESTIONS would send in (not one already out), or -1; a bit per party slot on the field.
 int ui_recommended_switch(const struct pd_snapshot* s);
 int ui_out_slots(const struct pd_snapshot* s);
@@ -267,19 +198,6 @@ void ui_party_grid(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* 
 // A beveled colour button (PlatinumButton), id < 0 = not tappable.
 // What a move does to the foe, as a chip (MultiplierChip): returns its width (c NULL: just measures).
 int ui_mult_chip(struct pd_canvas* c, int x, int y, int pct);
-// BATTLE STYLE > GEN 5 (pd_ui_battle_gen5.c): the controls' pane, and the closed ball behind INFO / SUGGESTIONS.
-void ui_battle_gen5(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g, const struct pd_snapshot* s, bool busy);
-void ui_gen5_closed_ball(struct pd_canvas* c);
-void ui_gen5_warm(struct pd_canvas* c);
-// The BATTLE tab's backdrop in GEN 5: the closed ball, or only the strip under the pane while the controls cover it.
-void ui_gen5_backdrop(struct pd_ui* ui, struct pd_canvas* c, const struct pd_snapshot* s);
-// Whether the BATTLE tab takes GEN 5's look for this game.
-bool ui_gen5_style(const struct pd_ui* ui, const struct pd_game* g);
-// BATTLE INFO on (INFO, SUGGESTIONS and the move ratings), and the ratings with BATTLE HINTS too.
-bool ui_battle_info_on(const struct pd_ui* ui);
-bool ui_battle_hints_on(const struct pd_ui* ui);
-// The battle's touch input is there for a single battle (whatever the game waits for now).
-bool ui_battle_input_on(const struct pd_ui* ui, const struct pd_snapshot* s);
 void ui_platinum(struct pd_ui* ui, struct pd_canvas* c, int x, int y, int w, int h, uint32_t fill, uint32_t frame, int id);
 // A PlatinumButton's label / back arrow, centred: white on its colour, the window's ink on a Game Boy game's plain box.
 void ui_platinum_label(struct pd_canvas* c, int x, int y, int w, int h, const char* text);

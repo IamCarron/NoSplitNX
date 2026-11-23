@@ -7,7 +7,6 @@
 #include "../frontend/gen5strip.h"
 #include "../frontend/ds_zoom.h"
 #include "../frontend/ui.h"
-#include "../frontend/sm_buttons_art.h"
 
 int main()
 {
@@ -388,18 +387,6 @@ int main()
         }
     }
 
-    // SmButtonsArt: atlas fits in 256x192 with valid cap metrics across supported languages.
-    for (int lang : { 0, 1, 2, 3, 4 })
-    {
-        SmButtonsArt::Ensure(lang);
-        for (int b = 0; b < SmButtons::COUNT; b++)
-        {
-            const SmButtons::Label& l = SmButtons::S().label[b];
-            assert(l.w > 0 && l.h > 0 && l.x + l.w <= 256 && l.y + l.h <= 192);
-            assert(l.capH > 5.0f && l.capTop >= 0.0f);
-        }
-    }
-
     // DsZoom camera: steps, eases out on overworld, looks around and snaps back on close.
     {
         DsZoom z;
@@ -570,5 +557,5 @@ int main()
     }
 
     SDL_Quit();
-    puts("Gen 5 layouts: single-screen Bag, battle questions, Gen5Strip, authentic STRIP + Poke Balls, SmButtons, DsZoom and compositors passed.");
+    puts("Gen 5 layouts: single-screen Bag, battle questions, Gen5Strip, authentic STRIP + Poke Balls, DsZoom and compositors passed.");
 }

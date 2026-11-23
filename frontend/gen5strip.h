@@ -14,7 +14,6 @@
 #include <vector>
 
 #include "merged.h"
-#include "sm_buttons.h"
 
 namespace Gen5Strip
 {
@@ -353,23 +352,6 @@ inline void Commands(Scene& sc, const ScreenImage& touch, const CommandLook& loo
     const uint32_t* px = touch.pixels;
     const uint8_t* fl = touch.flags;
     if (!px) return;
-    if (SmButtons::S().on)
-    {
-        // BATTLE BUTTONS: SUN AND MOON (sm_buttons.h): the four cells' room, the buttons shown
-        // FIGHT, POKEMON, BAG, RUN (the cells' FIGHT!, BAG, RUN, POKEMON), each over its game button.
-        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
-        for (const auto& c : look.cell)
-        {
-            x0 = std::min(x0, left + c[0] * s); y0 = std::min(y0, top + c[1] * s);
-            x1 = std::max(x1, left + (c[0] + c[2]) * s); y1 = std::max(y1, top + (c[1] + c[3]) * s);
-        }
-        static const int from[SmButtons::COUNT] = { 0, 3, 1, 2 };
-        int t[SmButtons::COUNT][4];
-        for (int b = 0; b < SmButtons::COUNT; b++)
-            for (int k = 0; k < 4; k++) t[b][k] = look.button[from[b]].touch[k];
-        SmButtons::Draw(sc, x0, y0, x1 - x0, y1 - y0, t, false);
-        return;
-    }
     // The icons of a double or triple battle (sprites, x 78-176, rows 109-125; none in a single
     // battle, the player's row of balls starting at row 127).
     int ix0 = 256, iy0 = 192, ix1 = -1, iy1 = -1;

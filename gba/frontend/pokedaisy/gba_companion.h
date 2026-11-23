@@ -19,7 +19,6 @@ extern "C" {
 #include "pokedaisy/pk_rewind.h"
 #include "pokedaisy/pk_wide.h"
 #ifdef GBAW_POKEDAISY
-#include "pd_binput.h"
 #include "pd_canvas.h"
 #include "pd_dex.h"
 #include "pd_font.h"
@@ -45,7 +44,6 @@ extern "C" {
 #include "pokedaisy/pd_flight_area.h"
 #include "pokedaisy/pd_flight_gen.h"
 #include "pokedaisy/pk_call.h"
-#include "pokedaisy/pk_cheats.h"
 #include "pokedaisy/pk_flight.h"
 #include "pokedaisy/wild.h"
 #endif
@@ -267,10 +265,7 @@ public:
         }
         wildSwitch = (!isGb && game.cfg) ? pk_wild_switch_find(romBytes.data(), romLen) : 0;
 
-        memset(&binput, 0, sizeof binput);
-        if (core) pd_binput_init(&binput, &game, ReadMemory, nullptr, core);
         pd_ui_init(&ui, &settings);
-        ui.battleInput = &binput;
         ui.handheldDex = ui.handheldParty = ui.guideController = ui.shoulderTabs = ui.hideSettingsTab = true;
         memset(&host, 0, sizeof host);
         host.hideScreenMode = true;
@@ -303,7 +298,6 @@ public:
 #ifdef GBAW_POKEDAISY
         if (active)
         {
-            pd_binput_cancel(&binput);
             pd_settings_save(&settings, settingsPath.c_str());
             pk_flight_configure(nullptr, 0);
             pd_flight_area_end();
@@ -333,7 +327,6 @@ public:
         flyAsk = flyStage = flashAsk = scenicAsk = 0;
         job = JOB_NONE;
         hudDrawnKey = 0;
-        pd_binput_cancel(&binput);
         if (active && core)
         {
             if (freeFlight)
@@ -452,22 +445,12 @@ public:
 #ifdef GBAW_POKEDAISY
         if (active && !AnyMenuOpen())
         {
-            bool bExcl = false;
-            const uint32_t bKeys = pd_binput_tick(&binput, &bExcl);
-            if (bExcl)
+            if (settings.autoRun && (keys & 0xF0u) && pk_wide_scene() == PK_WIDE_SCENE_FIELD && !snap.inBattle)
+                keys |= (1u << 1); // K_B
+            if (injectKeyFrames > 0)
             {
-                keys = bKeys;
-            }
-            else
-            {
-                keys |= bKeys;
-                if (settings.autoRun && (keys & 0xF0u) && pk_wide_scene() == PK_WIDE_SCENE_FIELD && !snap.inBattle)
-                    keys |= (1u << 1); // K_B
-                if (injectKeyFrames > 0)
-                {
-                    keys |= injectKeys;
-                    if (--injectKeyFrames == 0) injectKeys = 0;
-                }
+                keys |= injectKeys;
+                if (--injectKeyFrames == 0) injectKeys = 0;
             }
         }
 #endif
@@ -788,8 +771,6 @@ public:
                 pd_ui_touch(&ui, std::clamp(cx, 0, lastCanvasW - 1), std::clamp(cy, 0, lastCanvasH - 1), false);
             }
             ProcessUiAction(core, actions);
-            if (companionOpen && snap.inBattle && pd_binput_exclusive(&binput))
-                companionOpen = false;
             return true;
         }
         if (quickOpen && down && overlayDst.w > 0 && overlayDst.h > 0)
@@ -980,7 +961,6 @@ private:
     struct pd_game game{};
     struct pd_snapshot snap{};
     struct pd_settings settings{};
-    struct pd_binput binput{};
     struct pd_ui ui{};
     struct pd_host_info host{};
     std::vector<uint32_t> overlayBuf, hudBuf;

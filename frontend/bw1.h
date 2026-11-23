@@ -36,13 +36,10 @@ public:
     bool topFaded = false;
 
     // The battle's buttons on a wide view (BATTLE BUTTONS in the pause menu;
-    // ssrecomp.cfg key battle_buttons=strip|corner|panel|standard|sunmoon):
-    //   STRIP:    authentic BW/B2W2 touch-screen plates mutually co-sized with the prompt (default);
-    //   CORNER:   touch-screen panel in the lower right corner, mutually co-sized;
-    //   PANEL:    touch-screen panel scaled to the message box's band, mutually co-sized;
-    //   STANDARD: flat rounded strip buttons from Gen5Strip (BattleStrip), co-sized;
-    //   SUNMOON:  Sun and Moon styled buttons (Gen5Strip::Commands).
-    enum { BUTTONS_CORNER, BUTTONS_STRIP, BUTTONS_PANEL, BUTTONS_STANDARD, BUTTONS_SUNMOON, BUTTONS_MODERN };
+    // ssrecomp.cfg key battle_buttons=strip|modern):
+    //   STRIP:  authentic BW/B2W2 touch-screen plates mutually co-sized with the prompt;
+    //   MODERN: live PokeDaisy battle strip across Gen 4 and Gen 5, falling back to STRIP.
+    enum { BUTTONS_STRIP = 1, BUTTONS_MODERN = 5 };
     int battleButtons = BUTTONS_STRIP;
 
     // romPath: the game being started; names: the functions the layouts watch (Black's own
@@ -56,11 +53,8 @@ public:
             char line[128];
             while (fgets(line, sizeof(line), f))
                 if (!strncmp(line, "battle_buttons=", 15))
-                    battleButtons = !strncmp(line + 15, "corner", 6) ? BUTTONS_CORNER
-                        : !strncmp(line + 15, "panel", 5) ? BUTTONS_PANEL
-                        : (!strncmp(line + 15, "standard", 8) || !strncmp(line + 15, "rounded", 7)) ? BUTTONS_STANDARD
-                        : !strncmp(line + 15, "sunmoon", 7) ? BUTTONS_SUNMOON
-                        : (!strncmp(line + 15, "modern", 6) || !strncmp(line + 15, "pokedaisy", 9)) ? BUTTONS_MODERN : BUTTONS_STRIP;
+                    battleButtons = (!strncmp(line + 15, "modern", 6) || !strncmp(line + 15, "pokedaisy", 9))
+                        ? BUTTONS_MODERN : BUTTONS_STRIP;
             fclose(f);
         }
         char code[5] = {};
@@ -287,73 +281,12 @@ public:
                 }
                 return;
             }
-            const int buttons = many && battleButtons == BUTTONS_CORNER ? BUTTONS_PANEL : battleButtons;
             if (!screens) return;
             const bool moves = Fw->Ran(moveMenu, 1), command = !moves && Fw->Ran(commandMenu, 1);
             // (Choosing a move's target, in a double, triple or rotation battle: the foes'
             // buttons above, the player's side below, touch screen rows 32-134.)
             const bool target = !moves && !command && Fw->Ran(targetMenu, 1);
-            // CORNER / PANEL: keep mutual battle prompt co-sizing so localized text
-            // ("¿Qué debería hacer ...?") and the buttons never overlap on wide screens.
-            if (buttons == BUTTONS_CORNER || buttons == BUTTONS_PANEL)
-            {
-                if (!wideView || !(moves || command || target))
-                    return;
-                std::vector<Element> cornerKeep, keep;
-                for (const Element& e : sc.items)
-                {
-                    if (e.screen == 1 || (e.screen == -1 && e.border)) cornerKeep.push_back(e);
-                    else keep.push_back(e);
-                }
-                sc.items = std::move(keep);
-                float promptRight = viewLeft + 4.0f;
-                float minBtnW = 96.0f, idealBtnW = 112.0f, maxBtnW = 120.0f;
-                Gen5BattleButtonBounds(buttons, moves, target, 103, minBtnW, idealBtnW, maxBtnW);
-                float targetBtnW = idealBtnW;
-                AdaptGen5BattlePrompt(sc, viewWidth, screens, minBtnW, idealBtnW, maxBtnW,
-                    promptRight, targetBtnW);
-                const float availW = std::max(84.0f, std::min(maxBtnW, viewRight - 2.0f - (promptRight + 5.0f)));
-                if (buttons == BUTTONS_CORNER)
-                {
-                    const float innerAvail = std::max(78.0f, availW - 4.0f);
-                    for (Element& e : cornerKeep)
-                    {
-                        if (e.screen == 1 && e.sw > 0)
-                        {
-                            e.scale = std::max(0.28f, innerAvail / (float)e.sw);
-                            e.dx = viewRight - 4.0f - e.sw * e.scale;
-                            e.dy = 189.0f - e.sh * e.scale;
-                        }
-                    }
-                    if (cornerKeep.size() == 2 && cornerKeep[0].screen == -1 && cornerKeep[1].screen == 1)
-                    {
-                        const Element& c = cornerKeep[1];
-                        const float pad = 2.0f;
-                        cornerKeep[0].dx = c.dx - pad;
-                        cornerKeep[0].dy = c.dy - pad;
-                        cornerKeep[0].sw = (int)(c.sw * c.scale + 2 * pad);
-                        cornerKeep[0].sh = (int)(c.sh * c.scale + 2 * pad);
-                    }
-                    for (const Element& e : cornerKeep) sc.items.push_back(e);
-                }
-                else
-                {
-                    Element c = moves ? Crop(1, 0, 30, 256, 98) : target ? Crop(1, 0, 32, 256, 103)
-                        : Crop(1, 0, 78, 256, 114);
-                    c.scale = std::min(44.0f / c.sh, availW / c.sw);
-                    c.dx = viewRight - 2 - c.sw * c.scale;
-                    c.dy = 190 - c.sh * c.scale;
-                    c.border = true;
-                    c.borderRadius = 3.0f;
-                    c.borderColor = 0x2A2E38;
-                    sc.items.push_back(c);
-                }
-                return;
-            }
-            // STRIP (authentic BW1 plates) / STANDARD (flat rounded) / SUNMOON: keeps party Poké
-            // Balls, clean hexagonal move/target cards, Shift/Rotation/Back buttons, mutual tray
-            // co-sizing, and 4-frame stability across transitions on both wide and 4:3 views.
-            const bool strip = (buttons == BUTTONS_STRIP || buttons == BUTTONS_STANDARD || buttons == BUTTONS_SUNMOON) &&
+            const bool strip = battleButtons == BUTTONS_STRIP &&
                 (Fw->Ran(moveMenu, 4) || Fw->Ran(commandMenu, 4) || Fw->Ran(targetMenu, 4));
             if (!strip)
                 return;
@@ -392,7 +325,7 @@ public:
                     promptRight, targetBtnW);
                 availRoom = std::max(84.0f, viewRight - 2.0f - (promptRight + 5.0f));
             }
-            BattleStrip(sc, wideView ? viewRight : 256, screens, gridArg, party, availRoom, buttons == BUTTONS_STRIP);
+            BattleStrip(sc, wideView ? viewRight : 256, screens, gridArg, party, availRoom, true);
             return;
         }
         if (!strcmp(sc.name, "battle-list") && screens)
@@ -410,7 +343,7 @@ public:
         if (!strcmp(sc.name, "battle-choice") && screens && !sc.items.empty())
         {
             if (boxesAge < 600 && !topFaded) Gen5Strip::KeepBoxes(sc, boxesTop, boxes, 1);
-            if (battleButtons != BUTTONS_STRIP && battleButtons != BUTTONS_STANDARD && battleButtons != BUTTONS_SUNMOON) return;
+            if (battleButtons != BUTTONS_STRIP) return;
             const Scene cut = sc;
             float availRoom = -1.0f;
             if (wideView && !topFaded)

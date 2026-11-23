@@ -4,6 +4,13 @@
 ## Unreleased
 
 
+## v1.3.0-beta.5 — Codebase Cleanup & Simplified DS Battle Styles
+
+- **Simplified DS Battle Buttons (`Settings → Graphics`)**: removed legacy **Corner**, **Panel**, legacy **Rounded** and **Sun and Moon** button variants, leaving two clear options — **Modern** (live PokeDaisy Battle Strip, default) and **Strip / Standard** (authentic DS touch-screen plates).
+- **Removed unused Companion & libretro modules**: dropped dead **Save Editor**, **PC Boxes**, **Nuzlocke Tracker**, **States**, **Randomizer matcher**, GBA **Battle Touch Controls**, redundant `pd_ui_settings` menus and unused GBA co-op / cheat / TM helpers, keeping **Walkthrough Guide**, **RetroAchievements**, **ROM Music**, **HOME Forwarders**, **Free Flight 3D** and the **Updater** intact.
+- **Removed unused mobile virtual touchpad code**: dropped Android/iOS phone-only touchpad overlays (`touchpad.h`, `SSR_PHONE` / `GBAW_PHONE` conditionals) while keeping desktop and Nintendo Switch touch behaviour unchanged.
+
+
 ## v1.3.0-beta.4 — Clean UI, Settings & Quick Menu Unification
 
 - **Removed the duplicate `⚙` Settings tab from Companion (`ZL`) on DS, GBA & GB/GBC**: `ZL` now contains purely gameplay companion tools (**Party**, **Bag**, **Map**, **Guide**, **Pokédex**, and live **Battle Info / Suggestions**), while every display, HUD, audio, gameplay and control setting lives in one place inside NoSplitNX's `+` Pause Menu.

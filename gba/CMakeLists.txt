@@ -136,8 +136,7 @@ set(GBAW_PK_WIDE
     frontend/pokedaisy/pk_rewind.c
     frontend/pokedaisy/pk_gb_field.c
     frontend/pokedaisy/pk_call.c
-    frontend/pokedaisy/pk_flight.c
-    frontend/pokedaisy/pk_cheats.c)
+    frontend/pokedaisy/pk_flight.c)
 set_source_files_properties(frontend/pokedaisy/pk_wide.c PROPERTIES COMPILE_DEFINITIONS PK_WIDE_NO_GUARD)
 set_source_files_properties(frontend/pokedaisy/pk_wide_gb.c PROPERTIES COMPILE_DEFINITIONS "PK_WIDE_NO_GUARD;PK_WIDE_GB_GLOW=1")
 if(TARGET pokedaisy_core)
@@ -147,7 +146,6 @@ if(TARGET pokedaisy_core)
         frontend/pokedaisy/flash.c
         frontend/pokedaisy/wild.c
         frontend/pokedaisy/field_items.c
-        frontend/pokedaisy/tm_teach.c
         frontend/pokedaisy/gb_field.c
         frontend/pokedaisy/polished_field.c
         frontend/pokedaisy/pd_flight_area.c)

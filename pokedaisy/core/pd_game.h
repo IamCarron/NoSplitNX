@@ -153,7 +153,6 @@ extern const struct pd_battle_layout pd_battle_layout_vanilla, pd_battle_layout_
 
 struct pd_gb_config;
 struct pd_game_entry;
-struct pd_randomized;
 
 enum { PD_DEX_SB1 = 1, PD_DEX_SB2, PD_DEX_FIXED };
 
@@ -482,7 +481,6 @@ struct pd_game {
     bool hackMaps;
     // What the app shows of this ROM beyond its config (pd_games_gen.c, by SHA-1): its look, its PC's moves; NULL = none.
     const struct pd_game_entry* entry;
-    const struct pd_randomized* randomized; // retail as a randomizer left it (pd_randomized.c), NULL = not
     char language; // the ROM header's language letter ('E', 'J', ...)
 };
 
