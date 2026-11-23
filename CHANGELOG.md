@@ -4,6 +4,13 @@
 ## Unreleased
 
 
+## v1.3.0-beta.6 — Modern Pause Drawer, Launcher Redesign & Original Branding
+
+- **Floating Pause Menu (`+`) side drawer**: redesigned the in-game pause menu on standard screens as a translucent left-hand drawer that keeps the live game visible beside a smooth horizontal fade, complete with vector icons per option, real ON/OFF switches, a tactile volume slider bar, 60 fps animated selection highlights, and an integrated footer for notes and button hints.
+- **Graphite charcoal & crimson-red Launcher overhaul**: introduced a neutral graphite-charcoal and crimson-red palette across both menus and the launcher, a unified single-row top bar on widescreen displays, a cleaner showcase hero card that features cover art when available, full-bleed cover cards with bottom title gradients, and separated **DS**, **GBA**, and **GB/C** tabs.
+- **Original branding & neutral platform labels**: replaced third-party console icons, Poké Ball motifs and full brand strings across the top emblem, geometric background rings, guide icon, cart labels and category tabs with an original minimalist 16:9 fused-screen NoSplitNX mark and concise technical platform labels (`DS`, `GBA`, `GB/C`).
+
+
 ## v1.3.0-beta.5 — Codebase Cleanup & Simplified DS Battle Styles
 
 - **Simplified DS Battle Buttons (`Settings → Graphics`)**: removed legacy **Corner**, **Panel**, legacy **Rounded** and **Sun and Moon** button variants, leaving two clear options — **Modern** (live PokeDaisy Battle Strip, default) and **Strip / Standard** (authentic DS touch-screen plates).

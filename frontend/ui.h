@@ -165,6 +165,85 @@ struct Canvas
         }
     }
 
+    void FillGradH(int x, int y, int rw, int rh, uint32_t leftArgb, uint32_t rightArgb)
+    {
+        if (rw <= 0 || rh <= 0) return;
+        int y0 = std::max(0, y), y1 = std::min(h, y + rh);
+        int x0 = std::max(0, x), x1 = std::min(w, x + rw);
+        if (x1 <= x0 || y1 <= y0) return;
+        if (x0 < x0d) x0d = x0;
+        if (y0 < y0d) y0d = y0;
+        if (x1 > x1d) x1d = x1;
+        if (y1 > y1d) y1d = y1;
+        const int span = std::max(1, rw - 1);
+        std::vector<uint32_t> cols((size_t)(x1 - x0));
+        for (int xx = x0; xx < x1; xx++)
+        {
+            const int dx = xx - x, inv = span - dx;
+            const uint32_t a = (((leftArgb >> 24) & 0xFF) * inv + ((rightArgb >> 24) & 0xFF) * dx) / span;
+            const uint32_t r = (((leftArgb >> 16) & 0xFF) * inv + ((rightArgb >> 16) & 0xFF) * dx) / span;
+            const uint32_t g = (((leftArgb >> 8) & 0xFF) * inv + ((rightArgb >> 8) & 0xFF) * dx) / span;
+            const uint32_t b = ((leftArgb & 0xFF) * inv + (rightArgb & 0xFF) * dx) / span;
+            cols[(size_t)(xx - x0)] = (a << 24) | (r << 16) | (g << 8) | b;
+        }
+        for (int yy = y0; yy < y1; yy++)
+        {
+            uint32_t* row = &px[(size_t)yy * w];
+            for (int xx = x0; xx < x1; xx++)
+            {
+                const uint32_t col = cols[(size_t)(xx - x0)];
+                const uint32_t a = col >> 24;
+                if (a == 255) row[xx] = col;
+                else if (a > 0) BlendPixel(row[xx], col);
+            }
+        }
+    }
+
+    void DrawChevron(int cx, int cy, int s, bool right, uint32_t col)
+    {
+        if ((col >> 24) == 0) return;
+        const int half = std::max(3, s + 2);
+        const int thk = std::max(1, (s + 1) / 2);
+        const int wSpan = (half * 2) / 3 + 1;
+        for (int dy = -half; dy <= half; dy++)
+        {
+            const int prog = half - std::abs(dy);
+            const int px = right ? (cx - wSpan / 2 + (prog * 2) / 3) : (cx + wSpan / 2 - (prog * 2) / 3);
+            FillBlend(px, cy + dy, thk, 1, col);
+        }
+    }
+
+    void DrawGeometricWatermark(int cx, int cy, int r, uint32_t col, int clipX0 = 0, int clipY0 = 0, int clipX1 = -1, int clipY1 = -1)
+    {
+        if (r < 6 || (col >> 24) == 0) return;
+        if (clipX1 < 0) clipX1 = w;
+        if (clipY1 < 0) clipY1 = h;
+        const int x0 = std::max(std::max(0, clipX0), cx - r);
+        const int x1 = std::min(std::min(w, clipX1), cx + r + 1);
+        const int y0 = std::max(std::max(0, clipY0), cy - r);
+        const int y1 = std::min(std::min(h, clipY1), cy + r + 1);
+        if (x1 <= x0 || y1 <= y0) return;
+        const int ringT = std::max(2, r / 16);
+        const int r1Out = r * r, r1In = std::max(1, (r - ringT) * (r - ringT));
+        const int r2 = std::max(4, r * 64 / 100);
+        const int r2Out = r2 * r2, r2In = std::max(1, (r2 - ringT) * (r2 - ringT));
+        const int r3 = std::max(2, r * 30 / 100);
+        const int r3Out = r3 * r3, r3In = std::max(1, (r3 - std::max(1, ringT - 1)) * (r3 - std::max(1, ringT - 1)));
+        for (int py = y0; py < y1; py++)
+        {
+            const int dy = py - cy;
+            for (int px = x0; px < x1; px++)
+            {
+                const int dx = px - cx;
+                const int d2 = dx * dx + dy * dy;
+                if (d2 > r1Out) continue;
+                const bool hit = (d2 >= r1In) || (d2 <= r2Out && d2 >= r2In) || (d2 <= r3Out && d2 >= r3In);
+                if (hit)
+                    BlendPixel(this->px[(size_t)py * w + px], col);
+            }
+        }
+    }
+
     void OutlineRound(int x, int y, int rw, int rh, int radius, int t, uint32_t argb)
     {
         if (t <= 0 || rw <= 0 || rh <= 0 || (argb >> 24) == 0) return;
@@ -524,7 +603,7 @@ struct Canvas
         return a | (r << 16) | (g << 8) | b;
     }
 
-    void DrawButtonBadge(int x, int y, const std::string& label, int scale, uint32_t badgeColor = 0xFF2A344A, uint32_t textCol = 0xFFFFFFFF, uint32_t borderCol = 0xFF455577)
+    void DrawButtonBadge(int x, int y, const std::string& label, int scale, uint32_t badgeColor = 0xFF26262E, uint32_t textCol = 0xFFFFFFFF, uint32_t borderCol = 0xFF42424E)
     {
         const int s = std::max(1, scale);
         const int fontH = std::max(12, 5 * s + 1);
@@ -532,50 +611,226 @@ struct Canvas
         const int bh = 12 * s;
         const int bw = ButtonBadgeWidth(label, s);
         const int rad = bh / 2;
-        const uint32_t topBevel = ShadeArgb(badgeColor, 30);
-        const uint32_t botBevel = ShadeArgb(badgeColor, -25);
+        const uint32_t topBevel = ShadeArgb(badgeColor, 26);
+        const uint32_t botBevel = ShadeArgb(badgeColor, -20);
         FillGradV(x, y, bw, bh, topBevel, botBevel, rad);
         OutlineRound(x, y, bw, bh, rad, 1, borderCol);
-        if (bh > 4) FillBlend(x + s + 1, y + 1, bw - 2 * (s + 1), 1, 0x33FFFFFF);
+        if (bh > 4) FillBlend(x + s + 1, y + 1, bw - 2 * (s + 1), 1, 0x2EFFFFFF);
         ModernText(x + (bw - tw) / 2, y + (bh - fontH) / 2, label, fontH, textCol, false);
     }
 
     void DrawSwitch(int x, int y, int scale, bool on, uint32_t accentColor)
     {
         const int s = std::max(1, scale);
-        const int sw = 22 * s, sh = 11 * s;
+        const int sw = 20 * s, sh = 10 * s;
         const int rad = sh / 2;
-        const uint32_t trackBg = on ? accentColor : 0xFF262E3E;
-        const uint32_t trackBorder = on ? (accentColor | 0xFF000000) : 0xFF3D4B63;
-        FillRound(x, y, sw, sh, rad, trackBg);
-        OutlineRound(x, y, sw, sh, rad, 1, trackBorder);
-        const int knobSz = sh - 2 * s;
-        const int knobX = on ? (x + sw - knobSz - s) : (x + s);
-        const int knobY = y + s;
-        ShadowRound(knobX, knobY, knobSz, knobSz, knobSz / 2, s, 60);
-        FillGradV(knobX, knobY, knobSz, knobSz, 0xFFFFFFFF, 0xFFD8E2EC, knobSz / 2);
-        OutlineRound(knobX, knobY, knobSz, knobSz, knobSz / 2, 1, 0xFF94A3B8);
+        const uint32_t trackTop = on ? ShadeArgb(accentColor, 20) : 0xFF272730;
+        const uint32_t trackBot = on ? ShadeArgb(accentColor, -22) : 0xFF1C1C23;
+        const uint32_t trackBd = on ? (ShadeArgb(accentColor, 42) | 0xFF000000u) : 0xFF42424E;
+        FillGradV(x, y, sw, sh, trackTop, trackBot, rad);
+        OutlineRound(x, y, sw, sh, rad, 1, trackBd);
+        const int inset = std::max(1, s * 2 / 3);
+        const int knobSz = sh - 2 * inset;
+        const int knobX = on ? (x + sw - knobSz - inset) : (x + inset);
+        const int knobY = y + inset;
+        ShadowRound(knobX, knobY, knobSz, knobSz, knobSz / 2, std::max(1, s / 2), 70);
+        FillGradV(knobX, knobY, knobSz, knobSz, on ? 0xFFFFFFFFu : 0xFFF2F2F5u, on ? 0xFFEAEAEFu : 0xFFC8C8D2u, knobSz / 2);
     }
 
     void DrawSliderBar(int x, int y, int rw, int rh, int progress, int maxProgress, uint32_t accentColor, bool focused = false)
     {
         if (rw <= 0 || rh <= 0 || maxProgress <= 0) return;
-        const int rad = rh / 2;
-        FillRound(x, y, rw, rh, rad, 0xFF19202E);
-        OutlineRound(x, y, rw, rh, rad, 1, 0xFF2E394E);
+        const int rad = std::max(2, rh / 2);
+        FillRound(x, y, rw, rh, rad, 0xFF26262F);
+        OutlineRound(x, y, rw, rh, rad, 1, 0xFF3E3E4A);
         const int fillW = std::clamp((progress * rw) / maxProgress, 0, rw);
         if (fillW > 0)
         {
             const uint32_t fillTop = ShadeArgb(accentColor, 35);
             FillGradV(x, y, fillW, rh, fillTop, accentColor, rad);
-            if (focused) GlowRound(x, y, fillW, rh, rad, 2, (accentColor & 0x00FFFFFF) | 0x66000000);
+            if (focused) GlowRound(x, y, fillW, rh, rad, 2, (accentColor & 0x00FFFFFFu) | 0x55000000u);
         }
-        const int thumbSz = rh + 4;
+        const int thumbSz = rh + std::max(4, rh / 2);
         const int thumbX = x + std::clamp((progress * (rw - thumbSz)) / maxProgress, 0, rw - thumbSz);
-        const int thumbY = y - 2;
-        ShadowRound(thumbX, thumbY, thumbSz, thumbSz, thumbSz / 2, 2, 80);
-        FillGradV(thumbX, thumbY, thumbSz, thumbSz, 0xFFFFFFFF, 0xFFCBD5E1, thumbSz / 2);
-        OutlineRound(thumbX, thumbY, thumbSz, thumbSz, thumbSz / 2, 1, focused ? accentColor : 0xFF64748B);
+        const int thumbY = y - (thumbSz - rh) / 2;
+        ShadowRound(thumbX, thumbY, thumbSz, thumbSz, thumbSz / 2, 2, 90);
+        FillGradV(thumbX, thumbY, thumbSz, thumbSz, 0xFFFFFFFF, 0xFFE4E4EC, thumbSz / 2);
+        OutlineRound(thumbX, thumbY, thumbSz, thumbSz, thumbSz / 2, 1, focused ? (accentColor | 0xFF000000u) : 0xFF6E6E7A);
+    }
+
+    void DrawMenuIcon(int x, int y, int sz, const std::string& rawLabel, uint32_t col, uint32_t accent)
+    {
+        if (sz < 8 || (col >> 24) == 0) return;
+        const int cx = x + sz / 2, cy = y + sz / 2;
+        const int s = std::max(1, sz / 9);
+        if (rawLabel == "RESUME")
+        {
+            const int h2 = sz * 36 / 100;
+            const int lx = x + sz * 30 / 100;
+            const int pw = std::max(3, sz * 46 / 100);
+            for (int dx = 0; dx < pw; dx++)
+            {
+                const int half = h2 * (pw - dx) / pw;
+                FillBlend(lx + dx, cy - half, 1, half * 2 + 1, col);
+            }
+        }
+        else if (rawLabel == "COMPANION")
+        {
+            const int bw = sz * 76 / 100, bh = sz * 64 / 100;
+            OutlineRound(cx - bw / 2, cy - bh / 2, bw, bh, std::max(2, s), std::max(1, s), col);
+            const int dr = std::max(2, sz * 20 / 100);
+            for (int dy = -dr; dy <= dr; dy++)
+            {
+                const int span = dr - std::abs(dy);
+                FillBlend(cx - span, cy + dy, span * 2 + 1, 1, accent);
+            }
+        }
+        else if (rawLabel == "SAVE STATE" || rawLabel == "LOAD STATE" || rawLabel == "SAVE BACKUPS")
+        {
+            const int tw = sz * 70 / 100, tx = cx - tw / 2, th = std::max(2, s + 1);
+            const int by = y + sz - th - s;
+            FillBlend(tx, by, tw, th, col);
+            FillBlend(tx, by - s * 2, th, s * 2, col);
+            FillBlend(tx + tw - th, by - s * 2, th, s * 2, col);
+            if (rawLabel == "SAVE BACKUPS")
+            {
+                FillRound(tx + s, y + s * 2, tw - 2 * s, sz * 42 / 100, s, col);
+            }
+            else
+            {
+                const bool up = rawLabel == "LOAD STATE";
+                const int aw = std::max(2, s);
+                FillBlend(cx - aw / 2, y + s, aw, sz * 46 / 100, col);
+                const int tipY = up ? y + s : y + sz * 58 / 100;
+                const int span = std::max(2, s * 2);
+                for (int i = 0; i <= span; i++)
+                {
+                    const int ay = up ? (tipY + i) : (tipY - i);
+                    FillBlend(cx - i, ay, i * 2 + 1, 1, col);
+                }
+            }
+        }
+        else if (rawLabel == "FAST FORWARD")
+        {
+            const int h2 = sz * 30 / 100, pw = std::max(2, sz * 28 / 100);
+            for (int k = 0; k < 2; k++)
+            {
+                const int lx = x + sz * (18 + k * 34) / 100;
+                for (int dx = 0; dx < pw; dx++)
+                {
+                    const int half = h2 * (pw - dx) / pw;
+                    FillBlend(lx + dx, cy - half, 1, half * 2 + 1, col);
+                }
+            }
+        }
+        else if (rawLabel == "SETTINGS")
+        {
+            const int lx = x + s, lw = sz - 2 * s, lh = std::max(1, s);
+            const int y1 = y + sz * 30 / 100, y2 = y + sz * 68 / 100;
+            FillRound(lx, y1, lw, lh, 1, col);
+            FillRound(lx, y2, lw, lh, 1, col);
+            const int k = std::max(3, sz * 26 / 100);
+            FillRound(lx + lw * 65 / 100 - k / 2, y1 + lh / 2 - k / 2, k, k, k / 2, col);
+            FillRound(lx + lw * 32 / 100 - k / 2, y2 + lh / 2 - k / 2, k, k, k / 2, col);
+        }
+        else if (rawLabel == "GRAPHICS" || rawLabel == "DISPLAY")
+        {
+            const int mw = sz * 82 / 100, mh = sz * 58 / 100;
+            const int mx = cx - mw / 2, my = y + s * 2;
+            OutlineRound(mx, my, mw, mh, std::max(2, s), std::max(1, s), col);
+            FillBlend(cx - s, my + mh, s * 2, s * 2, col);
+            FillBlend(cx - mw / 4, my + mh + s * 2, mw / 2, std::max(1, s), col);
+        }
+        else if (rawLabel == "SOUND" || rawLabel == "VOLUME")
+        {
+            const int bw = std::max(2, sz * 22 / 100), bh = std::max(3, sz * 30 / 100);
+            FillBlend(x + s, cy - bh / 2, bw, bh, col);
+            const int cw = std::max(3, sz * 24 / 100);
+            for (int dx = 0; dx < cw; dx++)
+            {
+                const int half = bh / 2 + dx * (sz * 18 / 100) / cw;
+                FillBlend(x + s + bw + dx, cy - half, 1, half * 2 + 1, col);
+            }
+            FillBlend(x + sz - s * 2, cy - sz * 24 / 100, std::max(1, s), sz * 48 / 100, col);
+        }
+        else if (rawLabel == "REWIND")
+        {
+            const int h2 = sz * 30 / 100, pw = std::max(2, sz * 28 / 100);
+            for (int k = 0; k < 2; k++)
+            {
+                const int rx2 = x + sz * (48 + k * 34) / 100;
+                for (int dx = 0; dx < pw; dx++)
+                {
+                    const int half = h2 * (pw - dx) / pw;
+                    FillBlend(rx2 - dx, cy - half, 1, half * 2 + 1, col);
+                }
+            }
+        }
+        else if (rawLabel == "AUTO-RUN")
+        {
+            const int chevronS = std::max(2, s);
+            DrawChevron(cx - sz * 18 / 100, cy, chevronS, true, col);
+            DrawChevron(cx + sz * 12 / 100, cy, chevronS, true, col);
+            FillBlend(x + sz * 22 / 100, y + sz - s * 2, sz * 56 / 100, std::max(1, s), col);
+        }
+        else if (rawLabel == "GAMEPLAY")
+        {
+            const int r = sz * 36 / 100;
+            OutlineRound(cx - r, cy - r, r * 2, r * 2, r, std::max(1, s), col);
+            const int d = std::max(3, s * 2);
+            FillRound(cx - d / 2, cy - d / 2, d, d, d / 2, accent);
+        }
+        else if (rawLabel == "CONTROLS" || rawLabel == "KEYS AND BUTTONS" || rawLabel == "CONTROLLER" || rawLabel == "KEY BINDINGS")
+        {
+            const int arm = std::max(2, sz * 26 / 100), len = sz * 76 / 100;
+            FillRound(cx - len / 2, cy - arm / 2, len, arm, 1, col);
+            FillRound(cx - arm / 2, cy - len / 2, arm, len, 1, col);
+        }
+        else if (rawLabel == "LANGUAGE")
+        {
+            const int r = sz * 38 / 100;
+            OutlineRound(cx - r, cy - r, r * 2, r * 2, r, std::max(1, s), col);
+            FillBlend(cx - r + 1, cy, r * 2 - 2, std::max(1, s), col);
+            FillBlend(cx, cy - r + 1, std::max(1, s), r * 2 - 2, col);
+        }
+        else if (rawLabel == "CHEATS" || rawLabel == "POPULAR CHEATS")
+        {
+            DrawChevron(cx - sz * 20 / 100, cy, std::max(1, s), false, col);
+            DrawChevron(cx + sz * 20 / 100, cy, std::max(1, s), true, col);
+        }
+        else if (rawLabel == "RETROACHIEVEMENTS" || rawLabel == "ACHIEVEMENTS")
+        {
+            const int cw = sz * 56 / 100, ch = sz * 44 / 100;
+            const int rx = cx - cw / 2, ry = y + s;
+            FillRound(rx, ry, cw, ch, std::max(2, s), col);
+            FillBlend(cx - s, ry + ch, s * 2, s * 2, col);
+            FillBlend(cx - cw / 3, ry + ch + s * 2, cw * 2 / 3, std::max(1, s), col);
+        }
+        else if (rawLabel == "RESET GAME")
+        {
+            const int r = sz * 36 / 100;
+            OutlineRound(cx - r, cy - r, r * 2, r * 2, r, std::max(1, s), col);
+            FillBlend(cx + 1, cy - r - 1, r, r / 2 + 2, 0x00000000);
+            FillRound(cx, cy - r - s, s * 2, s * 2, 1, col);
+        }
+        else if (rawLabel == "QUIT" || rawLabel == "QUIT GAME" || rawLabel == "LOG OUT")
+        {
+            const int dw = sz * 44 / 100, dh = sz * 76 / 100;
+            const int dx = x + s;
+            OutlineRound(dx, cy - dh / 2, dw, dh, s, std::max(1, s), col);
+            FillBlend(cx, cy - std::max(1, s / 2), sz * 36 / 100, std::max(2, s), col);
+            DrawChevron(x + sz - s * 2, cy, std::max(1, s), true, col);
+        }
+        else if (rawLabel == "BACK" || rawLabel == "CANCEL")
+        {
+            DrawChevron(cx - s, cy, std::max(1, s), false, col);
+            FillBlend(cx - s, cy - std::max(1, s / 2), sz * 40 / 100, std::max(2, s), col);
+        }
+        else
+        {
+            const int d = std::max(4, s * 2);
+            FillRound(cx - d / 2, cy - d / 2, d, d, d / 2, col);
+        }
     }
 
     // 5x7 glyphs, one row per byte, bit 4 is the leftmost pixel.
@@ -660,58 +915,70 @@ struct Canvas
 
 };
 
-// Compact NoSplitNX emblem: one 16:9 widescreen with a Poké Ball framed by Switch Joy-Con sides.
-inline void DrawNoSplitLogo(Canvas& c, int x, int y, int s, uint32_t frameColor = 0xFFE8EEFF)
+// Original NoSplitNX geometric emblem: two interlocking halves fused around a single 16:9 core.
+inline void DrawNoSplitLogo(Canvas& c, int x, int y, int s, uint32_t accentColor = 0xFFE53945)
 {
     const int u = std::max(1, s);
-    const int w = 13 * u, h = 9 * u;
-    const int jw = std::max(2, 2 * u);
-    const int rOuter = std::max(1, u);
-    c.FillRound(x, y, jw, h, rOuter, 0xFF00B8E6);
-    c.FillRound(x + w - jw, y, jw, h, rOuter, 0xFFFF4B55);
-    if (u >= 2)
+    const int w = 11 * u, h = 9 * u;
+    const float cx = w * 0.5f;
+    const float cy = h * 0.5f;
+    const float halfW = 5.15f * u, halfH = 3.75f * u, rad = 1.55f * u, stroke = 1.2f * u;
+    const float coreW = 1.65f * u, coreH = 0.62f * u, coreRad = 0.55f * u;
+    const float splitGap = 0.34f * u;
+    const uint32_t accentMid = accentColor | 0xFF000000u;
+
+    auto sdRoundedBox = [](float px, float py, float bx, float by, float hw, float hh, float r) {
+        const float qx = std::fabs(px - bx) - (hw - r);
+        const float qy = std::fabs(py - by) - (hh - r);
+        return std::hypot(std::max(qx, 0.0f), std::max(qy, 0.0f)) + std::min(std::max(qx, qy), 0.0f) - r;
+    };
+
+    for (int py = 0; py < h; py++)
     {
-        const int dot = std::max(1, u / 2 + 1);
-        c.FillRound(x + (jw - dot) / 2, y + 2 * u, dot, dot, dot / 2, 0x900B1122);
-        c.FillRound(x + w - jw + (jw - dot) / 2, y + h - 2 * u - dot, dot, dot, dot / 2, 0x900B1122);
-    }
-    const int sx = x + jw - std::max(1, u / 3);
-    const int sw = w - 2 * (sx - x);
-    c.FillRound(sx, y, sw, h, rOuter, 0xFF0E1729);
-    const int inset = std::max(1, u / 2);
-    const int ix = sx + inset, iy = y + inset, iw = sw - 2 * inset, ih = h - 2 * inset;
-    if (iw > 2 && ih > 2)
-    {
-        const int skyH = (ih * 62) / 100;
-        c.Fill(ix, iy, iw, skyH, 0xFF4CA8EB);
-        c.Fill(ix, iy + skyH, iw, ih - skyH, 0xFF3E9A54);
-        const int cx = ix + iw / 2, cy = iy + ih / 2;
-        const int ballR = std::max(2, (std::min(iw, ih) - 2) / 2);
-        const int bw = std::max(1, u / 2);
-        const int beltH = std::max(0, (ballR >= 6) ? 1 : 0);
-        const int btnR = std::max(1, ballR / 3);
-        const int btnCore = std::max(1, btnR / 2);
-        const int r2Out = ballR * ballR;
-        const int r2In = std::max(1, (ballR - bw) * (ballR - bw));
-        const int r2Btn = btnR * btnR;
-        const int r2Core = btnCore * btnCore;
-        for (int dy = -ballR; dy <= ballR; dy++)
+        const int cyPx = y + py;
+        if (cyPx < 0 || cyPx >= c.h) continue;
+        for (int px = 0; px < w; px++)
         {
-            for (int dx = -ballR; dx <= ballR; dx++)
+            const int cxPx = x + px;
+            if (cxPx < 0 || cxPx >= c.w) continue;
+            uint32_t sumR = 0, sumG = 0, sumB = 0, hits = 0;
+            for (int sy = 0; sy < 2; sy++)
             {
-                const int d2 = dx * dx + dy * dy;
-                if (d2 > r2Out) continue;
-                uint32_t col;
-                if (d2 > r2In) col = 0xFF141B2B;
-                else if (d2 <= r2Core) col = 0xFFF4F6FB;
-                else if (d2 <= r2Btn) col = 0xFF141B2B;
-                else if (std::abs(dy) <= beltH) col = 0xFF141B2B;
-                else col = dy < 0 ? 0xFFEF3B45 : 0xFFF4F6FB;
-                c.Fill(cx + dx, cy + dy, 1, 1, col);
+                const float fy = (float)py + (sy ? 0.75f : 0.25f);
+                for (int sx = 0; sx < 2; sx++)
+                {
+                    const float fx = (float)px + (sx ? 0.75f : 0.25f);
+                    const float sdOut = sdRoundedBox(fx, fy, cx, cy, halfW, halfH, rad);
+                    const float sdCore = sdRoundedBox(fx, fy, cx, cy, coreW, coreH, coreRad);
+                    uint32_t col = 0;
+                    if (sdOut <= 0.0f && sdOut >= -stroke)
+                    {
+                        const float diag = (fx - cx) * 0.55f + (fy - cy);
+                        if (diag < -splitGap) col = accentMid;
+                        else if (diag > splitGap) col = 0xFFF2F2F6u;
+                    }
+                    else if (sdCore <= 0.0f)
+                    {
+                        col = (fx < cx) ? accentMid : 0xFFF2F2F6u;
+                    }
+                    if (col != 0)
+                    {
+                        sumR += (col >> 16) & 0xFFu;
+                        sumG += (col >> 8) & 0xFFu;
+                        sumB += col & 0xFFu;
+                        hits++;
+                    }
+                }
+            }
+            if (hits == 4)
+                c.px[(size_t)cyPx * c.w + cxPx] = 0xFF000000u | ((sumR / 4) << 16) | ((sumG / 4) << 8) | (sumB / 4);
+            else if (hits > 0)
+            {
+                const uint32_t a = hits * 63u;
+                Canvas::BlendPixel(c.px[(size_t)cyPx * c.w + cxPx], (a << 24) | ((sumR / hits) << 16) | ((sumG / hits) << 8) | (sumB / hits));
             }
         }
     }
-    c.OutlineRound(sx, y, sw, h, rOuter, 1, frameColor);
 }
 
 // The accent colours of COLOUR (the game list's settings, GAME LIST): the game list's lines and
@@ -719,8 +986,8 @@ inline void DrawNoSplitLogo(Canvas& c, int x, int y, int s, uint32_t frameColor 
 inline uint32_t AccentNamed(const std::string& name)
 {
     static const struct { const char* name; uint32_t argb; } colours[] = {
-        { "red", 0xFFD94F5C },      // Soft Crimson Coral
-        { "crimson", 0xFFD94F5C },
+        { "red", 0xFFE53945 },      // Poké Ball Crimson Red
+        { "crimson", 0xFFE53945 },
         { "blue", 0xFF4A90D9 },     // Calm Azure Slate
         { "cyber", 0xFF4A90D9 },
         { "green", 0xFF45B380 },    // Soft Sage Emerald
@@ -788,6 +1055,10 @@ struct Menu
     // row shown (a list longer than the screen scrolls with the chosen row: CHEATS).
     mutable int drawnX = 0, drawnY = 0, drawnW = 0, drawnH = 0, drawnLineH = 0, drawnFirstY = 0, drawnShown = 0;
     mutable int scroll = 0;
+    // Smooth selection cursor state for 60 fps transitions.
+    mutable float animSelY = -1.0f;
+    mutable float animLastT = 0.0f;
+    mutable size_t animCount = 0;
     // Where a slider's bar was drawn (the same on every row): its left edge and one block's step.
     mutable int barX = 0, barStep = 0;
 
@@ -815,52 +1086,97 @@ struct Menu
     // note: a few lines of text in a strip under the box (CHEATS: what the database says about
     // the chosen cheat), wrapped to the box's width.
     // The chosen row's colour (COLOUR, AccentNamed); the box, text and bars are shaded from it.
-    static inline uint32_t Accent = 0xFF0090FF;
+    static inline uint32_t Accent = 0xFFE53945;
 
     // boxUnits: the box's width at scale 1 (0: 190, as the other pages). CHEATS passes 260 so a
     // code's name (32 letters) fits beside "< OFF >".
     void Draw(Canvas& c, const std::string& title, const std::string& hint, const std::string& note = "", int boxUnits = 0, bool dimBackdrop = true) const
     {
-        // (Each channel of the accent c: f(c) per part. With blue, 0xFF3D6FD1, it is the menu as
-        // it was: the box 0x1C2A44, the text 0xC8D0E0, the hints 0x8FA0C0.)
-        auto shade = [](uint32_t a, auto f) {
-            const int r = f((int)(a >> 16 & 0xFF)), g = f((int)(a >> 8 & 0xFF)), b = f((int)(a & 0xFF));
-            return 0xFF000000u | (uint32_t)std::clamp(r, 0, 255) << 16 | (uint32_t)std::clamp(g, 0, 255) << 8 | (uint32_t)std::clamp(b, 0, 255);
+        auto mixRgb = [](uint32_t a, uint32_t b, uint32_t wA, uint32_t wB, uint32_t alpha) -> uint32_t {
+            const uint32_t d = wA + wB;
+            const uint32_t r = (((a >> 16) & 0xFFu) * wA + ((b >> 16) & 0xFFu) * wB) / d;
+            const uint32_t g = (((a >> 8) & 0xFFu) * wA + ((b >> 8) & 0xFFu) * wB) / d;
+            const uint32_t bl = ((a & 0xFFu) * wA + (b & 0xFFu) * wB) / d;
+            return (alpha << 24) | (r << 16) | (g << 8) | bl;
         };
-        const uint32_t boxBot = shade(Accent, [](int v) { return 12 + v * 11 / 100; });
-        const uint32_t headerCol = shade(Accent, [](int v) { return 24 + v * 22 / 100; });
-        const uint32_t noteBox = shade(Accent, [](int v) { return 14 + v * 14 / 100; });
-        const uint32_t borderCol = 0xFF2A384E;
-        const uint32_t textCol = shade(Accent, [](int v) { return 195 + v * 15 / 100; });
-        const uint32_t hintCol = shade(Accent, [](int v) { return 130 + v * 32 / 100; });
+
         int scale = std::min(c.w, c.h) / 240;
         if (scale < 1) scale = 1;
-        const int itemFontH = std::max(20, 11 * scale);
-        int lineH = std::max(28, (UiLang::Tall() ? 19 : 17) * scale);
-        // (Rows closer together if they would not all fit on the screen, down to 9 * scale.)
-        // With no title the box starts with the first item.
+        const bool sideDrawer = c.w >= 640 && c.h >= 480;
+        const int marginX = sideDrawer ? std::max(24, 8 * scale) : 4;
+        const int marginY = sideDrawer ? std::max(24, 8 * scale) : 4;
+
+        const uint32_t panelTop = mixRgb(0x18181E, Accent, 14, 1, 0xFF);
+        const uint32_t panelBot = mixRgb(0x101014, Accent, 18, 1, 0xFF);
+        const uint32_t headerTop = mixRgb(0x202028, Accent, 9, 1, 0xFF);
+        const uint32_t headerBot = mixRgb(0x15151B, Accent, 12, 1, 0xFF);
+        const uint32_t textCol = 0xFFE4E4ECu;
+        const uint32_t hintCol = 0xFF9898A4u;
+
+        const int itemFontH = sideDrawer ? std::max(20, 10 * scale) : std::max(12, 9 * scale);
+        int lineH = sideDrawer ? std::max(34, (UiLang::Tall() ? 19 : 17) * scale) : std::max(24, (UiLang::Tall() ? 18 : 16) * scale);
         const bool hasTitle = !title.empty();
-        // (A value as drawn: translated before its arrows go round it, as the whole would not be
-        // in the language's table.)
-        auto shownValue = [](const MenuItem& item) { return item.info ? UiLang::Tr(item.value) : "< " + UiLang::Tr(item.value) + " >"; };
-        int boxW = (boxUnits > 0 ? std::max(boxUnits, 340) : 320) * scale;
+        const int iconSz = sideDrawer ? std::max(16, 7 * scale) : 0;
+        const int iconGap = sideDrawer ? 6 * scale : 0;
+        const int leftPad = (sideDrawer ? 9 : 6) * scale;
+        const int rightPad = (sideDrawer ? 9 : 6) * scale;
+        const int labelXOff = leftPad + iconSz + iconGap;
+
+        auto isToggle = [](const MenuItem& item) {
+            return !item.info && item.slider < 0 && (item.value == "ON" || item.value == "OFF");
+        };
+        auto isSubmenu = [](const MenuItem& item) {
+            if (!item.value.empty() || item.info) return false;
+            const std::string& l = item.label;
+            return l == "SETTINGS" || l == "GRAPHICS" || l == "DISPLAY" || l == "SOUND" || l == "GAMEPLAY" ||
+                   l == "CONTROLS" || l == "KEYS AND BUTTONS" || l == "KEY BINDINGS" || l == "CONTROLLER" ||
+                   l == "CHEATS" || l == "POPULAR CHEATS" || l == "RETROACHIEVEMENTS" || l == "ACHIEVEMENTS" ||
+                   l == "COMPANION" || l == "SAVE BACKUPS" || l == "SHOW RESULTS";
+        };
+        auto shownValue = [&](const MenuItem& item) -> std::string {
+            if (isToggle(item) || item.slider >= 0) return "";
+            return item.value.empty() ? "" : ToNiceTitle(UiLang::Tr(item.value));
+        };
+
+        int boxW = sideDrawer
+            ? (boxUnits > 0 ? std::max(boxUnits * scale, c.w * 48 / 100) : std::max(440, c.w * 42 / 100))
+            : 296 * scale;
+        const int maxBoxW = std::max(120, c.w - 2 * marginX);
+        const int chevW = std::max(4, scale * 2);
+        const int chevGap = 5 * scale;
+        const int switchW = 20 * scale;
         for (const auto& item : items)
         {
             const std::string trL = ToNiceTitle(UiLang::Tr(item.label));
-            const std::string v = item.value.empty() ? "" : ToNiceTitle(shownValue(item));
-            const int modernW = c.ModernTextWidth(trL, itemFontH) + (item.value.empty() ? 0 : c.ModernTextWidth(v, itemFontH) + 16 * scale) + 40 * scale;
-            const int legacyW = Canvas::TextWidth(item.label, scale) + (item.value.empty() ? 0 : Canvas::TextWidth(shownValue(item), scale)) + 28 * scale;
-            boxW = std::max({boxW, modernW, legacyW});
+            const std::string v = shownValue(item);
+            int ctrlW = 0;
+            if (isToggle(item))
+                ctrlW = switchW + 8 * scale;
+            else if (item.slider >= 0)
+            {
+                const std::string sv = ToNiceTitle(UiLang::Tr(item.value));
+                ctrlW = c.ModernTextWidth(sv, itemFontH) + 8 * scale + 10 * (6 * scale) + 12 * scale;
+            }
+            else if (!v.empty())
+            {
+                const int vw = c.ModernTextWidth(v, itemFontH);
+                ctrlW = vw + (item.info ? 12 * scale : (16 * scale + 2 * (chevW + chevGap)));
+            }
+            else if (isSubmenu(item))
+                ctrlW = chevW + 8 * scale;
+            const int needW = labelXOff + c.ModernTextWidth(trL, itemFontH) + ctrlW + rightPad + 14 * scale;
+            const int legacyW = Canvas::TextWidth(item.label, scale) + (item.value.empty() ? 0 : Canvas::TextWidth("< " + item.value + " >", scale)) + 28 * scale;
+            boxW = std::max({boxW, needW, legacyW});
         }
         if (hasTitle)
         {
             const std::string niceTitle = (title == "NoSplitNX") ? title : ToNiceTitle(UiLang::Tr(title));
-            const int titleFontH = std::max(22, 13 * scale);
+            const int titleFontH = std::max(sideDrawer ? 22 : 14, 13 * scale);
             const int titleW = c.ModernTextWidth(niceTitle, titleFontH);
-            boxW = std::max(boxW, titleW + 54 * scale);
+            boxW = std::max(boxW, titleW + 64 * scale);
         }
-        if (boxW > c.w - 16) boxW = c.w - 16;
-        // Word-wrap to exact rendered pixel width so translations never spill past the box edges.
+        boxW = std::min(boxW, maxBoxW);
+
         auto wrapModern = [&](const std::string& text, int fontH, int maxPx, size_t maxLines) {
             std::vector<std::string> out;
             if (text.empty() || maxLines == 0) return out;
@@ -940,15 +1256,13 @@ struct Menu
             return out;
         };
 
-        // The note's lines (up to 4, the last cut short), and the box moved up to make room.
         std::vector<std::string> noteLines;
-        const int noteFontH = std::max(16, 7 * scale);
+        const int noteFontH = std::max(14, 7 * scale);
         if (!note.empty())
-            noteLines = wrapModern(ToNiceSentence(UiLang::Tr(note)), noteFontH, boxW - 20 * scale, 4);
-        const int noteH = noteLines.empty() ? 0 : (int)noteLines.size() * (noteFontH + 3 * scale) + 8 * scale;
+            noteLines = wrapModern(ToNiceSentence(UiLang::Tr(note)), noteFontH, boxW - 24 * scale, 4);
+        const int noteCardH = noteLines.empty() ? 0 : (int)noteLines.size() * (noteFontH + 3 * scale) + 10 * scale;
 
-        // Parse footer badges/lines before sizing height so wrapped hints expand the box cleanly.
-        const int hintFontH = std::max(16, 8 * scale);
+        const int hintFontH = std::max(13, 8 * scale);
         const std::string niceHint = ToNiceSentence(UiLang::Tr(hint));
         struct HintBadge { std::string key, label; };
         std::vector<HintBadge> badges;
@@ -985,187 +1299,249 @@ struct Menu
                 badgesW += c.ButtonBadgeWidth(badges[i].key, badgeScale) + 4 * scale + c.ModernTextWidth(badges[i].label, hintFontH);
                 if (i + 1 < badges.size()) badgesW += badgeGap;
             }
-            if (badgesW > boxW - 16 * scale) badges.clear();
+            if (badgesW > boxW - 18 * scale) badges.clear();
         }
         std::vector<std::string> hintLines;
         if (badges.size() < 2 && !niceHint.empty())
-            hintLines = wrapModern(niceHint, hintFontH, boxW - 16 * scale, 4);
-        // Keep an outer vertical margin so tall overlays (such as Cheats) never touch screen edges,
-        // and use one consistent minimum row height so fitted rows never exceed availH.
-        const int marginY = (c.h >= 480) ? std::max(12, c.h / 24) : 4;
-        const int minLineH = std::max(itemFontH + 4 * scale, (UiLang::Tall() ? 15 : 12) * scale);
-        const int minFooterH = hint.empty() ? 4 * scale
-            : (hintLines.size() > 1
-                ? std::max(minLineH, (int)hintLines.size() * (hintFontH + 3 * scale) + 10 * scale)
-                : minLineH);
-        const int noteReserve = noteH ? noteH + 4 * scale : 0;
-        const int availH = std::max(2 * minLineH, c.h - 2 * marginY - noteReserve);
-        const int fit = std::max(1, (availH - 6 * scale - (hasTitle ? minLineH : 0) - minFooterH) / minLineH);
+            hintLines = wrapModern(niceHint, hintFontH, boxW - 18 * scale, 4);
+
+        const int hdrH = hasTitle ? (sideDrawer ? std::max(lineH + 6 * scale, 22 * scale) : lineH) : 0;
+        const int listPadTop = (sideDrawer ? 6 : 4) * scale;
+        const int listPadBot = 4 * scale;
+        int hintAreaH = 0;
+        if (badges.size() >= 2) hintAreaH = std::max(bh + 10 * scale, 16 * scale);
+        else if (!hintLines.empty()) hintAreaH = (int)hintLines.size() * (hintFontH + 3 * scale) + 10 * scale;
+        const int footerH = (noteCardH ? noteCardH + 6 * scale : 0) + (hintAreaH ? hintAreaH + 2 * scale : (!sideDrawer ? 4 * scale : 8 * scale));
+
+        const int availH = std::max(2 * lineH, c.h - 2 * marginY);
+        const int minLineH = sideDrawer ? std::max(itemFontH + 6 * scale, (UiLang::Tall() ? 16 : 14) * scale)
+                                        : std::max(itemFontH + 4 * scale, (UiLang::Tall() ? 15 : 12) * scale);
+        int listAvailH = std::max(minLineH, availH - hdrH - listPadTop - listPadBot - footerH);
+        const int fit = std::max(1, listAvailH / minLineH);
         const int shown = std::min((int)items.size(), fit);
+        if (lineH * shown > listAvailH && shown > 0)
+            lineH = std::max(minLineH, listAvailH / shown);
+
         if (selected < scroll) scroll = selected;
         if (selected >= scroll + shown) scroll = selected - shown + 1;
         scroll = std::max(0, std::min(scroll, (int)items.size() - shown));
-        // (The note's strip sits under the box, so the box leaves room for it: at 800x480 it was cut off.)
-        const int itemRows = shown + (hasTitle ? 1 : 0);
-        int footerH = minFooterH;
-        if (hint.empty())
-        {
-            if (lineH * itemRows + footerH + 6 * scale > availH)
-                lineH = std::max(minLineH, (availH - footerH - 6 * scale) / std::max(1, itemRows));
-        }
-        else if (hintLines.size() <= 1)
-        {
-            if (lineH * (itemRows + 1) + 6 * scale > availH)
-                lineH = std::max(minLineH, (availH - 6 * scale) / std::max(1, itemRows + 1));
-            footerH = lineH;
-        }
-        else if (lineH * itemRows + footerH + 6 * scale > availH)
-            lineH = std::max(minLineH, (availH - footerH - 6 * scale) / std::max(1, itemRows));
-        int boxH = lineH * itemRows + footerH + 6 * scale;
-        int bx = (c.w - boxW) / 2, by = std::max(marginY, (c.h - boxH - noteReserve) / 2);
-        // (Kept for ItemAt: where the rows were drawn.)
+
+        const int boxH = sideDrawer ? availH : std::min(availH, hdrH + listPadTop + shown * lineH + listPadBot + footerH);
+        const int bx = sideDrawer ? marginX : (c.w - boxW) / 2;
+        const int by = sideDrawer ? marginY : std::max(marginY, (c.h - boxH) / 2);
+        const int listFirstY = by + hdrH + listPadTop;
+
         drawnX = bx;
         drawnY = by;
         drawnW = boxW;
         drawnH = boxH;
         drawnLineH = lineH;
-        drawnFirstY = by + (hasTitle ? lineH : 0) + 5 * scale - 2 * scale;
+        drawnFirstY = listFirstY;
         drawnShown = shown;
 
         if (dimBackdrop)
         {
-            if (!c.px.empty() && (c.px[0] >> 24) != 0)
-                c.FillBlend(0, 0, c.w, c.h, 0xBC05070D);
-            else
-                c.Fill(0, 0, c.w, c.h, 0xB405070D);
-            const_cast<Canvas&>(c).FillVignette(70);
+            const uint32_t leftScrim = 0xD608080Bu;
+            const uint32_t rightScrim = sideDrawer ? 0x5208080Bu : 0xB808080Bu;
+            const_cast<Canvas&>(c).FillGradH(0, 0, c.w, c.h, leftScrim, rightScrim);
         }
 
-        const int rad = std::max(4, 5 * scale);
-        const_cast<Canvas&>(c).ShadowRound(bx, by, boxW, boxH, rad, 5 * scale, 130);
-        const_cast<Canvas&>(c).FillGlass(bx, by, boxW, boxH, rad, 0xF8151D2C, 0xF80B0F18, 0xFF28364C, 1);
+        const int rad = std::max(4, (sideDrawer ? 6 : 5) * scale);
+        const uint32_t panelBorder = mixRgb(0x32323C, Accent, 3, 1, 0xFF);
+        const_cast<Canvas&>(c).ShadowRound(bx, by, boxW, boxH, rad, (sideDrawer ? 4 : 3) * scale, 135);
+        const_cast<Canvas&>(c).FillGlass(bx, by, boxW, boxH, rad, panelTop | 0xF5000000u, panelBot | 0xF8000000u, panelBorder, 1);
+
         if (hasTitle)
         {
             const std::string niceTitle = (title == "NoSplitNX") ? title : ToNiceTitle(UiLang::Tr(title));
-            const int hdrH = lineH + 3 * scale;
-            c.FillGradV(bx + scale, by + scale, boxW - 2 * scale, hdrH, headerCol + 0x0006080C, headerCol, std::max(1, rad - scale));
-            c.Fill(bx + 6 * scale, by + hdrH, boxW - 12 * scale, std::max(1, scale / 2), 0xFF26354A);
-            const int logoW = 13 * scale, logoH = 9 * scale;
-            const int titleFontH = std::max(22, 13 * scale);
-            const int titleW = c.ModernTextWidth(niceTitle, titleFontH);
-            const int contentW = logoW + 6 * scale + titleW;
-            const int startX = bx + (boxW - contentW) / 2;
-            DrawNoSplitLogo(const_cast<Canvas&>(c), startX, by + scale + (hdrH - logoH) / 2, scale, 0xFFE8EEFF);
-            c.ModernText(startX + logoW + 6 * scale, by + scale + (hdrH - titleFontH) / 2, niceTitle, titleFontH, 0xFFFFFFFF);
+            const int titleFontH = std::max(sideDrawer ? 22 : 14, 13 * scale);
+            const int hdrR = std::max(2, rad - scale);
+            c.FillGradV(bx + 1, by + 1, boxW - 2, hdrH, headerTop | 0xF5000000u, headerBot | 0xF5000000u, hdrR);
+            c.FillBlend(bx + 2, by + hdrH, boxW - 4, std::max(1, scale / 2), mixRgb(0x2C2C36, Accent, 3, 1, 0xCC));
+            if (sideDrawer)
+                const_cast<Canvas&>(c).DrawGeometricWatermark(bx + boxW - hdrH * 3 / 4, by + hdrH / 2 + 2 * scale, hdrH * 72 / 100,
+                    (Accent & 0x00FFFFFFu) | 0x16000000u, bx + 2, by + 2, bx + boxW - 2, by + hdrH);
+
+            const int logoW = 11 * scale, logoH = 9 * scale;
+            const int titleX = sideDrawer ? (bx + 12 * scale) : (bx + (boxW - (logoW + 6 * scale + c.ModernTextWidth(niceTitle, titleFontH))) / 2);
+            DrawNoSplitLogo(const_cast<Canvas&>(c), titleX, by + (hdrH - logoH) / 2, scale, Accent | 0xFF000000u);
+            c.ModernText(titleX + logoW + 6 * scale, by + (hdrH - titleFontH) / 2, niceTitle, titleFontH, 0xFFFFFFFF, true);
+
+            if ((int)items.size() > shown && sideDrawer)
+            {
+                const std::string posStr = std::to_string(selected + 1) + "/" + std::to_string(items.size());
+                const int cntH = std::max(14, 6 * scale);
+                const int cw = c.ModernTextWidth(posStr, cntH);
+                const int cpW = cw + 10 * scale, cpH = cntH + 4 * scale;
+                const int cpX = bx + boxW - cpW - 10 * scale, cpY = by + (hdrH - cpH) / 2;
+                c.FillRound(cpX, cpY, cpW, cpH, cpH / 2, 0x90121218);
+                c.OutlineRound(cpX, cpY, cpW, cpH, cpH / 2, 1, (Accent & 0x00FFFFFFu) | 0x66000000u);
+                c.ModernText(cpX + 5 * scale, cpY + (cpH - cntH) / 2, posStr, cntH, textCol);
+            }
         }
 
-        int y = by + (hasTitle ? lineH : 0) + 5 * scale;
-        if (scroll > 0) c.ModernText(bx + boxW - 14 * scale, y - lineH, "^", itemFontH, hintCol);
-        if (scroll + shown < (int)items.size()) c.ModernText(bx + boxW - 14 * scale, y + shown * lineH - 2 * scale, "v", itemFontH, hintCol);
-        const int rowRad = std::max(3, 4 * scale);
         const float t = AnimTime();
         const float pulse = 0.5f + 0.5f * sinf(t * 3.5f);
+        const int targetVis = (selected >= scroll && selected < scroll + shown) ? (selected - scroll) : -1;
+        const float targetY = targetVis >= 0 ? (float)(listFirstY + targetVis * lineH) : (float)listFirstY;
+        const float dt = t - animLastT;
+        if (animCount != items.size() || animSelY < (float)listFirstY || animSelY > (float)(listFirstY + std::max(0, shown - 1) * lineH) || dt <= 0.0f || dt > 0.15f)
+            animSelY = targetY;
+        else
+            animSelY += (targetY - animSelY) * (1.0f - std::exp(-24.0f * dt));
+        animLastT = t;
+        animCount = items.size();
+
+        const int rx = bx + 6 * scale;
+        const int rw = boxW - 12 * scale - ((int)items.size() > shown ? 5 * scale : 0);
+        const int rh = lineH - 2 * scale;
+        const int rowRad = std::max(3, 4 * scale);
+
+        if (targetVis >= 0)
+        {
+            const int hlY = std::clamp((int)std::lround(animSelY) + scale, listFirstY + scale, listFirstY + std::max(0, shown - 1) * lineH + scale);
+            const uint32_t rowTop = mixRgb(0x282832, Accent, 3, 1, 0xEC);
+            const uint32_t rowBot = mixRgb(0x1C1C24, Accent, 4, 1, 0xEC);
+            const uint32_t rowBd  = mixRgb(Accent, 0xF0F0F5, 3, 2, 0xD8);
+            const uint32_t barCol = mixRgb(Accent, 0xFFFFFF, 4, 1, 0xF5);
+            if (rx - scale >= bx)
+                const_cast<Canvas&>(c).GlowRound(rx, hlY, rw, rh, rowRad, scale, (Accent & 0x00FFFFFFu) | ((uint32_t)(20 + 12 * pulse) << 24));
+            c.FillGlass(rx, hlY, rw, rh, rowRad, rowTop, rowBot, rowBd, 1);
+            c.FillRound(rx + 2 * scale, hlY + 2 * scale, std::max(2, 2 * scale), std::max(4, rh - 4 * scale), scale, barCol);
+        }
+
+        int y = listFirstY;
         for (int i = scroll; i < scroll + shown; i++)
         {
             const bool sel = i == selected;
-            const int rx = bx + 5 * scale;
-            const int ry = y - scale;
-            const int rw = boxW - 10 * scale;
-            const int rh = lineH - scale;
+            const int ry = y + scale;
+            const uint32_t iconCol = sel ? (Accent | 0xFF000000u) : (items[i].info ? hintCol : 0xFF9494A2);
+            if (iconSz > 0)
+                const_cast<Canvas&>(c).DrawMenuIcon(rx + 6 * scale, ry + (rh - iconSz) / 2, iconSz, items[i].label, iconCol, Accent | 0xFF000000u);
 
-            if (sel)
-            {
-                auto mixRgb = [](uint32_t a, uint32_t b, uint32_t wA, uint32_t wB, uint32_t alpha) -> uint32_t {
-                    const uint32_t d = wA + wB;
-                    const uint32_t r = (((a >> 16) & 0xFFu) * wA + ((b >> 16) & 0xFFu) * wB) / d;
-                    const uint32_t g = (((a >> 8) & 0xFFu) * wA + ((b >> 8) & 0xFFu) * wB) / d;
-                    const uint32_t bl = ((a & 0xFFu) * wA + (b & 0xFFu) * wB) / d;
-                    return (alpha << 24) | (r << 16) | (g << 8) | bl;
-                };
-                const uint32_t glowAlpha = (uint32_t)(22 + 14 * pulse) << 24;
-                const uint32_t rowTop = mixRgb(0x1C283B, Accent, 5, 1, 0xF0);
-                const uint32_t rowBot = mixRgb(0x131C2B, Accent, 6, 1, 0xF0);
-                const uint32_t rowBd  = mixRgb(Accent, 0xCBD5E1, 3, 2, 0xD8);
-                const uint32_t barCol = mixRgb(Accent, 0xF1F5F9, 4, 1, 0xE8);
-                const_cast<Canvas&>(c).GlowRound(rx, ry, rw, rh, rowRad, scale, (Accent & 0x00FFFFFF) | glowAlpha);
-                c.FillGlass(rx, ry, rw, rh, rowRad, rowTop, rowBot, rowBd, 1);
-                c.FillRound(rx + 2 * scale, ry + 2 * scale, std::max(2, 2 * scale), rh - 4 * scale, scale, barCol);
-            }
-            else
-            {
-                c.FillRound(rx, ry, rw, rh, rowRad, 0x45162234); c.OutlineRound(rx, ry, rw, rh, rowRad, 1, 0x5026364C);
-            }
-            const uint32_t col = sel ? 0xFFFFFFFF : 0xFFCAD4E4;
+            const uint32_t col = items[i].info ? textCol : (sel ? 0xFFFFFFFF : 0xFFDCDCE4);
             const std::string trLabel = ToNiceTitle(UiLang::Tr(items[i].label));
-            c.ModernText(rx + 10 * scale, ry + (rh - itemFontH) / 2, trLabel, itemFontH, col);
-            if (!items[i].value.empty())
+            const int lblX = rx + (iconSz > 0 ? (6 * scale + iconSz + iconGap) : 6 * scale);
+            c.ModernText(lblX, ry + (rh - itemFontH) / 2, trLabel, itemFontH, col);
+
+            const int ctrlRight = rx + rw - 6 * scale;
+            if (isToggle(items[i]))
             {
-                const std::string v = ToNiceTitle(shownValue(items[i]));
+                const bool on = items[i].value == "ON";
+                const int swY = ry + (rh - 10 * scale) / 2;
+                const_cast<Canvas&>(c).DrawSwitch(ctrlRight - switchW, swY, scale, on, Accent | 0xFF000000u);
+            }
+            else if (items[i].slider >= 0)
+            {
+                const std::string sv = ToNiceTitle(UiLang::Tr(items[i].value));
+                const int valW = c.ModernTextWidth(sv, itemFontH);
+                const int pillW = valW + 10 * scale;
+                const int pillH = std::max(itemFontH + 2 * scale, rh - 6 * scale);
+                const int pillX = ctrlRight - pillW;
+                const int pillY = ry + (rh - pillH) / 2;
+                c.FillRound(pillX, pillY, pillW, pillH, pillH / 2, sel ? mixRgb(0x282832, Accent, 3, 1, 0xEE) : 0xAA1B1B23);
+                c.OutlineRound(pillX, pillY, pillW, pillH, pillH / 2, 1, sel ? ((Accent & 0x00FFFFFFu) | 0x99000000u) : 0x663A3A46);
+                c.ModernText(pillX + 5 * scale, pillY + (pillH - itemFontH) / 2, sv, itemFontH, sel ? 0xFFFFFFFF : 0xFFD4D4DE);
+
+                barStep = 6 * scale;
+                barX = pillX - 8 * scale - 10 * barStep;
+                const int barW = 10 * barStep - scale;
+                const int barH = std::max(4, 3 * scale);
+                const_cast<Canvas&>(c).DrawSliderBar(barX, ry + (rh - barH) / 2, barW, barH, items[i].slider, 10, Accent | 0xFF000000u, sel);
+            }
+            else if (!items[i].value.empty())
+            {
+                const std::string v = ToNiceTitle(UiLang::Tr(items[i].value));
                 const int textW = c.ModernTextWidth(v, itemFontH);
-                const int valW = items[i].slider >= 0 ? c.ModernTextWidth("< 100% >", itemFontH) : textW;
-                const int vx = rx + rw - 10 * scale - valW;
-                const int textVx = items[i].slider >= 0 ? rx + rw - 10 * scale - textW : vx;
-                const int pillW = textW + 10 * scale;
-                const int pillX = textVx - 5 * scale;
-                const int pillY = ry + 2 * scale;
-                const int pillH = rh - 4 * scale;
-                const int pillRad = std::max(3, pillH / 3);
-                const uint32_t pillFill = sel
-                    ? (0xF0000000u | (((((0x20u * 4u) + ((Accent >> 16) & 0xFFu)) / 5u) << 16)
-                                   | ((((0x2Eu * 4u) + ((Accent >> 8) & 0xFFu)) / 5u) << 8)
-                                   | (((0x44u * 4u) + (Accent & 0xFFu)) / 5u)))
-                    : 0xB0182438u;
-                const uint32_t pillBd = sel ? ((Accent & 0x00FFFFFFu) | 0x78000000u) : 0x702E3F5Au;
-                c.FillRound(pillX, pillY, pillW, pillH, pillRad, pillFill);
-                c.OutlineRound(pillX, pillY, pillW, pillH, pillRad, 1, pillBd);
-                c.ModernText(textVx, ry + (rh - itemFontH) / 2, v, itemFontH, sel ? 0xFFFFFFFF : 0xFFD0DCF0);
-                if (items[i].slider >= 0)
+                const int pillH = std::max(itemFontH + 2 * scale, rh - 6 * scale);
+                const int pillY = ry + (rh - pillH) / 2;
+                if (items[i].info)
                 {
-                    barStep = 6 * scale;
-                    barX = vx - 8 * scale - 10 * barStep;
-                    const int barW = 10 * barStep - scale;
-                    const int barH = 8 * scale;
-                    const_cast<Canvas&>(c).DrawSliderBar(barX, ry + (rh - barH) / 2, barW, barH, items[i].slider, 10, sel ? 0xFFFFFFFF : Accent, sel);
+                    const int pillW = textW + 10 * scale;
+                    const int pillX = ctrlRight - pillW;
+                    c.FillRound(pillX, pillY, pillW, pillH, pillH / 2, 0x881B1B23);
+                    c.ModernText(pillX + 5 * scale, pillY + (pillH - itemFontH) / 2, v, itemFontH, textCol);
+                }
+                else
+                {
+                    const int innerPad = 7 * scale;
+                    const int pillW = innerPad + chevW + chevGap + textW + chevGap + chevW + innerPad;
+                    const int pillX = ctrlRight - pillW;
+                    const uint32_t pillFill = sel ? mixRgb(0x282832, Accent, 3, 1, 0xEE) : 0xA01B1B23u;
+                    const uint32_t pillBd = sel ? ((Accent & 0x00FFFFFFu) | 0x88000000u) : 0x603A3A46u;
+                    c.FillRound(pillX, pillY, pillW, pillH, pillH / 2, pillFill);
+                    c.OutlineRound(pillX, pillY, pillW, pillH, pillH / 2, 1, pillBd);
+                    const uint32_t arrowCol = sel ? 0xFFFFFFFFu : 0xFF9898A4u;
+                    const int chevSz = std::max(2, scale);
+                    const_cast<Canvas&>(c).DrawChevron(pillX + innerPad + chevW / 2, pillY + pillH / 2, chevSz, false, arrowCol);
+                    c.ModernText(pillX + innerPad + chevW + chevGap, pillY + (pillH - itemFontH) / 2, v, itemFontH, sel ? 0xFFFFFFFF : 0xFFDCDCE4);
+                    const_cast<Canvas&>(c).DrawChevron(pillX + pillW - innerPad - chevW / 2, pillY + pillH / 2, chevSz, true, arrowCol);
                 }
             }
+            else if (isSubmenu(items[i]))
+            {
+                const_cast<Canvas&>(c).DrawChevron(ctrlRight - chevW, ry + rh / 2, std::max(2, scale), true, sel ? 0xFFFFFFFF : 0xFF9898A4u);
+            }
+
+            if (i + 1 < scroll + shown && i != selected && i + 1 != selected)
+                c.FillBlend(rx + 6 * scale, y + lineH - 1, rw - 12 * scale, 1, 0x1AFFFFFF);
             y += lineH;
         }
-        if (!hint.empty()) c.Fill(bx + 6 * scale, y + scale, boxW - 12 * scale, std::max(1, scale / 2), 0xFF26354A);
-        const int footerAreaH = (by + boxH) - (y + scale);
-        bool drewBadges = false;
-        if (badges.size() >= 2 && footerAreaH >= bh + 2 * scale)
+
+        if ((int)items.size() > shown)
         {
-            int hx = bx + (boxW - badgesW) / 2;
-            const int hy = y + scale + (footerAreaH - bh) / 2;
-            for (size_t i = 0; i < badges.size(); i++)
+            const int trackX = bx + boxW - 5 * scale;
+            const int trackY = listFirstY + 2 * scale;
+            const int trackH = shown * lineH - 4 * scale;
+            if (trackH > 8)
             {
-                const int bw = c.ButtonBadgeWidth(badges[i].key, badgeScale);
-                const_cast<Canvas&>(c).DrawButtonBadge(hx, hy, badges[i].key, badgeScale, 0xFF222B3D, 0xFFFFFFFF, 0xFF3D4B66);
-                c.ModernText(hx + bw + 4 * scale, y + scale + (footerAreaH - hintFontH) / 2, badges[i].label, hintFontH, hintCol);
-                hx += bw + 4 * scale + c.ModernTextWidth(badges[i].label, hintFontH) + badgeGap;
-            }
-            drewBadges = true;
-        }
-        if (!drewBadges && !hintLines.empty())
-        {
-            const int stepH = hintFontH + 3 * scale;
-            const int totalTextH = (int)hintLines.size() * hintFontH + ((int)hintLines.size() - 1) * (3 * scale);
-            int hy = y + scale + std::max(2 * scale, (footerAreaH - totalTextH) / 2);
-            for (const std::string& hline : hintLines)
-            {
-                const int hw = c.ModernTextWidth(hline, hintFontH);
-                c.ModernText(bx + std::max(8 * scale, (boxW - hw) / 2), hy, hline, hintFontH, hintCol);
-                hy += stepH;
+                c.FillRound(trackX, trackY, std::max(2, scale), trackH, std::max(1, scale / 2), 0x33FFFFFF);
+                const int thumbH = std::max(10 * scale, trackH * shown / (int)items.size());
+                const int maxScr = std::max(1, (int)items.size() - shown);
+                const int thumbY = trackY + (trackH - thumbH) * scroll / maxScr;
+                c.FillRound(trackX, thumbY, std::max(2, scale), thumbH, std::max(1, scale / 2), (Accent & 0x00FFFFFFu) | 0xCC000000u);
             }
         }
+
+        // Integrated footer inside the drawer (optional note panel + controller/touch hints).
+        int footY = by + boxH - footerH;
         if (!noteLines.empty())
         {
-            const int ny = by + boxH + 4 * scale;
-            const_cast<Canvas&>(c).ShadowRound(bx, ny, boxW, noteH, rad, 2 * scale, 90);
-            c.FillGradV(bx, ny, boxW, noteH, noteBox, boxBot, rad);
-            c.OutlineRound(bx, ny, boxW, noteH, rad, std::max(1, scale / 2), borderCol);
+            const int nx = bx + 6 * scale, nw = boxW - 12 * scale;
+            c.FillRound(nx, footY, nw, noteCardH, std::max(3, 4 * scale), 0x99121217u);
+            c.OutlineRound(nx, footY, nw, noteCardH, std::max(3, 4 * scale), 1, 0x443A3A48u);
+            c.FillRound(nx + 2 * scale, footY + 3 * scale, std::max(2, scale), noteCardH - 6 * scale, 1, (Accent & 0x00FFFFFFu) | 0xCC000000u);
             for (size_t i = 0; i < noteLines.size(); i++)
-                c.ModernText(bx + 10 * scale, ny + 4 * scale + (int)i * (noteFontH + 3 * scale), noteLines[i], noteFontH, textCol);
+                c.ModernText(nx + 8 * scale, footY + 5 * scale + (int)i * (noteFontH + 3 * scale), noteLines[i], noteFontH, textCol);
+            footY += noteCardH + 6 * scale;
+        }
+        if (hintAreaH > 0)
+        {
+            c.FillBlend(bx + 8 * scale, footY, boxW - 16 * scale, 1, 0x26FFFFFF);
+            if (badges.size() >= 2)
+            {
+                int hx = bx + (boxW - badgesW) / 2;
+                const int hy = footY + (hintAreaH - bh) / 2;
+                for (size_t i = 0; i < badges.size(); i++)
+                {
+                    const int bw = c.ButtonBadgeWidth(badges[i].key, badgeScale);
+                    const_cast<Canvas&>(c).DrawButtonBadge(hx, hy, badges[i].key, badgeScale, 0xFF24242D, 0xFFFFFFFF, 0xFF3E3E4C);
+                    c.ModernText(hx + bw + 4 * scale, footY + (hintAreaH - hintFontH) / 2, badges[i].label, hintFontH, hintCol);
+                    hx += bw + 4 * scale + c.ModernTextWidth(badges[i].label, hintFontH) + badgeGap;
+                }
+            }
+            else if (!hintLines.empty())
+            {
+                const int stepH = hintFontH + 3 * scale;
+                const int totalTextH = (int)hintLines.size() * hintFontH + ((int)hintLines.size() - 1) * (3 * scale);
+                int hy = footY + std::max(2 * scale, (hintAreaH - totalTextH) / 2);
+                for (const std::string& hline : hintLines)
+                {
+                    const int hw = c.ModernTextWidth(hline, hintFontH);
+                    c.ModernText(bx + std::max(8 * scale, (boxW - hw) / 2), hy, hline, hintFontH, hintCol);
+                    hy += stepH;
+                }
+            }
         }
     }
 };

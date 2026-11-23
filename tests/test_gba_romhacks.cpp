@@ -451,21 +451,21 @@ int main(int argc, char** argv)
         assert(fs::exists(fetchDir / "icons/Pokemon_SoulGold_v1_2_1.png"));
     }
 
-    // 10. Unified NoSplitNX logo and GbaHostUi native DS-style GBA pause menu & slider rendering.
+    // 10. Original NoSplitNX unified-widescreen logo and GbaHostUi native pause menu & slider rendering.
     {
         Canvas lc;
         lc.Resize(1280, 720);
         lc.Clear();
-        Launcher::DrawDsLogo(lc, 30, 10, 3, 0xFFE8EEFF);
-        bool hasCyan = false, hasCoral = false, hasBallRed = false, hasBallWhite = false;
+        Launcher::DrawDsLogo(lc, 30, 10, 3, AccentNamed("red"));
+        bool hasAccent = false, hasPearlWhite = false, hasOldCyan = false;
         for (uint32_t px : lc.px)
         {
-            if (px == 0xFF00B8E6u) hasCyan = true;
-            if (px == 0xFFFF4B55u) hasCoral = true;
-            if (px == 0xFFEF3B45u) hasBallRed = true;
-            if (px == 0xFFF4F6FBu) hasBallWhite = true;
+            if (px == AccentNamed("red")) hasAccent = true;
+            if (px == 0xFFF2F2F6u) hasPearlWhite = true;
+            if (px == 0xFF00B8E6u) hasOldCyan = true;
         }
-        assert(hasCyan && hasCoral && hasBallRed && hasBallWhite);
+        assert(hasAccent && hasPearlWhite && !hasOldCyan);
+        assert(lc.px[(size_t)(10 + 13) * lc.w + (30 + 8)] == 0);
 
         UiLang::Set("es");
         const GbaWide::UiHost* uiHost = GbaHostUi::Api();
