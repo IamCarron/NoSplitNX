@@ -2784,6 +2784,16 @@ int main(int argc, char** argv)
     Bw1Layouts bw1; // Pokemon Black and White's own layouts (frontend/bw1.h; nothing for other games)
     Bw2Map bw2map;  // Black 2: more of the map loaded beside the player (frontend/bw2map.h)
     PtFuncs pt;     // Pokemon Platinum's functions (frontend/platinum.h; nothing for other games)
+#ifdef SSR_POKEDAISY
+    PdDs::Bridge dsCompanion;
+    PdDs::HostActions pdActions;
+    bool pdTouchCaptured = false;
+    bool pdPrevOverworld = false;
+    bool pdPrevBattle = false;
+    auto pdStripSupported = [&]() -> bool { return dsCompanion.Supported(); };
+#else
+    auto pdStripSupported = [&]() -> bool { return false; };
+#endif
     if (funcWatchOn)
     {
         std::vector<std::string> bw2Names;
@@ -2870,7 +2880,7 @@ int main(int argc, char** argv)
         // (Platinum has functions with Black 2's names, StartMenu_Main and CARD_WaitBackupAsync
         // among them: Black 2's layouts must not pick them up.)
         if (pt.on) bw2 = Bw2Funcs();
-        bw1.battleButtons = dsCompanion.Supported() ? cfg.battleButtons : (cfg.battleButtons == 5 ? 1 : cfg.battleButtons);
+        bw1.battleButtons = pdStripSupported() ? cfg.battleButtons : (cfg.battleButtons == 5 ? 1 : cfg.battleButtons);
         {
             char code[5] = {};
             if (FILE* rf = fopen(opt.rom.c_str(), "rb"))
@@ -3494,7 +3504,7 @@ int main(int argc, char** argv)
             const bool bottomBlank = !screens || AutoFocus::Blank(screens[1].pixels);
             if (funcWatch.Ran(pt.battleBag, 2) || funcWatch.Ran(pt.battleParty, 2))
                 only("battle-submenu", 1);
-            else if (screens && !(cfg.battleButtons == 5 && dsCompanion.Supported()) &&
+            else if (screens && !(cfg.battleButtons == 5 && pdStripSupported()) &&
                      (funcWatch.Ran(pt.battleInput, 2) || (frame < battleStripUntil && !bottomBlank)))
                 sc = gen4BattleInput(viewWidth, screens);
             else
@@ -3587,7 +3597,7 @@ int main(int argc, char** argv)
                 if (funcWatch.CurrentFrame() - bw2BoxesFrame < 600 && !topScreenFaded())
                     Gen5Strip::KeepBoxes(sc, bw2BoxesTop, bw2Boxes, 1);
                 if (cfg.battleButtons == 1 || cfg.battleButtons == 3 || cfg.battleButtons == 4 ||
-                    (cfg.battleButtons == 5 && !dsCompanion.Supported()))
+                    (cfg.battleButtons == 5 && !pdStripSupported()))
                 {
                     const Scene cut = sc;
                     float availRoom = -1.0f;
@@ -3747,7 +3757,7 @@ int main(int argc, char** argv)
             // Choosing the target of a move in a double, triple or rotation battle: the foes'
             // panels above, the player's side below (touch screen rows 22-131).
             const bool target = !moves && !command && funcWatch.Ran(bw2.battleTarget, 1);
-            const bool pokedaisyStrip = !bw1.on && cfg.battleButtons == 5 && dsCompanion.Supported();
+            const bool pokedaisyStrip = !bw1.on && cfg.battleButtons == 5 && pdStripSupported();
             if (pokedaisyStrip)
             {
                 if (!sc.items.empty() && (funcWatch.Ran(bw2.battleMove, 4) ||
@@ -5133,7 +5143,7 @@ int main(int argc, char** argv)
                  (battleSubmenuLast && battleSubmenuLast + 12 >= rc_current_frame() && !sectionActive("OVY_12")))
             // In-battle bag and party screens (overlay 8) fill the bottom screen.
             only("battle-submenu", 1);
-        else if (!(cfg.battleButtons == 5 && dsCompanion.Supported()) &&
+        else if (!(cfg.battleButtons == 5 && pdStripSupported()) &&
             (probeActive(probeBattleInput) ||
             // While the commands slide out and the moves in, the game stops reading the touch
             // screen for a few frames; the strip stays up meanwhile (see battleStripUntil).
@@ -5414,13 +5424,6 @@ int main(int argc, char** argv)
     bool navHoldOff = false; // (the button just given: ignored by the menu until let go)
     PadState physPad, prevPhysPad; // the controller as it is, before RemapPad
     bool saveEdge = false, loadEdge = false, resetEdge = false, zoomEdge = false; // physical shortcut presses
-#ifdef SSR_POKEDAISY
-    PdDs::Bridge dsCompanion;
-    PdDs::HostActions pdActions;
-    bool pdTouchCaptured = false;
-    bool pdPrevOverworld = false;
-    bool pdPrevBattle = false;
-#endif
     const int ctlRow0 = ctlHasKeyboard ? 1 : 0; // the first action's row
     const int ctlRowReset = ctlRow0 + Controls::COUNT, ctlRowBack = ctlRowReset + 1;
     auto buildMenu = [&]() {
@@ -7532,7 +7535,7 @@ int main(int argc, char** argv)
                     cfg.battleButtons = gen4Order[(idx + (dir < 0 ? 2 : 1)) % 3];
                 }
                 else cfg.battleButtons = (cfg.battleButtons + (dir < 0 ? 5 : 1)) % 6; // CORNER, STRIP, PANEL, STANDARD, SUN AND MOON, POKEDAISY
-                bw1.battleButtons = dsCompanion.Supported() ? cfg.battleButtons : (cfg.battleButtons == 5 ? 1 : cfg.battleButtons);
+                bw1.battleButtons = pdStripSupported() ? cfg.battleButtons : (cfg.battleButtons == 5 ? 1 : cfg.battleButtons);
                 break;
             case M_ZOOM:
                 cfg.zoom = !cfg.zoom;
@@ -9125,7 +9128,7 @@ int main(int argc, char** argv)
             Scene picked = funcWatchOn ? pickSceneBw2(view.width, screenImages)
                                        : pickScene(frame < cursorShownUntil, view.width, screenImages);
             bw1.topFaded = bw1.on && topScreenFaded();
-            bw1.battleButtons = dsCompanion.Supported() ? cfg.battleButtons : (cfg.battleButtons == 5 ? 1 : cfg.battleButtons);
+            bw1.battleButtons = pdStripSupported() ? cfg.battleButtons : (cfg.battleButtons == 5 ? 1 : cfg.battleButtons);
             if (funcWatchOn) bw1.Adjust(picked, view.width, screenImages); // Pokemon Black and White
             // A whole screen shown alone whose sides are one colour, not black (a fade to white:
             // the starter chosen, whiting out and its message on white) fills the view with that
