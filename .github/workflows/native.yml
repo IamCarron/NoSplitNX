@@ -15,6 +15,14 @@ jobs:
         with:
           python-version: '3.12'
       - name: Linux prerequisites
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ clang pkg-config libsdl2-dev libpng-dev zlib1g-dev
+        run: |
+          sudo apt-get update || true
+          if ! apt-cache show cmake >/dev/null 2>&1; then
+            codename="$(. /etc/os-release && echo "${VERSION_CODENAME:-jammy}")"
+            echo "deb http://archive.ubuntu.com/ubuntu ${codename} main universe" | sudo tee /etc/apt/sources.list.d/ubuntu-fallback.list
+            echo "deb http://archive.ubuntu.com/ubuntu ${codename}-updates main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-fallback.list
+            sudo apt-get update
+          fi
+          sudo apt-get install -y cmake ninja-build g++ clang pkg-config libsdl2-dev libpng-dev zlib1g-dev
       - name: Run unit test suite
         run: python -m unittest discover -s tests -v

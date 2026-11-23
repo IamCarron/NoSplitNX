@@ -80,14 +80,17 @@ if [ "$GAME" != bw ] && [ "$GAME" != platinum ]; then
         ROM="$(cd "$(dirname "$ROM")" && pwd)/$(basename "$ROM")"
     fi
 fi
-for tool in git cmake ninja python3; do
-    command -v "$tool" >/dev/null || fail "$tool is not installed (Ubuntu: sudo apt install git cmake ninja-build python3)"
+for tool in git python3; do
+    command -v "$tool" >/dev/null || fail "$tool is not installed (Ubuntu: sudo apt install git python3)"
 done
 
 # The toolchain: devkitPro installed here, or else its Docker image.
 DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 DOCKER=""
 if [ -f "$DEVKITPRO/cmake/Switch.cmake" ] && [ -f "$DEVKITPRO/portlibs/switch/lib/libSDL2.a" ]; then
+    for tool in cmake ninja; do
+        command -v "$tool" >/dev/null || fail "$tool is not installed (Ubuntu: sudo apt install cmake ninja-build)"
+    done
     export DEVKITPRO
     export PATH="$DEVKITPRO/tools/bin:$PATH"
 elif command -v docker >/dev/null 2>&1; then
