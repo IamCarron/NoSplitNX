@@ -4,6 +4,15 @@
 ## Unreleased
 
 
+## v1.3.0-beta.4 — Clean UI, Settings & Quick Menu Unification
+
+- **Removed the duplicate `⚙` Settings tab from Companion (`ZL`) on DS, GBA & GB/GBC**: `ZL` now contains purely gameplay companion tools (**Party**, **Bag**, **Map**, **Guide**, **Pokédex**, and live **Battle Info / Suggestions**), while every display, HUD, audio, gameplay and control setting lives in one place inside NoSplitNX's `+` Pause Menu.
+- **Unified Pause Menu (`+`) structure across DS, GBA & GB/GBC**: added a matching **Gameplay** page (`+ → Settings → Gameplay`) on DS for **Wild Encounters**, **Auto-Run** and **Other Version Pokémon**, keeping **Field HUD** in **Settings → Graphics** across every console.
+- **Focused Quick Menu (`L3`) on Pokémon field actions only**: removed redundant **Save State**, **Load State** and **Fast Forward** tiles from the `L3` radial wheel (already in `+` and controller hotkeys), keeping only **Repel**, **Portable PC**, **Fly / Free Flight**, **Bike**, **Flash**, **Wild Encounters**, **Field HUD** and **Companion**.
+- **Eliminated dual GBA wild-encounter patching**: wired the `L3` **Wild Encounters** toggle directly to NoSplitNX's `wild_encounters` setting (`0% / 100%`) so Quick Menu and **Settings → Gameplay** stay in sync without conflicting RAM patches.
+- **Native naming polish**: renamed the `POKEDAISY` battle buttons style to **Modern** (`CORNER / STRIP / PANEL / STANDARD / SUN AND MOON / MODERN`, backwards-compatible with existing config files).
+
+
 ## v1.3.0-beta.3 — Switch 2D Compositor Fix, Widescreen DS Battle Strip, Regional DS Companion & Menu Cleanup
 
 - **Switch 2D menu & sprite visual fixes (`gpucompose.h`, `GPU2D_Soft.cpp`)**: fixed `DrawCrisp` sub-rectangle texture uploads on Nintendo Switch's `opengles2` SDL renderer by uploading full-width `el.sw` textures while keeping the fast 64-bit word scan (fixing horizontal wrapping in the Pokédex, vertical stretching on the Trainer Card, diagonal cutouts in the Bag, and overworld bridge streaks), cleared skipped transparent pixels to `0` so background colours never bleed under `Sharp` filtering, and fixed `LineCache`'s `emptyObj == objEmptyNow` check in `DrawScanline` so bobbing/moving party and menu sprites never serve stale empty scanlines.

@@ -42,7 +42,7 @@ public:
     //   PANEL:    touch-screen panel scaled to the message box's band, mutually co-sized;
     //   STANDARD: flat rounded strip buttons from Gen5Strip (BattleStrip), co-sized;
     //   SUNMOON:  Sun and Moon styled buttons (Gen5Strip::Commands).
-    enum { BUTTONS_CORNER, BUTTONS_STRIP, BUTTONS_PANEL, BUTTONS_STANDARD, BUTTONS_SUNMOON, BUTTONS_POKEDAISY };
+    enum { BUTTONS_CORNER, BUTTONS_STRIP, BUTTONS_PANEL, BUTTONS_STANDARD, BUTTONS_SUNMOON, BUTTONS_MODERN };
     int battleButtons = BUTTONS_STRIP;
 
     // romPath: the game being started; names: the functions the layouts watch (Black's own
@@ -60,7 +60,7 @@ public:
                         : !strncmp(line + 15, "panel", 5) ? BUTTONS_PANEL
                         : (!strncmp(line + 15, "standard", 8) || !strncmp(line + 15, "rounded", 7)) ? BUTTONS_STANDARD
                         : !strncmp(line + 15, "sunmoon", 7) ? BUTTONS_SUNMOON
-                        : !strncmp(line + 15, "pokedaisy", 9) ? BUTTONS_POKEDAISY : BUTTONS_STRIP;
+                        : (!strncmp(line + 15, "modern", 6) || !strncmp(line + 15, "pokedaisy", 9)) ? BUTTONS_MODERN : BUTTONS_STRIP;
             fclose(f);
         }
         char code[5] = {};
@@ -270,7 +270,7 @@ public:
             for (const Element& e : sc.items)
                 if (e.wideOnly) boxes.push_back(e);
             boxesAge = 0;
-            if (battleButtons == BUTTONS_POKEDAISY)
+            if (battleButtons == BUTTONS_MODERN)
             {
                 std::vector<Element> keep;
                 for (const Element& e : sc.items)

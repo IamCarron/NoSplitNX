@@ -296,7 +296,7 @@ static void tab_bar(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game*
     enum pd_tab more[UI_BAR_CHOICES];
     int n = chips(ui, g, tabs);
     bool hasMore = ui_more_tabs(ui, g, more) > 0;
-    int icons = hasMore ? 2 : 1;
+    int icons = (hasMore ? 1 : 0) + (ui->hideSettingsTab ? 0 : 1);
     // L / R at the ends while the buttons are the companion's (ShoulderHint).
     const bool shoulderHints = ui->keyFocus && !ui->shoulderTabs;
     int keys = shoulderHints ? 2 * (SHOULDER_W + CHIP_GAP) : 0;
@@ -335,7 +335,7 @@ static void tab_bar(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game*
         x += w + CHIP_GAP;
     }
     // MORE: lit while a tab it opens is up.
-    bool onBar = ui->tab == PD_TAB_SETTINGS;
+    bool onBar = !ui->hideSettingsTab && ui->tab == PD_TAB_SETTINGS;
     for (int i = 0; i < n; i++) onBar |= tabs[i] == ui->tab;
     if (hasMore) {
         icon_chip(ui, c, x, &PD_ICON_MORE, ui->overlay == PD_OVERLAY_MORE || !onBar, HIT_MORE);
@@ -349,9 +349,11 @@ static void tab_bar(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game*
         pd_triangle(c, x + 13, by + CHIP_H / 2 - 4, 5, PD_RIGHT, col);
         x += FF_W + CHIP_GAP;
     }
-    icon_chip(ui, c, x, &PD_ICON_GEAR, ui->tab == PD_TAB_SETTINGS && ui->overlay != PD_OVERLAY_MORE, HIT_TAB + PD_TAB_SETTINGS);
-    if (shoulderHints) {
+    if (!ui->hideSettingsTab) {
+        icon_chip(ui, c, x, &PD_ICON_GEAR, ui->tab == PD_TAB_SETTINGS && ui->overlay != PD_OVERLAY_MORE, HIT_TAB + PD_TAB_SETTINGS);
         x += ICON_CHIP_W + CHIP_GAP;
+    }
+    if (shoulderHints) {
         chip(ui, c, x, SHOULDER_W, false, HIT_SHOULDER_R);
         pd_text(c, x + (SHOULDER_W - pd_text_width("R")) / 2, pd_text_y(by, CHIP_H), "R", PD_TITLE_TEXT, PD_TITLE_SHADOW);
     }
@@ -600,7 +602,7 @@ static void act(struct pd_ui* ui, int id) {
     } else if (id == HIT_MORE) {
         ui->overlay = ui->overlay == PD_OVERLAY_MORE ? PD_OVERLAY_NONE : PD_OVERLAY_MORE;
     } else if (id == HIT_MORE_TAB_BAR) {
-        ui->tab = PD_TAB_SETTINGS;
+        if (!ui->hideSettingsTab) ui->tab = PD_TAB_SETTINGS;
         ui->overlay = PD_OVERLAY_TAB_BAR;
     } else if (id >= HIT_SETTINGS_GROUP && id < HIT_SETTINGS_GROUP + 10) {
         ui_settings_group(ui, id - HIT_SETTINGS_GROUP);
@@ -902,13 +904,14 @@ void pd_ui_next_tab(struct pd_ui* ui, int dir) {
     const enum pd_tab current = hasMore && (ui->overlay == PD_OVERLAY_MORE || ui->moreOpened)
         ? PD_TAB_COUNT : ui->tab;
     if (hasMore) order[n++] = PD_TAB_COUNT;
-    order[n++] = PD_TAB_SETTINGS;
+    if (!ui->hideSettingsTab) order[n++] = PD_TAB_SETTINGS;
+    if (n <= 0) return;
     int at = n - 1;
     for (int i = 0; i < n; i++)
         if (order[i] == current) at = i;
     const enum pd_tab next = order[(at + n + dir) % n];
     ui->overlay = next == PD_TAB_COUNT ? PD_OVERLAY_MORE : PD_OVERLAY_NONE;
-    ui->tab = next == PD_TAB_COUNT ? PD_TAB_SETTINGS : next;
+    ui->tab = next == PD_TAB_COUNT ? (ui->hideSettingsTab ? order[0] : PD_TAB_SETTINGS) : next;
     ui->summarySlot = -1;
     ui->moreOpened = false;
 }
@@ -992,7 +995,7 @@ bool pd_ui_back(struct pd_ui* ui) {
     }
     // BACK from a tab opened from MORE returns there; the CARD opened from SETTINGS, to SETTINGS.
     if (ui->tab == PD_TAB_CARD && !on_bar(ui, PD_TAB_CARD) && !ui->moreOpened) {
-        ui->tab = PD_TAB_SETTINGS;
+        ui->tab = ui->hideSettingsTab ? PD_TAB_PARTY : PD_TAB_SETTINGS;
         return true;
     }
     if (!on_bar(ui, ui->tab) && ui->tab != PD_TAB_SETTINGS) {

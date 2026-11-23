@@ -284,6 +284,7 @@ struct Bridge::Impl
 
     int BuildQuickItems(struct quick_item out[QUICK_COUNT], const HostActions& actions) const
     {
+        (void)actions;
         int n = 0;
         auto add = [&](enum quick_action a) -> struct quick_item& {
             memset(&out[n], 0, sizeof out[n]);
@@ -301,13 +302,6 @@ struct Bridge::Impl
             it.lit = shell.settings.hud;
         }
         add(QUICK_COMPANION);
-        if (actions.getFf && actions.setFf)
-        {
-            auto& it = add(QUICK_FF);
-            it.lit = actions.getFf();
-        }
-        if (actions.saveState) add(QUICK_SAVE_STATE);
-        if (actions.loadState && (!actions.stateExists || actions.stateExists())) add(QUICK_LOAD_STATE);
         return n;
     }
 

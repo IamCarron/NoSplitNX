@@ -64,6 +64,8 @@ public:
         std::function<bool()> stateExists;
         std::function<bool()> getFf;
         std::function<void(bool)> setFf;
+        std::function<bool()> getWildOff;
+        std::function<void(bool)> setWildOff;
         std::function<void(const std::string&)> toast;
     };
 
@@ -269,7 +271,7 @@ public:
         if (core) pd_binput_init(&binput, &game, ReadMemory, nullptr, core);
         pd_ui_init(&ui, &settings);
         ui.battleInput = &binput;
-        ui.handheldDex = ui.handheldParty = ui.guideController = ui.shoulderTabs = true;
+        ui.handheldDex = ui.handheldParty = ui.guideController = ui.shoulderTabs = ui.hideSettingsTab = true;
         memset(&host, 0, sizeof host);
         host.hideScreenMode = true;
         host.hasQuickMenu = true;
@@ -503,17 +505,20 @@ public:
                 pd_flight_area_sync(core, settings.flightAnywhere, false);
         }
 
-        // Wild encounters toggle (both GBA and GB/GBC).
-        if (settings.wildOff)
+        // Wild encounters toggle (GB/GBC via gbf, or GBA fallback when host gameplay patch isn't active).
+        if (!actions.setWildOff)
         {
-            if (gbf) { gb_field_hold_wild(core, gbf); gbWildHeld = true; }
-            else if (wildSwitch) { core->busWrite8(core, wildSwitch, 1); wildWasOff = true; }
-        }
-        else
-        {
-            if (gbWildHeld && gbf && !busy && gb_field_release_wild(core, gbf, romBytes.data(), romLen))
-                gbWildHeld = false;
-            if (wildWasOff && wildSwitch) { core->busWrite8(core, wildSwitch, 0); wildWasOff = false; }
+            if (settings.wildOff)
+            {
+                if (gbf) { gb_field_hold_wild(core, gbf); gbWildHeld = true; }
+                else if (wildSwitch) { core->busWrite8(core, wildSwitch, 1); wildWasOff = true; }
+            }
+            else
+            {
+                if (gbWildHeld && gbf && !busy && gb_field_release_wild(core, gbf, romBytes.data(), romLen))
+                    gbWildHeld = false;
+                if (wildWasOff && wildSwitch) { core->busWrite8(core, wildSwitch, 0); wildWasOff = false; }
+            }
         }
 
         if (gbTake > 0 && gbf)
@@ -1142,10 +1147,10 @@ private:
                 if (bikeOk) add(QUICK_BIKE);
             }
             if (flashCfg) add(QUICK_FLASH);
-            if (wildSwitch || gbf)
+            if (actions.getWildOff || wildSwitch || gbf)
             {
                 auto& it = add(QUICK_WILD);
-                it.off = settings.wildOff;
+                it.off = actions.getWildOff ? actions.getWildOff() : settings.wildOff;
             }
         }
         {
@@ -1153,13 +1158,6 @@ private:
             it.lit = settings.hud;
         }
         add(QUICK_COMPANION);
-        if (actions.getFf && actions.setFf)
-        {
-            auto& it = add(QUICK_FF);
-            it.lit = actions.getFf();
-        }
-        if (actions.saveState) add(QUICK_SAVE_STATE);
-        if (actions.loadState && (!actions.stateExists || actions.stateExists())) add(QUICK_LOAD_STATE);
         return n;
     }
 
@@ -1183,9 +1181,18 @@ private:
             flashAsk = 1; quickOpen = false;
             break;
         case QUICK_WILD:
-            settings.wildOff = !settings.wildOff;
-            pd_settings_save(&settings, settingsPath.c_str());
-            Say(settings.wildOff ? "WILD ENCOUNTERS OFF" : "WILD ENCOUNTERS ON", actions);
+            if (actions.getWildOff && actions.setWildOff)
+            {
+                const bool next = !actions.getWildOff();
+                actions.setWildOff(next);
+                Say(next ? "WILD ENCOUNTERS OFF" : "WILD ENCOUNTERS ON", actions);
+            }
+            else
+            {
+                settings.wildOff = !settings.wildOff;
+                pd_settings_save(&settings, settingsPath.c_str());
+                Say(settings.wildOff ? "WILD ENCOUNTERS OFF" : "WILD ENCOUNTERS ON", actions);
+            }
             quickOpen = false;
             break;
         case QUICK_REPEL:

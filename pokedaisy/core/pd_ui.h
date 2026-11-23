@@ -449,6 +449,7 @@ struct pd_ui {
     bool bagDetails;
     bool handheldDex, handheldParty;
     bool shoulderTabs; // handheld tab cycle includes More, without D-pad tab focus
+    bool hideSettingsTab; // host owns all settings in its own pause menu: omit the gear tab from Companion
     bool hudLayoutFixed; // the host draws one HUD layout: the HUD page's LAYOUT row is N/A (the DS core)
     const struct pd_party_source* partySource;
     int summaryPage;

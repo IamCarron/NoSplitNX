@@ -1790,7 +1790,7 @@ struct Settings
         f << "start_button=" << (startMenu ? "menu" : "ds") << "\n";
         f << "zoom=" << (zoom ? 1 : 0) << "\n";
         f << "zoom_text=" << (zoomText ? 1 : 0) << "\n";
-        static const char* const battleButtonNames[] = { "corner", "strip", "panel", "standard", "sunmoon", "pokedaisy" };
+        static const char* const battleButtonNames[] = { "corner", "strip", "panel", "standard", "sunmoon", "modern" };
         f << "battle_buttons=" << battleButtonNames[std::clamp(battleButtons, 0, 5)] << "\n";
         controls.Save(f);
         f << "both_versions=" << (bothVersions ? 1 : 0) << "\n";
@@ -5348,19 +5348,19 @@ int main(int argc, char** argv)
         M_RESUME, M_LAYOUT, M_LARGE, M_FPS60, M_FULLSCREEN, M_SMOOTH, M_WIDE, M_WIDEMAP, M_BATTLEBUTTONS, M_ZOOM, M_ZOOM_TEXT,
         M_WIDELINES, M_AUTODETAIL, M_WIDEGPU, M_GPU3D, M_SHOWFPS, M_BUTTONS, M_PADTOUCH, M_EMULATION,
         M_CONTROLS, M_STARTBTN, M_FAST, M_FASTBTN, M_FFLOWRES, M_SWITCH_FF, M_SAVESTATE, M_LOADSTATE, M_AUTO_STATE, M_AUTO_RESUME, M_RESET, M_QUIT,
-        M_SETTINGS, M_DISPLAY, M_LANGUAGE, M_SOUND, M_GRAPHICS, M_CONTROLMENU, M_BACK, M_CHEATS, M_NOTHING,
+        M_SETTINGS, M_DISPLAY, M_LANGUAGE, M_SOUND, M_GRAPHICS, M_GAMEPLAY, M_CONTROLMENU, M_BACK, M_CHEATS, M_NOTHING,
         M_VOLUME, M_FFMUTE, M_ASPECT, M_RA, M_RA_ON, M_RA_ACCOUNT, M_RA_GAME, M_RA_BANNER, M_RA_LOGIN, M_RA_TYPED, M_RA_CANCEL, M_BOTHVER,
         M_RA_LIST, M_ACH_POINTS, M_ACH_STATUS, M_ACH_RARITY,
         M_CSEARCH, M_SEARCH_LETTER, M_SEARCH_DELETE, M_SEARCH_SPACE, M_SEARCH_CLEAR, M_SEARCH_DONE,
         M_CDETAIL_TOGGLE, M_CINFO, M_BACKUPS, M_RESTORE_CONFIRM, M_LOAD_CONFIRM,
-        M_PD_COMPANION, M_PD_QUICK, M_PD_HUD, M_PD_WILD, M_PD_AUTORUN,
+        M_PD_COMPANION, M_PD_HUD, M_PD_WILD, M_PD_AUTORUN,
         M_BACKUP0 = 70000,
         M_CHEAT0 = 1000, // (M_CHEAT0 + i: cheat i, CHEATS)
         M_ACH0 = 30000,  // (M_ACH0 + i: achievement i, ACHIEVEMENTS)
         M_CHEAT_ON = 49000, // ON NOW: every cheat that is on, from any folder
         M_CFOLDER0 = 50000  // (M_CFOLDER0 + i: folder i of the cheat database)
     };
-    enum { PAGE_MAIN, PAGE_KEYS, PAGE_SETTINGS, PAGE_GRAPHICS, PAGE_CONTROLS, PAGE_CHEATS, PAGE_RA, PAGE_SOUND, PAGE_RA_LIST, PAGE_RA_DETAIL, PAGE_CSEARCH, PAGE_CDETAIL, PAGE_CINFO, PAGE_BACKUPS, PAGE_RESTORE_CONFIRM, PAGE_LOAD_CONFIRM };
+    enum { PAGE_MAIN, PAGE_KEYS, PAGE_SETTINGS, PAGE_GRAPHICS, PAGE_CONTROLS, PAGE_CHEATS, PAGE_RA, PAGE_SOUND, PAGE_GAMEPLAY, PAGE_RA_LIST, PAGE_RA_DETAIL, PAGE_CSEARCH, PAGE_CDETAIL, PAGE_CINFO, PAGE_BACKUPS, PAGE_RESTORE_CONFIRM, PAGE_LOAD_CONFIRM };
     // ACHIEVEMENTS (RETROACHIEVEMENTS' list): read from the set as the page opens.
     std::vector<Achievements::Row> achList;
     int achDetail = -1; // the one ACHIEVEMENTS' details are shown for (A on it)
@@ -5478,8 +5478,15 @@ int main(int argc, char** argv)
         {
             add(M_GRAPHICS, "GRAPHICS", "");
             add(M_SOUND, "SOUND", "");
+            if (pdStripSupported() || exclusives.Supported()) add(M_GAMEPLAY, "GAMEPLAY", "");
             add(M_CONTROLMENU, "CONTROLS", "");
             add(M_LANGUAGE, "LANGUAGE", UiLang::ChoiceName());
+            if (!opt.noSave) add(M_BACKUPS, "SAVE BACKUPS", "");
+            if (Achievements::Available()) add(M_RA, "RETROACHIEVEMENTS", onOff(cfg.ra.on));
+            add(M_BACK, "BACK", "");
+        }
+        else if (menuPage == PAGE_GAMEPLAY)
+        {
 #ifdef SSR_POKEDAISY
             if (dsCompanion.Supported())
             {
@@ -5488,8 +5495,6 @@ int main(int argc, char** argv)
             }
 #endif
             if (exclusives.Supported()) add(M_BOTHVER, "OTHER VERSION POKEMON", onOff(exclusives.on));
-            if (!opt.noSave) add(M_BACKUPS, "SAVE BACKUPS", "");
-            if (Achievements::Available()) add(M_RA, "RETROACHIEVEMENTS", onOff(cfg.ra.on));
             add(M_BACK, "BACK", "");
         }
         else if (menuPage == PAGE_GRAPHICS)
@@ -5498,9 +5503,9 @@ int main(int argc, char** argv)
             add(M_WIDE, "WIDESCREEN WORLD", onOff(cfg.wide));
             add(M_SMOOTH, "SMOOTH SCALING", onOff(cfg.smooth));
             {
-                static const char* const btnNames[] = { "CORNER", "STRIP", "PANEL", "STANDARD", "SUN AND MOON", "POKEDAISY" };
+                static const char* const btnNames[] = { "CORNER", "STRIP", "PANEL", "STANDARD", "SUN AND MOON", "MODERN" };
                 const bool gen4Own = pt.on || !funcWatchOn;
-                const char* btnVal = gen4Own ? (cfg.battleButtons == 5 ? "POKEDAISY" : cfg.battleButtons == 4 ? "SUN AND MOON" : "STANDARD")
+                const char* btnVal = gen4Own ? (cfg.battleButtons == 5 ? "MODERN" : cfg.battleButtons == 4 ? "SUN AND MOON" : "STANDARD")
                                              : btnNames[std::clamp(cfg.battleButtons, 0, 5)];
                 add(M_BATTLEBUTTONS, "BATTLE BUTTONS", btnVal);
             }
@@ -7310,6 +7315,7 @@ int main(int argc, char** argv)
             {
                 backTo = menuPage == PAGE_SETTINGS ? M_SETTINGS
                        : menuPage == PAGE_SOUND ? M_SOUND
+                       : menuPage == PAGE_GAMEPLAY ? M_GAMEPLAY
                        : menuPage == PAGE_GRAPHICS ? M_GRAPHICS
                        : menuPage == PAGE_CONTROLS ? M_CONTROLMENU
                        : menuPage == PAGE_BACKUPS ? M_BACKUPS
@@ -7459,6 +7465,10 @@ int main(int argc, char** argv)
                 goPage(PAGE_SOUND, -1);
                 hit = -1;
                 break;
+            case M_GAMEPLAY:
+                goPage(PAGE_GAMEPLAY, -1);
+                hit = -1;
+                break;
             case M_CONTROLMENU:
                 goPage(PAGE_CONTROLS, -1);
                 hit = -1;
@@ -7493,11 +7503,12 @@ int main(int argc, char** argv)
                     hit = -1;
                     break;
                 }
-                if (menuPage == PAGE_GRAPHICS || menuPage == PAGE_SOUND || menuPage == PAGE_CONTROLS || menuPage == PAGE_BACKUPS || menuPage == PAGE_RA)
+                if (menuPage == PAGE_GRAPHICS || menuPage == PAGE_SOUND || menuPage == PAGE_GAMEPLAY || menuPage == PAGE_CONTROLS || menuPage == PAGE_BACKUPS || menuPage == PAGE_RA)
                 {
                     const int parentId = backTo >= 0 ? backTo
                                        : menuPage == PAGE_GRAPHICS ? M_GRAPHICS
                                        : menuPage == PAGE_SOUND ? M_SOUND
+                                       : menuPage == PAGE_GAMEPLAY ? M_GAMEPLAY
                                        : menuPage == PAGE_CONTROLS ? M_CONTROLMENU
                                        : menuPage == PAGE_BACKUPS ? M_BACKUPS
                                        : M_RA;
@@ -7644,12 +7655,6 @@ int main(int argc, char** argv)
                 menu.open = false;
                 swallowMenuButtons = true;
                 dsCompanion.ToggleCompanion();
-                hit = -1;
-                break;
-            case M_PD_QUICK:
-                menu.open = false;
-                swallowMenuButtons = true;
-                dsCompanion.ToggleQuickMenu();
                 hit = -1;
                 break;
             case M_PD_HUD:
@@ -9712,7 +9717,7 @@ int main(int argc, char** argv)
             };
             menuHint = btn(Controls::A) + ": " + UiLang::Tr("SELECT") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");
             const int selId = menu.selected >= 0 && menu.selected < (int)menuIds.size() ? menuIds[menu.selected] : -1;
-            static const char* pageTitle[] = { "NoSplitNX", "KEYS AND BUTTONS", "SETTINGS", "GRAPHICS", "CONTROLS", "CHEATS", "RETROACHIEVEMENTS", "SOUND", "ACHIEVEMENTS", "ACHIEVEMENT", "SEARCH CHEATS", "CHEAT DETAILS", "DATABASE INFO", "SAVE BACKUPS", "RESTORE SAVE", "LOAD STATE" };
+            static const char* pageTitle[] = { "NoSplitNX", "KEYS AND BUTTONS", "SETTINGS", "GRAPHICS", "CONTROLS", "CHEATS", "RETROACHIEVEMENTS", "SOUND", "GAMEPLAY", "ACHIEVEMENTS", "ACHIEVEMENT", "SEARCH CHEATS", "CHEAT DETAILS", "DATABASE INFO", "SAVE BACKUPS", "RESTORE SAVE", "LOAD STATE" };
             if (menuPage == PAGE_KEYS)
             {
                 menuHint = btn(Controls::A) + ": " + UiLang::Tr("CHANGE") + "   " + btn(Controls::B) + ": " + UiLang::Tr("BACK");

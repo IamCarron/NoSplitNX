@@ -753,6 +753,14 @@ struct App
             set.values["fast_lock"] = fastToggle ? "1" : "0";
             set.Save(); set.ToHost("fast_lock");
         };
+        if (!game.isGb && gpField && gpWild != 0)
+        {
+            a.getWildOff = [this]() { return WildKeep() == 0; };
+            a.setWildOff = [this](bool off) {
+                set.values["wild_encounters"] = off ? "0" : "100";
+                set.Save(); set.ToHost("wild_encounters");
+            };
+        }
         a.toast = [this](const std::string& m) { Toast(m, 2600); };
         return a;
     }
@@ -1940,6 +1948,7 @@ struct App
         {
             pause.items.push_back({ "DISPLAY", "" });
             pause.items.push_back({ "SOUND", "" });
+            pause.items.push_back({ "GAMEPLAY", "" });
             pause.items.push_back({ "CONTROLS", "" });
         }
 #else
@@ -2307,33 +2316,10 @@ struct App
             set.Save(); set.ToHost("fast_lock");
             return;
         }
-        if (item == "REWIND" && (in.left || in.right || in.accept))
-        {
-            companion.SetRewind(core, !companion.rewindEnabled);
-            pause.items[pause.selected].value = companion.rewindEnabled ? "ON" : "OFF";
-            set.values["rewind"] = companion.rewindEnabled ? "1" : "0";
-            set.Save();
-            return;
-        }
-#ifdef GBAW_POKEDAISY
-        if (item == "FIELD HUD" && (in.left || in.right || in.accept))
-        {
-            companion.SetHud(!companion.HudEnabled());
-            pause.items[pause.selected].value = companion.HudEnabled() ? "ON" : "OFF";
-            return;
-        }
-        if (item == "AUTO-RUN" && (in.left || in.right || in.accept))
-        {
-            companion.SetAutoRun(!companion.AutoRunEnabled());
-            pause.items[pause.selected].value = companion.AutoRunEnabled() ? "ON" : "OFF";
-            return;
-        }
-#endif
         if (!in.accept) return;
         if (item == "RESUME") Resume();
 #ifdef GBAW_POKEDAISY
         else if (item == "COMPANION") { Resume(); companion.ToggleCompanion(core); }
-        else if (item == "QUICK MENU") { Resume(); companion.ToggleQuickMenu(core); }
 #endif
         else if (item == "SAVE STATE")
         {

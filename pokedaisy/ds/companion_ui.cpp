@@ -106,6 +106,7 @@ void DsCompanionUi::init(const std::string& directory,int legacyLayout,bool lega
   frame.availableTabs=dsTabs;
   options.keepBackdrop=true;
   frame.shoulderTabs=true;
+  frame.hideSettingsTab=true;
   frame.hudLayoutFixed=true; // hud_ds_draw has one layout
   frame.guideController=true;
   frame.contentCtx=this;frame.content=[](void* ctx,pd_ui* u,pd_canvas* c){static_cast<DsCompanionUi*>(ctx)->draw_body(u,c);};
@@ -139,7 +140,7 @@ void DsCompanionUi::set_game(DsGame value,bool soulSilverVersion){
   frame.availableTabs=dsTabs;
   if(game==DsGame::Unsupported){
     frame.availableTabs=1<<PD_TAB_PARTY;
-    frame.tab=PD_TAB_SETTINGS;
+    frame.tab=PD_TAB_PARTY;
   }
 }
 unsigned DsCompanionUi::companion_id()const{return buttonIds[companionButton];}
