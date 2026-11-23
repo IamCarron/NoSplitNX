@@ -50,10 +50,13 @@ extern "C" {
 #define STBI_NO_HDR
 #include "third_party/stb_image.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
@@ -68,6 +71,8 @@ extern "C" {
 #endif
 
 #include "android.h"
+#include "follower_hgss.h"
+#include "gameplay.h"
 #include "games.h"
 #include "touch.h"
 #include "ui.h"
@@ -161,7 +166,31 @@ const std::vector<Setting>& SettingsList()
           "CLICK THE RIGHT STICK OR PRESS C ON THE OVERWORLD TO STEP THE ZOOM OUT; MOVE THE RIGHT STICK TO LOOK AROUND." },
         { "zoom_text", "AUTO ZOOM IN", onOff, "1",
           "PULL IN TO 1X ON THE PLAYER WHILE TEXT BOXES ARE UP ON THE OVERWORLD." },
+        { "day_night", "DAY AND NIGHT", onOff, "0",
+          "ON: OUTDOORS FOLLOWS YOUR CLOCK: A WARM DAWN, PLAIN DAY, AN ORANGE DUSK AND A BLUE NIGHT. ONLY THE COLOURS CHANGE." },
+        { "follower", "FOLLOWING POKEMON", onOff, "0",
+          "ON: YOUR FIRST POKEMON WALKS BEHIND YOU USING SPRITES FROM YOUR OWN HEARTGOLD OR SOULSILVER IN THE ROMS FOLDER." },
         { "show_fps", "FPS COUNTER", onOff, "0", "SHOWS THE FRAMES A SECOND IN A CORNER." },
+        { "instant_text", "INSTANT TEXT", onOff, "0",
+          "ON: A TEXT BOX'S WORDS APPEAR AT ONCE, WHATEVER THE GAME'S OWN TEXT SPEED." },
+        { "reusable_tms", "REUSABLE TMS", onOff, "0",
+          "ON: EVERY TM STAYS IN THE BAG AFTER TEACHING ITS MOVE, AS AN HM DOES." },
+        { "run_indoors", "RUN INDOORS", onOff, "0",
+          "ON: THE RUNNING SHOES WORK ON EVERY MAP, INDOORS TOO (EMERALD, FIRERED AND LEAFGREEN)." },
+        { "wild_encounters", "WILD ENCOUNTERS",
+          { { "100", "NORMAL" }, { "75", "75%" }, { "50", "50%" }, { "25", "25%" }, { "0", "OFF" } }, "100",
+          "HOW MANY WILD POKEMON APPEAR IN GRASS, CAVES AND WATER. FISHING, SWEET SCENT AND SCRIPTED BATTLES STAY AS THEY ARE." },
+        { "shiny_odds", "SHINY ODDS",
+          { { "8192", "NORMAL" }, { "4096", "1 IN 4096" }, { "1024", "1 IN 1024" }, { "512", "1 IN 512" }, { "128", "1 IN 128" } }, "8192",
+          "HOW OFTEN A WILD POKEMON APPEARS SHINY. POKEMON ALREADY CAUGHT DO NOT CHANGE." },
+        { "battle_speed", "BATTLE SPEED", { { "1", "NORMAL" }, { "2", "2X" }, { "3", "3X" }, { "4", "4X" } }, "1",
+          "HOW FAST BATTLES RUN WITHOUT FAST FORWARD." },
+        { "text_speed", "TEXT SPEED", { { "1", "NORMAL" }, { "2", "2X" }, { "3", "3X" }, { "4", "4X" } }, "1",
+          "HOW FAST THE GAME RUNS WHILE A TEXT BOX IS UP OUTSIDE BATTLES." },
+        { "bike_speed", "BIKE SPEED", { { "1", "NORMAL" }, { "2", "2X" }, { "3", "3X" }, { "4", "4X" } }, "1",
+          "HOW FAST THE GAME RUNS WHILE RIDING A BIKE." },
+        { "surf_speed", "SURF SPEED", { { "1", "NORMAL" }, { "2", "2X" }, { "3", "3X" }, { "4", "4X" } }, "1",
+          "HOW FAST THE GAME RUNS WHILE SURFING OR DIVING." },
         { "volume", "VOLUME",
           { { "0", "OFF" }, { "10", "10%" }, { "20", "20%" }, { "30", "30%" }, { "40", "40%" }, { "50", "50%" },
             { "60", "60%" }, { "70", "70%" }, { "80", "80%" }, { "90", "90%" }, { "100", "100%" } },
@@ -689,6 +718,20 @@ struct App
     std::vector<uint32_t> video = std::vector<uint32_t>((size_t)MaxW * GbaH);
     // PokeDaisy WIDE (pokedaisy/): dynamic widescreen rebuild, GB/GBC wide, Rewind, Companion, HUD & Quick Menu.
     bool pkWide = false;
+    // GBA Gameplay options (gameplay.h), Day/Night tint and Following Pokemon (follower_hgss.h).
+    std::vector<GbaGameplay::Write> gpText, gpTms;
+    bool gpTextOn = false, gpTmsOn = false, gpField = false;
+    uint32_t gpWild = 0;
+    int gpState = 0;
+    std::string gpGameCode;
+    GbaGameplay::ShinyRoller shiny;
+    float tintNow[3] = { 256, 256, 256 };
+    int tintSent[3] = { 256, 256, 256 }, tintFrames = 0;
+    std::unique_ptr<HgssFollow::Source> follow;
+    std::thread followFind;
+    std::atomic<int> followState{ 0 }; // 0 not searched, 1 searching, 2 found, 3 none
+    int followSpecies = -1, followTick = 0;
+    bool followShiny = false, followShown = false, followToldNone = false;
     PkWideCamera::Camera camera;
     GbaCompanion companion;
     std::vector<uint32_t> frame240 = std::vector<uint32_t>((size_t)GbaW * GbaH);
@@ -732,7 +775,7 @@ struct App
     // RetroAchievements, from the program this is built into (embed.h). None in the standalone game.
     const GbaWide::AchievementsHost* ra = nullptr;
     bool raReady = false;
-    enum PausePage { P_ROOT, P_SETTINGS, P_RA, P_LIST, P_LOGIN, P_CHEATS, P_DISPLAY, P_SOUND, P_CONTROLS } pausePage = P_ROOT;
+    enum PausePage { P_ROOT, P_SETTINGS, P_RA, P_LIST, P_LOGIN, P_CHEATS, P_DISPLAY, P_SOUND, P_GAMEPLAY, P_CONTROLS } pausePage = P_ROOT;
     PausePage pauseTouchPage = P_ROOT;
     std::string autoStatePath;
     bool autoStateBlocked = false, autoStatePlayed = false;
@@ -1065,6 +1108,34 @@ struct App
         zoomShown = false;
         zoomRefresh = false;
         companion.Start(core, sold.data(), sold.size(), soldCrc, g.isGb, data, set.Get("language"), set.Get("rewind") != "0");
+        gpText.clear();
+        gpTms.clear();
+        gpTextOn = gpTmsOn = false;
+        gpWild = 0;
+        gpState = 0;
+        gpField = false;
+        gpGameCode = g.isGb ? std::string() : Games::Header(sold, 0xAC, 4);
+        shiny = {};
+        tintNow[0] = tintNow[1] = tintNow[2] = 256.0f;
+        tintSent[0] = tintSent[1] = tintSent[2] = 256;
+        tintFrames = 0;
+        followSpecies = -1;
+        followShiny = false;
+        followShown = false;
+        followToldNone = false;
+        followTick = 0;
+        pk_follower_set(nullptr, nullptr);
+        if (!g.isGb)
+        {
+            gpText = GbaGameplay::InstantText(rom);
+            gpTms = GbaGameplay::ReusableTms(rom);
+            gpWild = GbaGameplay::WildSwitch(rom);
+            gpField = pk_field_configure(soldCrc) != 0;
+            if (gpField && gpWild) pk_field_wild(gpWild, WildKeep() < 100);
+            ApplyGameplay();
+            fprintf(stderr, "[gba] gameplay: text=%zu tms=%zu wild=%08X field=%d\n",
+                    gpText.size(), gpTms.size(), gpWild, (int)gpField);
+        }
         fprintf(stderr, "[gba] pk_wide: %s (platform=%s, patch='%s', crc=%08X)\n",
                 pkWide ? "active" : "none", g.isGb ? "GB/GBC" : "GBA", g.patch.c_str(), (unsigned)soldCrc);
 #ifdef GBAW_CHEATS
@@ -1119,6 +1190,16 @@ struct App
         if (typing) SDL_StopTextInput();
         typing = false;
 #endif
+        if (followFind.joinable()) followFind.join();
+        follow.reset();
+        followState = 0;
+        pk_follower_set(nullptr, nullptr);
+        pk_tint_set(core, 256, 256, 256);
+        gpText.clear();
+        gpTms.clear();
+        gpTextOn = gpTmsOn = gpField = false;
+        gpWild = 0;
+        gpState = 0;
         companion.Shutdown(core);
         pk_wide_reset();
         pkWide = false;
@@ -1484,6 +1565,191 @@ struct App
         return fastButton.Requested(set.Get("fast_button") == "toggle", FastDown(), fastToggle);
     }
 
+    bool GameplayOffered(const char* key) const
+    {
+        if (game.isGb)
+        {
+            if (!strcmp(key, "day_night") || !strcmp(key, "follower") ||
+                !strcmp(key, "instant_text") || !strcmp(key, "reusable_tms") ||
+                !strcmp(key, "run_indoors") || !strcmp(key, "wild_encounters") ||
+                !strcmp(key, "shiny_odds") || !strcmp(key, "battle_speed") ||
+                !strcmp(key, "text_speed") || !strcmp(key, "bike_speed") || !strcmp(key, "surf_speed"))
+                return false;
+            return true;
+        }
+        if (!strcmp(key, "instant_text")) return !gpText.empty();
+        if (!strcmp(key, "reusable_tms")) return !gpTms.empty();
+        if (!strcmp(key, "run_indoors")) return gpField && gpGameCode.size() == 4 && gpGameCode[0] == 'B';
+        if (!strcmp(key, "wild_encounters")) return gpField && gpWild != 0;
+        if (!strcmp(key, "shiny_odds"))
+        {
+            uint32_t e = 0, sb2 = 0, inb = 0; bool st = false;
+            return companion.ShinyAddrs(gpGameCode, e, sb2, st, inb);
+        }
+        if (!strcmp(key, "day_night")) return pkWide && gpField;
+        if (!strcmp(key, "follower")) return pkWide && gpField && companion.active;
+        if (!strcmp(key, "battle_speed") || !strcmp(key, "text_speed") ||
+            !strcmp(key, "bike_speed") || !strcmp(key, "surf_speed"))
+            return gpField;
+        return true;
+    }
+    bool AnyGameplayOffered() const
+    {
+        static const char* const keys[] = { "instant_text", "reusable_tms", "run_indoors", "wild_encounters",
+                                            "shiny_odds", "battle_speed", "text_speed", "bike_speed", "surf_speed" };
+        for (const char* k : keys)
+            if (GameplayOffered(k)) return true;
+        return false;
+    }
+    int WildKeep() const { return gpWild ? std::max(0, std::min(100, atoi(set.Get("wild_encounters").c_str()))) : 100; }
+    void ApplyGameplay()
+    {
+        if (!core || game.isGb) return;
+        auto put = [&](const std::vector<GbaGameplay::Write>& w, bool on, bool& was) {
+            if (on == was) return;
+            for (const auto& x : w)
+            {
+                const auto& b = on ? x.value : x.orig;
+                for (size_t k = 0; k < b.size(); k++) core->rawWrite8(core, x.addr + (uint32_t)k, -1, b[k]);
+            }
+            was = on;
+        };
+        put(gpText, set.Get("instant_text") == "1", gpTextOn);
+        put(gpTms, set.Get("reusable_tms") == "1", gpTmsOn);
+    }
+    void ShinyFrame()
+    {
+        if (game.isGb) return;
+        const int odds = atoi(set.Get("shiny_odds").c_str());
+        uint32_t enemy = 0, sb2 = 0, inb = 0;
+        bool staticBlocks = false;
+        if (odds <= 0 || odds >= 8192 || !companion.ShinyAddrs(gpGameCode, enemy, sb2, staticBlocks, inb)) return;
+        shiny.Tick(odds, enemy, sb2, staticBlocks, inb,
+                   [&](uint32_t a, uint8_t* b, int n) {
+                       for (int i = 0; i < n; i++) b[i] = (uint8_t)core->busRead8(core, a + (uint32_t)i);
+                       return true;
+                   },
+                   [&](uint32_t a, const uint8_t* b, int n) {
+                       for (int i = 0; i < n; i++) core->busWrite8(core, a + (uint32_t)i, b[i]);
+                       return true;
+                   });
+    }
+    int SceneSpeed() const
+    {
+        if (game.isGb || !gpField || !(gpState & PK_FIELD_KNOWN)) return 1;
+        const char* key = (gpState & PK_FIELD_BATTLE) ? "battle_speed"
+                        : (gpState & (PK_FIELD_TEXT | PK_FIELD_WINDOW)) ? "text_speed"
+                        : (gpState & PK_FIELD_BIKE) ? "bike_speed"
+                        : (gpState & PK_FIELD_SURF) ? "surf_speed" : nullptr;
+        return key ? std::max(1, std::min(4, set.Int(key))) : 1;
+    }
+    static void DayNightAt(float hour, int out[3])
+    {
+        static const struct { float h; int c[3]; } keys[] = {
+            { 0.0f, { 135, 150, 225 } }, { 4.5f, { 135, 150, 225 } }, { 6.0f, { 245, 220, 220 } },
+            { 7.5f, { 256, 256, 256 } }, { 16.5f, { 256, 256, 256 } }, { 18.0f, { 255, 200, 165 } },
+            { 19.5f, { 135, 150, 225 } }, { 24.0f, { 135, 150, 225 } }
+        };
+        int i = 0;
+        while (i < 6 && keys[i + 1].h <= hour) i++;
+        const float t = (hour - keys[i].h) / (keys[i + 1].h - keys[i].h);
+        for (int c = 0; c < 3; c++)
+            out[c] = (int)(keys[i].c[c] + (keys[i + 1].c[c] - keys[i].c[c]) * std::max(0.0f, std::min(1.0f, t)));
+    }
+    bool DayNightOn() const { return !game.isGb && set.Get("day_night") == "1" && pkWide && gpField; }
+    bool FollowerOn() const { return !game.isGb && set.Get("follower") == "1" && pkWide && gpField && companion.active; }
+    void FollowFind()
+    {
+        followState = 1;
+        const std::string dir = roms;
+        followFind = std::thread([this, dir] {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            auto src = std::make_unique<HgssFollow::Source>();
+            bool ok = false;
+            for (const fs::path& top : { fs::path(dir), fs::path(dir).parent_path() })
+            {
+                if (top.empty()) continue;
+                ec.clear();
+                for (auto it = fs::recursive_directory_iterator(top, fs::directory_options::skip_permission_denied, ec);
+                     !ok && !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+                {
+                    if (it.depth() > 2) { it.disable_recursion_pending(); continue; }
+                    std::string ext = it->path().extension().string();
+                    for (char& c : ext) c = (char)tolower((unsigned char)c);
+                    if (ext == ".nds" && it->is_regular_file(ec)) ok = src->Open(it->path().string());
+                }
+                if (ok) break;
+            }
+            if (ok) follow = std::move(src);
+            followState = ok ? 2 : 3;
+        });
+    }
+    void FollowerFrame()
+    {
+        const bool want = FollowerOn();
+        if (want && followState == 0) FollowFind();
+        if (want && followState == 3 && !followToldNone)
+        {
+            followToldNone = true;
+            Toast("FOLLOWING POKEMON NEEDS HEARTGOLD OR SOULSILVER IN THE ROMS FOLDER", 4000);
+        }
+        bool show = false;
+        if (want && followState == 2 && follow)
+        {
+            if (followTick++ % 30 == 0)
+            {
+                int national = 0;
+                bool isShiny = false;
+                if (!companion.LeadInfo(national, isShiny)) national = 0;
+                if (national != followSpecies || isShiny != followShiny)
+                {
+                    uint8_t frames[6 * 512], pal[32];
+                    if (national > 0 && follow->Mon(national, isShiny, frames, pal)) pk_follower_set(frames, pal);
+                    else pk_follower_set(nullptr, nullptr);
+                    followSpecies = national;
+                    followShiny = isShiny;
+                }
+            }
+            const int scene = pk_wide_scene();
+            show = followSpecies > 0 && (scene == PK_WIDE_SCENE_FIELD || scene == PK_WIDE_SCENE_TEXT) &&
+                   !(gpState & (PK_FIELD_BATTLE | PK_FIELD_SURF));
+        }
+        if (show != followShown || (show && followTick % 60 == 0))
+        {
+            pk_follower_show(core, show ? 1 : 0);
+            followShown = show;
+        }
+    }
+    void DayNightFrame()
+    {
+        if (game.isGb) return;
+        int want[3] = { 256, 256, 256 };
+        if (DayNightOn())
+        {
+            const int scene = pk_wide_scene(), mt = pk_field_map_type(core);
+            const bool field = (scene == PK_WIDE_SCENE_FIELD || scene == PK_WIDE_SCENE_TEXT) && !(gpState & PK_FIELD_BATTLE);
+            const bool outdoors = mt < 0 || mt == 1 || mt == 2 || mt == 3 || mt == 6;
+            if (field && outdoors)
+            {
+                const time_t now = time(nullptr);
+                const struct tm* lt = localtime(&now);
+                const char* fh = getenv("FULLDEX_HOUR");
+                if (fh) DayNightAt((float)atof(fh), want);
+                else if (lt) DayNightAt(lt->tm_hour + lt->tm_min / 60.0f, want);
+            }
+        }
+        bool changed = false;
+        for (int c = 0; c < 3; c++)
+        {
+            const float d = want[c] - tintNow[c];
+            tintNow[c] = std::fabs(d) < 8 ? (float)want[c] : tintNow[c] + (d > 0 ? 8 : -8);
+            if ((int)tintNow[c] != tintSent[c]) { tintSent[c] = (int)tintNow[c]; changed = true; }
+        }
+        const bool tinted = tintSent[0] != 256 || tintSent[1] != 256 || tintSent[2] != 256;
+        if (changed || (tinted && ++tintFrames % 60 == 0)) pk_tint_set(core, tintSent[0], tintSent[1], tintSent[2]);
+    }
+
     // Runs one GBA/GB frame, with sound if `sound` and dynamic wide/zoom work if `shown`.
     void RunFrame(bool sound, bool ff = false, bool shown = true)
     {
@@ -1512,7 +1778,15 @@ struct App
         }
         core->setKeys(core, keys);
         core->runFrame(core);
+        if (!game.isGb && gpField)
+            gpState = pk_field_state(core, set.Get("run_indoors") == "1" ? 1 : 0, WildKeep());
+        if (!game.isGb) ShinyFrame();
         ZoomFrame(shown);
+        if (!game.isGb && shown)
+        {
+            DayNightFrame();
+            FollowerFrame();
+        }
         companion.PostFrame(core, CompanionActions());
 #ifdef GBAW_CHEATS
         cheats.Frame(cheatBus, keys);
@@ -1594,19 +1868,21 @@ struct App
             return;
         }
 #endif
-        if (pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_CONTROLS)
+        if (pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_GAMEPLAY || pausePage == P_CONTROLS)
         {
-            static const char* const display[] = { "widescreen", "fullscreen", "scaling", "hd_filter", "lcd", "colour", "zoom", "zoom_text", "show_fps" };
+            static const char* const display[] = { "widescreen", "fullscreen", "scaling", "hd_filter", "lcd", "colour", "zoom", "zoom_text", "day_night", "follower", "show_fps" };
             static const char* const sound[] = { "volume", "ff_mute" };
+            static const char* const gameplay[] = { "instant_text", "reusable_tms", "run_indoors", "wild_encounters", "shiny_odds", "battle_speed", "text_speed", "bike_speed", "surf_speed" };
             static const char* const controls[] = { "gba_start", "buttons", "ff_speed", "fast_button", "auto_state", "auto_resume" };
-            const char* const* keys = pausePage == P_DISPLAY ? display : pausePage == P_SOUND ? sound : controls;
+            const char* const* keys = pausePage == P_DISPLAY ? display : pausePage == P_SOUND ? sound : pausePage == P_GAMEPLAY ? gameplay : controls;
             const int count = pausePage == P_DISPLAY ? (int)(sizeof(display) / sizeof(*display))
                             : pausePage == P_SOUND ? (int)(sizeof(sound) / sizeof(*sound))
+                            : pausePage == P_GAMEPLAY ? (int)(sizeof(gameplay) / sizeof(*gameplay))
                             : (int)(sizeof(controls) / sizeof(*controls));
             pageSettings.clear();
             for (int i = 0; i < count; i++)
                 for (const Setting& s : SettingsList())
-                    if (!strcmp(s.key, keys[i]))
+                    if (!strcmp(s.key, keys[i]) && GameplayOffered(s.key))
                     {
                         pause.items.push_back({ s.name, set.Shown(s) });
                         pageSettings.push_back(&s);
@@ -1622,6 +1898,7 @@ struct App
             const bool on = ra && ra->on && ra->on(ra->ud);
             pause.items.push_back({ "GRAPHICS", "" });
             pause.items.push_back({ "SOUND", "" });
+            if (AnyGameplayOffered()) pause.items.push_back({ "GAMEPLAY", "" });
             pause.items.push_back({ "CONTROLS", "" });
             if (raReady) pause.items.push_back({ "RETROACHIEVEMENTS", on ? "ON" : "OFF" });
             pause.items.push_back({ "BACK", "" });
@@ -1866,12 +2143,12 @@ struct App
         {
             if (uiHost)
             {
-                const char* from = pausePage == P_DISPLAY ? "GRAPHICS" : pausePage == P_SOUND ? "SOUND" : "CONTROLS";
+                const char* from = pausePage == P_DISPLAY ? "GRAPHICS" : pausePage == P_SOUND ? "SOUND" : pausePage == P_GAMEPLAY ? "GAMEPLAY" : "CONTROLS";
                 ReturnToPausePage(P_SETTINGS, from);
             }
             else
             {
-                const char* from = pausePage == P_DISPLAY ? "DISPLAY" : pausePage == P_SOUND ? "SOUND" : "CONTROLS";
+                const char* from = pausePage == P_DISPLAY ? "DISPLAY" : pausePage == P_SOUND ? "SOUND" : pausePage == P_GAMEPLAY ? "GAMEPLAY" : "CONTROLS";
                 ReturnToPausePage(P_ROOT, from);
             }
             return;
@@ -1896,6 +2173,7 @@ struct App
             if (want != full) SDL_SetWindowFullscreen(win, want ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
         }
         if (!strcmp(s.key, "volume")) SetVolume();
+        if (!strcmp(s.key, "instant_text") || !strcmp(s.key, "reusable_tms")) ApplyGameplay();
         if (!strcmp(s.key, "zoom") && !ZoomOn()) { camera.Reset(); camera.level = 0; }
         if (!strcmp(s.key, "widescreen") || !strcmp(s.key, "zoom") || !strcmp(s.key, "zoom_text")) zoomRefresh = true;
         pause.items[i].value = set.Shown(s);
@@ -1917,7 +2195,7 @@ struct App
             return;
         }
 #endif
-        if (pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_CONTROLS)
+        if (pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_GAMEPLAY || pausePage == P_CONTROLS)
         {
             SettingsPageInput(in);
             return;
@@ -1955,6 +2233,7 @@ struct App
             {
                 if (item == "GRAPHICS") ReturnToPausePage(P_DISPLAY);
                 else if (item == "SOUND") ReturnToPausePage(P_SOUND);
+                else if (item == "GAMEPLAY") ReturnToPausePage(P_GAMEPLAY);
                 else if (item == "CONTROLS") ReturnToPausePage(P_CONTROLS);
                 else if (item == "RETROACHIEVEMENTS") ReturnToPausePage(P_RA);
                 else if (item == "BACK") ReturnToPausePage(P_ROOT, "SETTINGS");
@@ -2058,8 +2337,8 @@ struct App
             }
         }
 #ifdef GBAW_EMBEDDED
-        else if (item == "DISPLAY" || item == "SOUND" || item == "CONTROLS")
-            ReturnToPausePage(item == "DISPLAY" ? P_DISPLAY : item == "SOUND" ? P_SOUND : P_CONTROLS);
+        else if (item == "DISPLAY" || item == "SOUND" || item == "GAMEPLAY" || item == "CONTROLS")
+            ReturnToPausePage(item == "DISPLAY" ? P_DISPLAY : item == "SOUND" ? P_SOUND : item == "GAMEPLAY" ? P_GAMEPLAY : P_CONTROLS);
         else if (item == "RETROACHIEVEMENTS") ReturnToPausePage(P_RA);
 #endif
 #if defined(GBAW_CHEATS) && defined(GBAW_EMBEDDED)
@@ -2640,9 +2919,9 @@ struct App
                     hint = cheats.Has(i) ? GbaCheats::About(i).note : "NOT FOR THIS VERSION OF THE GAME";
             }
 #endif
-            else if (pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_CONTROLS)
+            else if (pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_GAMEPLAY || pausePage == P_CONTROLS)
             {
-                title = pausePage == P_DISPLAY ? "GRAPHICS" : pausePage == P_SOUND ? "SOUND" : "CONTROLS";
+                title = pausePage == P_DISPLAY ? "GRAPHICS" : pausePage == P_SOUND ? "SOUND" : pausePage == P_GAMEPLAY ? "GAMEPLAY" : "CONTROLS";
                 hint = Hint("ARROWS: CHANGE   ESC: BACK", "D-PAD: CHOOSE AND CHANGE   B: BACK", "TAP TO CHANGE");
             }
             else if (pausePage == P_LOGIN)
@@ -2655,7 +2934,7 @@ struct App
 #ifdef GBAW_EMBEDDED
             // The chosen setting's explanation, under the menu (as the settings screen has it).
             const int sel = pause.selected;
-            if ((pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_CONTROLS) && sel >= 0 && sel < (int)pageSettings.size())
+            if ((pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_GAMEPLAY || pausePage == P_CONTROLS) && sel >= 0 && sel < (int)pageSettings.size())
             {
                 const UiRect& b = pause.box;
                 const std::vector<std::string> lines = Wrap(pageSettings[sel]->text, std::max(10, (b.w - 12) / 6));
@@ -2690,9 +2969,9 @@ struct App
                     title = "SETTINGS";
                     if (selLabel == "RETROACHIEVEMENTS") hint = "FROM RETROACHIEVEMENTS.ORG";
                 }
-                else if (pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_CONTROLS)
+                else if (pausePage == P_DISPLAY || pausePage == P_SOUND || pausePage == P_GAMEPLAY || pausePage == P_CONTROLS)
                 {
-                    title = pausePage == P_DISPLAY ? "GRAPHICS" : pausePage == P_SOUND ? "SOUND" : "CONTROLS";
+                    title = pausePage == P_DISPLAY ? "GRAPHICS" : pausePage == P_SOUND ? "SOUND" : pausePage == P_GAMEPLAY ? "GAMEPLAY" : "CONTROLS";
                     hint = padLast ? "A: CHANGE   B: BACK" : "ENTER: CHANGE   ESC: BACK";
                     if (sel >= 0 && sel < (int)pageSettings.size()) note = pageSettings[sel]->text;
                 }
@@ -3459,13 +3738,14 @@ struct App
                         due = 0;
                     }
                 }
-                int speed = FastForward() ? std::max(2, set.Int("ff_speed")) : 1;
+                int speed = FastForward() ? std::max(2, set.Int("ff_speed")) : SceneSpeed();
+                const bool ffAudioNow = FastForward();
                 {
                     const uint32_t dirMask = (1u << K_UP) | (1u << K_DOWN) | (1u << K_LEFT) | (1u << K_RIGHT);
                     const uint32_t dirs = GameKeys() & dirMask;
                     if (dirs & ~tapDirs) tapSince = SDL_GetTicks();
                     tapDirs = dirs;
-                    if (speed > 1 && dirs && SDL_GetTicks() - tapSince < 250) speed = 1;
+                    if (ffAudioNow && speed > 1 && dirs && SDL_GetTicks() - tapSince < 250) speed = 1;
                 }
                 for (int i = 0; i < run * speed; i++) RunFrame(true, speed > 1, i == run * speed - 1);
             }

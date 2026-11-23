@@ -41,7 +41,7 @@ static inline void ApplyUiLanguage(const std::string&) {}
 #include "gba_settings.h"
 }
 #undef GBAW_EMBEDDED
-enum { P_DISPLAY, P_SOUND, P_CONTROLS };
+enum { P_DISPLAY, P_SOUND, P_GAMEPLAY, P_CONTROLS };
 static std::vector<std::string> PageKeys(int pausePage)
 {
 #include "gba_page_keys.h"
@@ -93,6 +93,11 @@ int main(int argc, char** argv)
     assert(std::find(displayRows.begin(), displayRows.end(), "zoom") != displayRows.end());
     assert(std::find(displayRows.begin(), displayRows.end(), "zoom_text") != displayRows.end());
     assert(std::find(displayRows.begin(), displayRows.end(), "show_fps") != displayRows.end());
+    assert(std::find(displayRows.begin(), displayRows.end(), "day_night") != displayRows.end());
+    assert(std::find(displayRows.begin(), displayRows.end(), "follower") != displayRows.end());
+    const auto gameplayRows = PageKeys(P_GAMEPLAY);
+    assert(std::find(gameplayRows.begin(), gameplayRows.end(), "instant_text") != gameplayRows.end());
+    assert(std::find(gameplayRows.begin(), gameplayRows.end(), "shiny_odds") != gameplayRows.end());
 
     GbaConfig::Settings gba;
     gba.Load(root + "/gba-settings.ini");

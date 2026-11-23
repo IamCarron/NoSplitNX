@@ -85,6 +85,46 @@ public:
 #endif
     }
 
+    // Lead Pokemon National Dex ID and shiny flag (for Following Pokemon in GBA overworlds).
+    bool LeadInfo(int& national, bool& shiny) const
+    {
+#ifdef GBAW_POKEDAISY
+        if (!active || isGb || !snap.valid || snap.partyCount <= 0) return false;
+        const struct pd_mon& m = snap.party[0];
+        if (m.egg || m.species <= 0) return false;
+        national = pd_dex_national(&game, m.species);
+        shiny = m.shiny;
+        return national > 0;
+#else
+        (void)national; (void)shiny;
+        return false;
+#endif
+    }
+
+    // Addresses for GbaGameplay::ShinyRoller (gEnemyParty, gSaveBlock2Ptr, staticSaveBlocks, gMain.inBattle).
+    bool ShinyAddrs(const std::string& gameCode, uint32_t& enemyParty, uint32_t& saveBlock2,
+                    bool& staticBlocks, uint32_t& inBattleAddr) const
+    {
+#ifdef GBAW_POKEDAISY
+        if (!active || isGb || !game.cfg || !game.cfg->gMain || !game.cfg->saveBlock2Ptr ||
+            !game.cfg->partyFns || !game.cfg->partyFns->party || gameCode.size() < 3)
+            return false;
+        const std::string f = gameCode.substr(0, 3);
+        const uint32_t party = game.cfg->partyFns->party;
+        enemyParty = (f == "AXV" || f == "AXP") ? (party + 0x260u)
+                   : (f == "BPE") ? (party + 0x258u)
+                   : (f == "BPR" || f == "BPG") ? (party - 0x258u) : 0u;
+        if (!enemyParty) return false;
+        saveBlock2 = game.cfg->saveBlock2Ptr;
+        staticBlocks = game.cfg->staticSaveBlocks;
+        inBattleAddr = game.cfg->gMain + game.cfg->inBattleOff;
+        return true;
+#else
+        (void)gameCode; (void)enemyParty; (void)saveBlock2; (void)staticBlocks; (void)inBattleAddr;
+        return false;
+#endif
+    }
+
     static bool ReadMemory(void* ctx, uint32_t a, void* out, size_t n)
     {
         struct mCore* c = static_cast<struct mCore*>(ctx);

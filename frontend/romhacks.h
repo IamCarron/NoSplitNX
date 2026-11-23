@@ -1510,6 +1510,56 @@ inline int NameMatch(const std::string& a, const std::string& b)
     return n;
 }
 
+// Whether an xdelta patch makes a GBA-sized ROM out of a GBA-sized one, by its windows: one made
+// without file names (xdelta -A, or by other tools) says nothing else of its ROM, and was taken
+// for a DS hack and listed as one that can't be played (Inclement Emerald, a player's report).
+inline bool IsGbaSizedVcdiff(const std::vector<uint8_t>& patch)
+{
+    const uint8_t* p = patch.data();
+    const size_t n = patch.size();
+    if (n < 5 || p[0] != 0xD6 || p[1] != 0xC3 || p[2] != 0xC4) return false;
+    size_t i = 4;
+    auto num = [&](uint64_t& v) {
+        v = 0;
+        for (int k = 0; k < 10; k++)
+        {
+            if (i >= n) return false;
+            const uint8_t x = p[i++];
+            v = v << 7 | (x & 0x7F);
+            if (!(x & 0x80)) return true;
+        }
+        return false;
+    };
+    uint64_t v = 0;
+    const uint8_t hdr = p[i++];
+    if (hdr & 1) i++;
+    if (hdr & 2) { if (!num(v) || v > n) return false; i += (size_t)v; }
+    if (hdr & 4) { if (!num(v) || v > n) return false; i += (size_t)v; }
+    uint64_t target = 0, sourceEnd = 0;
+    int windows = 0;
+    while (i < n)
+    {
+        const uint8_t win = p[i++];
+        if (win & 3)
+        {
+            uint64_t len = 0, pos = 0;
+            if (!num(len) || !num(pos)) return false;
+            if (pos + len > sourceEnd) sourceEnd = pos + len;
+        }
+        uint64_t delta = 0;
+        if (!num(delta)) return false;
+        const size_t start = i;
+        uint64_t length = 0;
+        if (!num(length)) return false;
+        target += length;
+        if (delta > n - start) return false;
+        i = start + (size_t)delta;
+        windows++;
+    }
+    const uint64_t gba = 32u << 20;
+    return windows > 0 && target <= gba && sourceEnd <= gba;
+}
+
 // The DS hacks made from the patch files in `folders` (.xdelta, .bps, .ups ...): each put on the
 // clean DS ROM it is for (among `cleanRoms`), written once to outDir/<patch's name>.nds, and made
 // again only when the patch changes. Patches for GBA ROMs are left alone (the GBA list's).
@@ -1574,7 +1624,7 @@ inline std::vector<std::string> MakeDsHacks(const std::vector<std::string>& fold
         }
         // (IPS can't reach past 16 MB, and a UPS or BPS patch says its ROM's size: a GBA ROM's
         // is the GBA list's to use.)
-        if (info.format == Format::Ips || (info.knowsSource && info.sourceSize <= (32u << 20)) || IsGbaVcdiff(patch))
+        if (info.format == Format::Ips || (info.knowsSource && info.sourceSize <= (32u << 20)) || IsGbaVcdiff(patch) || IsGbaSizedVcdiff(patch))
         {
             cache.Put(key, "gba");
             continue;

@@ -22,7 +22,9 @@ inline const Hack* Hacks(size_t& n)
         { "unbound", "Unbound", { "b4776b82a4c7915d0fadeaa27e013523f99dfd94", nullptr, nullptr } },         // 2.1.1.1
         { "emeraldlegacy", "Emerald Legacy", { nullptr, nullptr, nullptr } },
         { "inclement", "Inclement Emerald", { nullptr, nullptr, nullptr } },
+        { "imperium", "Emerald Imperium", { "1d20091c4d936f5eb122db8780554dd0829ffb63", nullptr, nullptr } }, // 1.3.1
         { "monomyth", "Monomyth", { "ae1c4be9be8d706bb989602bc05731203d42860d", "eb660caffbc26e1f09f86714d03af4c3eccd9e4d", nullptr } }, // 1.0, 1.1
+        { "monomyth12", "Monomyth", { "742e62ffa5a8d607171fdb8477eb1f417dc36086", nullptr, nullptr } }, // 1.2
         { "gen3evolved", "Gen 3 Evolved", { nullptr, nullptr, nullptr } },
         { "emeraldrogue", "Emerald Rogue", { "7600af1fe08444c850c3c1227fd7dfd81336ae8e", nullptr, nullptr } }, // 2.2.1-EX
     };

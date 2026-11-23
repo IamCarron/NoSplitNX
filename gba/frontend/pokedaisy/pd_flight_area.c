@@ -5,14 +5,13 @@
 #include "pk_call.h"
 #include "pk_flight.h"
 
+#include <mgba/core/core.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include "pd_fs.h"
-
-bool pd_lr_read_memory(void *ctx, uint32_t a, void *out, size_t n);
 
 #define MAPS 65536                 // every group << 8 | num
 #define TRAINER_FLAGS_START 0x500  // beaten = this + trainer id, in every engine FREE FLIGHT runs
@@ -66,14 +65,19 @@ static uint32_t rom32(uint32_t a) {
   return p ? le32(p) : 0;
 }
 
-/* RAM (or ROM) through the companion's reader: no bus cycles. */
+/* RAM (or ROM) directly through mGBA's core memory reader. */
 static bool ram(struct mCore *core, uint32_t a, void *out, size_t n) {
   const uint8_t *p = rom_at(a, n);
   if (p) {
     memcpy(out, p, n);
     return true;
   }
-  return pd_lr_read_memory(core, a, out, n);
+  if (!core || !out)
+    return false;
+  uint8_t *dst = (uint8_t *)out;
+  for (size_t i = 0; i < n; i++)
+    dst[i] = (uint8_t)core->busRead8(core, a + (uint32_t)i);
+  return true;
 }
 
 static uint32_t ram32(struct mCore *core, uint32_t a) {

@@ -1018,6 +1018,22 @@ bool FindRelease(const std::string& json, const std::string& asset, const std::s
     return found;
 }
 
+// A rename, or where the two are on different drives, a copy and then the old one removed.
+static void MoveAcross(const fs::path& from, const fs::path& to, std::error_code& ec)
+{
+    fs::rename(from, to, ec);
+    if (!ec) return;
+    std::error_code e2;
+    if (!fs::exists(fs::symlink_status(from, e2))) return;
+    ec.clear();
+    if (fs::is_directory(fs::symlink_status(from, e2)))
+        fs::copy(from, to, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+    else
+        fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
+    if (ec) { fs::remove_all(to, e2); return; }
+    fs::remove_all(from, e2);
+}
+
 bool SwapIn(const std::string& dir, const std::string& fresh, const std::string& backup, std::string& error)
 {
     static const char* const keep[] = { "roms", "saves", "update", "settings.cfg", "game.log", "game-previous.log",
@@ -1039,19 +1055,19 @@ bool SwapIn(const std::string& dir, const std::string& fresh, const std::string&
     std::vector<std::string> movedOut, putIn;
     auto undo = [&]() {
         std::error_code e2;
-        for (auto it = putIn.rbegin(); it != putIn.rend(); ++it) fs::rename(d / fs::u8path(*it), f / fs::u8path(*it), e2);
-        for (auto it = movedOut.rbegin(); it != movedOut.rend(); ++it) fs::rename(b / fs::u8path(*it), d / fs::u8path(*it), e2);
+        for (auto it = putIn.rbegin(); it != putIn.rend(); ++it) MoveAcross(d / fs::u8path(*it), f / fs::u8path(*it), e2);
+        for (auto it = movedOut.rbegin(); it != movedOut.rend(); ++it) MoveAcross(b / fs::u8path(*it), d / fs::u8path(*it), e2);
     };
     for (const std::string& name : names)
     {
         const fs::path here = d / fs::u8path(name);
         if (fs::exists(fs::symlink_status(here, ec)))
         {
-            fs::rename(here, b / fs::u8path(name), ec);
+            MoveAcross(here, b / fs::u8path(name), ec);
             if (ec) { error = "cannot move " + name + " aside: " + ec.message(); undo(); return false; }
             movedOut.push_back(name);
         }
-        fs::rename(f / fs::u8path(name), here, ec);
+        MoveAcross(f / fs::u8path(name), here, ec);
         if (ec) { error = "cannot put " + name + " in place: " + ec.message(); undo(); return false; }
         putIn.push_back(name);
     }

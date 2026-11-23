@@ -4154,6 +4154,13 @@ static void wildRoll(int s, int keep) {
     wildOwned = true;
 }
 
+int pk_field_map_type(struct mCore* core) {
+    if (!F.mapHeader || !core) return -1;
+    G = (struct GBA*) core->board;
+    const uint8_t* p = (const uint8_t*) mem(F.mapHeader + 0x17, 1);
+    return p ? *p : -1;
+}
+
 int pk_field_state(struct mCore* core, int runIndoors, int wildKeep) {
     if (!F.locked) return 0;
     G = (struct GBA*) core->board;

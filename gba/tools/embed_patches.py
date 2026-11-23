@@ -17,7 +17,7 @@ GAMES = ['emerald', 'firered', 'firered11', 'leafgreen', 'leafgreen11',
          'fireredfr', 'fireredde', 'fireredes', 'fireredit', 'leafgreenfr', 'leafgreende', 'leafgreenes', 'leafgreenit',
          # (Hacks with a patch of their own: CFRU hacks of FireRed 1.0, and Emerald hacks built from
          # their own source.)
-         'radicalred', 'unbound', 'emeraldlegacy', 'inclement', 'monomyth', 'gen3evolved']
+         'radicalred', 'unbound', 'emeraldlegacy', 'inclement', 'monomyth', 'monomyth12', 'gen3evolved', 'imperium']
 
 
 def main():

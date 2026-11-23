@@ -497,7 +497,7 @@ inline void IdentifyGb(Game& g, const std::vector<uint8_t>& rom)
 inline uint32_t PatchColour(const char* name)
 {
     if (!name) return 0xFF505A70;
-    if (!strncmp(name, "emerald", 7) || !strcmp(name, "inclement") || !strcmp(name, "monomyth")) return 0xFF2A6E50;
+    if (!strncmp(name, "emerald", 7) || !strcmp(name, "inclement") || !strcmp(name, "imperium") || !strncmp(name, "monomyth", 8)) return 0xFF2A6E50;
     if (!strncmp(name, "leafgreen", 9)) return 0xFF3E7A34;
     if (!strncmp(name, "sapphire", 8)) return 0xFF2A4A8A;
     return 0xFF8A3A30;

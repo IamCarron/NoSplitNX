@@ -5086,6 +5086,12 @@ int main(int argc, char** argv)
                 sc.items.push_back(el);
             }
         }
+        else if (sectionActive("OVY_108"))
+            // The Safari Zone's Area Customizer and object placement (overlay 108): keep both screens side by side.
+            sc = Stack("safari-areas", { Crop(0, 0, 0, 256, 192), Crop(1, 0, 0, 256, 192) }, true, viewWidth);
+        else if (sectionActive("OVY_29"))
+            // Mom's savings (overlay 29): keep both screens side by side so the keypad is always visible.
+            sc = Stack("bank", { Crop(0, 0, 0, 256, 192), Crop(1, 0, 0, 256, 192) }, true, viewWidth);
         else if (athlonNow)
         {
             // The Pokeathlon: both screens side by side, as the SIDE layout shows them (the
@@ -5093,6 +5099,9 @@ int main(int argc, char** argv)
             // the touch screen; one of them alone always hid something).
             sc = Stack("pokeathlon", { Crop(0, 0, 0, 256, 192), Crop(1, 0, 0, 256, 192) }, true, viewWidth);
         }
+        else if (sectionActive("OVY_68"))
+            // HeartGold and SoulSilver's Move Relearner and move tutors (overlay 68): keep both screens side by side.
+            sc = Stack("relearner", { Crop(0, 0, 0, 256, 192), Crop(1, 0, 0, 256, 192) }, true, viewWidth);
         else if (menuReturn > 0)
             startMenu();
         else if (probeActive(probeStartMenuWait) && !appBottomNow)
@@ -7761,6 +7770,7 @@ int main(int argc, char** argv)
         if (dsCompanion.AnyMenuOpen()) keys = 0;
 #endif
         speed = 1;
+        bool ffTapSlow = false; // fast forward held, briefly slowed for a newly pressed direction
         ffRefreshes = 1;
         SmButtons::S().clock = frame;
         SmButtons::S().on = cfg.battleButtons == 4;
@@ -7919,7 +7929,7 @@ int main(int argc, char** argv)
                 : (!fieldActive() || appBottomNow || probeActive(probeStartMenu) ||
                    std::any_of(std::begin(probeChoice), std::end(probeChoice), probeActive));
             const bool freeWalk = !isMenu && !strcmp(scene.name, "top") && !overworldDialogueOpen();
-            if (speed > 1 && dirs && !fastLock && !freeWalk && now - dirSince < 120) speed = 1;
+            if (speed > 1 && dirs && !fastLock && !freeWalk && now - dirSince < 120) { speed = 1; ffTapSlow = true; }
             if (speed == 1) ffRefreshes = 1;
         }
         prevPad = ps;
@@ -9449,8 +9459,10 @@ int main(int argc, char** argv)
                 audioOut.clear();
                 audioStretch.Process(audioBuf.data(), got, slowdown, audioOut);
                 // VOLUME: scaled here, after the game's own mixing (silence at OFF, still queued, so
-                // the timing the queue gives stays the same).
-                if (cfg.volume < 100)
+                // the timing the queue gives stays the same). Also silence brief ffTapSlow taps when ffMute is on.
+                if (cfg.ffMute && ffTapSlow)
+                    std::fill(audioOut.begin(), audioOut.end(), (int16_t)0);
+                else if (cfg.volume < 100)
                     for (int16_t& v : audioOut) v = (int16_t)(v * cfg.volume / 100);
                 // Drop audio rather than let latency grow if the queue backs up.
                 if (queued < 48000 / 4 && !audioOut.empty())

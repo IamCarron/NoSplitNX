@@ -4,6 +4,15 @@
 ## Unreleased
 
 
+## v1.3.0-beta.2 — FullDex 1.7 GBA Gameplay, Day/Night, Following Pokémon & DS Fixes
+
+- **GBA Gameplay options (`Settings → Gameplay`)**: ported FullDex 1.7's ROM-independent GBA Gameplay toggles — **Instant Text**, **Reusable TMs**, **Run Indoors**, **Wild Encounters** (`Normal / 75% / 50% / 25% / Off`), **Shiny Odds** (up to `1 in 128`), and separate **Battle**, **Text**, **Bike** and **Surf** speeds without fast forward.
+- **GBA Day and Night & Following Pokémon (`Settings → Graphics`)**: added clock-driven outdoor dawn/day/dusk/night tinting (`pk_tint_set` + `pk_field_map_type`) and **Following Pokémon** (`HgssFollow::Source`, reading walking sprites on demand from your own HeartGold or SoulSilver ROM in `roms/` and rendering via `pk_wide.c` + PokeDaisy's party reader).
+- **New GBA widescreen patches & ROM hack fixes**: added official widescreen patches for **Pokémon Emerald Imperium 1.3.1** and **Pokémon Monomyth 1.2** (plus updated neighbour-map borders for Monomyth 1.1 & 1.2), and ported FullDex's `.xdelta` GBA-size detection (`IsGbaSizedVcdiff`) so nameless GBA `.xdelta` patches no longer appear duplicated as DS hacks.
+- **DS HeartGold/SoulSilver screens, fast-forward mute & updater robustness**: kept both screens side by side for HG/SS **Move Relearner / Move Tutors** (`OVY_68`), **Safari Zone Area Customizer** (`OVY_108`) and **Mom's Savings** (`OVY_29`), silenced brief fast-forward direction taps when **Fast Forward Sound** is off (`ffTapSlow`), and added cross-drive copy+remove fallback (`MoveAcross`) to `Updater::SwapIn`.
+- **Switch build linker fix**: replaced the leftover libretro `pd_lr_read_memory` call in `pd_flight_area.c` with direct `mCore::busRead8` reads so `ssrecomp.elf` links cleanly on Nintendo Switch.
+
+
 ## v1.3.0-beta.1 — PokeDaisy Companion, GB/GBC Widescreen, Rewind & Beta Channel
 
 - **Game Boy & Game Boy Color support with real widescreen (`pk_wide_gb`) and Rewind**: enabled mGBA's GB/GBC core inside the built-in player, added `.gb`/`.gbc` scanning across `roms/`, `roms/gb/` and `roms/gbc/` with a dedicated **GB/GBC** launcher tab, cartridge art and Libretro box-art downloads, integrated PokeDaisy's true widescreen GB/GBC renderer (supporting Red, Blue, Yellow, Gold, Silver, Crystal, Crystal Legacy, Crystal Clear, Polished Crystal and more), updated GBA dynamic widescreen (`pk_wide`) with `PK_WIDE_FAMILY_EX32` (Epsilon Emerald) and R.O.W.E. v2.1.9.1 support, and added ring-buffered **Rewind** (`SELECT + ZL` or via the pause menu).
