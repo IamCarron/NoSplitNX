@@ -1465,7 +1465,7 @@ index 2f8afcb..092ed22 100644
          else if (CurUnit->CaptureLatch && (((CurUnit->CaptureCnt >> 29) & 0x3) != 1))
          {
              _3DLine = GPU.GPU3D.GetLine(n3dline);
-@@ -170,8 +324,62 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
+@@ -170,8 +324,63 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
      u32 dispmode = CurUnit->DispCnt >> 16;
      dispmode &= (CurUnit->Num ? 0x1 : 0x3);
  
@@ -1480,7 +1480,8 @@ index 2f8afcb..092ed22 100644
 +        const bool objEmptyNow = LineObjEmpty[num];
 +        if (cache->valid && cache->epoch == CacheEpoch[num] && cache->hide == rc_hide_layers[num] &&
 +            !memcmp(cache->regs, regs, regBytes) &&
-+            ((cache->emptyObj && objEmptyNow) ||
++            cache->emptyObj == objEmptyNow &&
++            (objEmptyNow ||
 +             (!memcmp(cache->obj, OBJLine[num], sizeof(cache->obj)) && !memcmp(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow)))) &&
 +            (!with3D || !memcmp(cache->line3D, _3DLine, sizeof(cache->line3D))))
 +        {

@@ -72,4 +72,4 @@ inline bool ds_battle_pulse(unsigned frame){return (frame/ds_battle_pulse_frames
 // instead (a tap is in flight).
 void ds_draw_battle_strip(uint32_t* stage,const DsBattleStyle&,const DsBattleView&,
                           const std::string& nickname,int focus,bool active,unsigned frame,
-                          const uint32_t* panelArt=nullptr,bool pressed=false);
+                          const uint32_t* panelArt=nullptr,bool pressed=false,int stageWidth=512);

@@ -1,4 +1,5 @@
 #include "ds_bridge.h"
+#include "companion.h"
 
 #include <SDL.h>
 #include <cassert>
@@ -37,8 +38,8 @@ int main(int argc, char** argv)
 
     std::vector<uint8_t> mainRam(0x400000, 0);
 
-    // Every Gen 4 / Gen 5 DS family supported by NoSplitNX should be recognised by PdDs::Bridge.
-    const char* codes[] = { "CPUE", "IPGE", "IPKE", "IRBO", "IRAO", "IREO", "IRDO" };
+    // Every Gen 4 / Gen 5 DS family supported by NoSplitNX (including Spanish/regional builds) should be recognised.
+    const char* codes[] = { "CPUE", "CPUS", "IPGE", "IPKE", "IPKS", "IRBO", "IRBS", "IRAO", "IREO", "IRES", "IRDO" };
     for (const char* code : codes)
     {
         PdDs::Bridge bridge;
@@ -95,6 +96,37 @@ int main(int argc, char** argv)
         bridge.OnReset();
         bridge.Unload();
         assert(!bridge.Supported());
+    }
+
+    // Verify Spanish Black (IRBS) port selection reads saveControl at 0x020A7258 instead of US 0x020A7298.
+    {
+        std::vector<uint8_t> esRam(0x400000, 0);
+        auto write32 = [&](uint32_t addr, uint32_t val) {
+            const size_t off = addr - 0x02000000u;
+            esRam[off + 0] = (uint8_t)(val & 0xFFu);
+            esRam[off + 1] = (uint8_t)((val >> 8) & 0xFFu);
+            esRam[off + 2] = (uint8_t)((val >> 16) & 0xFFu);
+            esRam[off + 3] = (uint8_t)((val >> 24) & 0xFFu);
+        };
+        // Set up Spanish Black saveControl chain: 0x020A7258 -> 0x02100000 (+16) -> 0x02100100 (+52) -> 0x02200000
+        write32(0x020A7258u, 0x02100000u);
+        write32(0x02100010u, 0x02100100u);
+        write32(0x02100134u, 0x02200000u);
+        // Trainer name "DIEGO" in UTF-16 at save + 0x19404, money 5000 at save + 0x21200, party count 0 at save + 0x18E00.
+        const uint32_t saveBase = 0x02200000u;
+        const char* name = "DIEGO";
+        for (int i = 0; name[i]; ++i)
+            esRam[(saveBase - 0x02000000u) + 0x19404u + i * 2] = (uint8_t)name[i];
+        esRam[(saveBase - 0x02000000u) + 0x19404u + 10] = 0xFF;
+        esRam[(saveBase - 0x02000000u) + 0x19404u + 11] = 0xFF;
+        write32(saveBase + 0x21200u, 5000u);
+
+        ds_open_cart("0000000000000000000000000000000000000000");
+        ds_select_port_by_code("IRBS", 0);
+        const DsCompanion snap = ds_read_companion(esRam.data(), esRam.size(), DsGame::Black);
+        assert(snap.valid);
+        assert(snap.trainer == "DIEGO");
+        assert(snap.money == 5000);
     }
 
     // Non-Pokemon DS ROM should gracefully report unsupported.

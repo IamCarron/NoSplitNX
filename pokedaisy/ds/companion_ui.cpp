@@ -26,9 +26,8 @@ namespace {
 constexpr int dsTabs=(1<<PD_TAB_PARTY)|(1<<PD_TAB_BAG)|(1<<PD_TAB_MAP)|(1<<PD_TAB_GUIDE)|(1<<PD_TAB_DEX);
 using Companion=DsCompanionUi;
 constexpr Companion::Row defaultOrder[]={
-  Companion::Layout,Companion::Hud,Companion::QuickStyle,Companion::CompanionButton,Companion::HudButton,Companion::TabBar,Companion::MoreTabs,
-  Companion::HudMinimal,Companion::Battles,Companion::BattleStrip,Companion::AutoRun,Companion::ScreenButton,Companion::PenSpeed,
-  Companion::DarkMode,Companion::Reset
+  Companion::Hud,Companion::HudMinimal,Companion::QuickStyle,Companion::AutoRun,
+  Companion::TabBar,Companion::MoreTabs,Companion::DarkMode,Companion::Reset
 };
 // HUD opens the shared HUD page (pd_ui_settings.c's hud_page: on/off, LOOK, SIZE and each part), as on the GB/GBA cores;
 // HudSize, HudBalls, HudRepel and HudMap stay rows of the enum for settings files and apply(), not of the list.
@@ -207,13 +206,8 @@ void DsCompanionUi::apply(int row,int v){
  * while it's on), then the companion's own. Rebuilt when ASPECT changes and on load. */
 void DsCompanionUi::build_order(){
   order.clear();
-  order.push_back(Layout);
-  if(hasExpand){
-    order.push_back(Aspect);
-    if(settings.aspect != PD_ASPECT_ORIGINAL){order.push_back(Zoom);order.push_back(AutoZoom);}
-  }
-  for(const Row row:defaultOrder)if(row!=Layout)order.push_back(row);
-  if(std::find(order.begin(),order.end(),setting)==order.end())setting=hasExpand?Aspect:Layout;
+  for(const Row row:defaultOrder)order.push_back(row);
+  if(std::find(order.begin(),order.end(),setting)==order.end())setting=Hud;
 }
 void DsCompanionUi::draw_settings(pd_canvas* c){
   const auto& s=*snapshot;
@@ -225,7 +219,7 @@ void DsCompanionUi::draw_settings(pd_canvas* c){
     settings.aspect==PD_ASPECT_ORIGINAL?"ORIGINAL":"EXPAND",zoomNames[std::clamp(settings.zoom,0,3)],settings.autoZoom?"ON":"OFF"};
   constexpr int infoCount=3;
   pd_option_row rows[Rows+infoCount]={{"PLACE",s.valid?ds_place(s.map,s.game):"-"},
-    {"MONEY",money},{"HOST","PokeDaisy core"}};
+    {"MONEY",money},{"HOST","NoSplitNX"}};
   int n=infoCount;
   for(const int row:order){
     if(row==setting)options.optionSelected=n;

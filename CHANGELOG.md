@@ -4,6 +4,15 @@
 ## Unreleased
 
 
+## v1.3.0-beta.3 — Switch 2D Compositor Fix, Widescreen DS Battle Strip, Regional DS Companion & Menu Cleanup
+
+- **Switch 2D menu & sprite visual fixes (`gpucompose.h`, `GPU2D_Soft.cpp`)**: fixed `DrawCrisp` sub-rectangle texture uploads on Nintendo Switch's `opengles2` SDL renderer by uploading full-width `el.sw` textures while keeping the fast 64-bit word scan (fixing horizontal wrapping in the Pokédex, vertical stretching on the Trainer Card, diagonal cutouts in the Bag, and overworld bridge streaks), cleared skipped transparent pixels to `0` so background colours never bleed under `Sharp` filtering, and fixed `LineCache`'s `emptyObj == objEmptyNow` check in `DrawScanline` so bobbing/moving party and menu sprites never serve stale empty scanlines.
+- **Unified widescreen & localized PokeDaisy DS Battle Strip**: synced `bw1.battleButtons` with `cfg.battleButtons` (`POKEDAISY = 5`) and hid NoSplitNX's underlying Gen 4/Gen 5 bottom-screen strip and top-screen prompt band whenever PokeDaisy's Battle Strip is active (eliminating overlapping double battle strips), widened PokeDaisy's DS Battle Strip to span the full 16:9 bottom edge at 1:1 square stage proportions, localized the battle prompt (`"¿Qué debería hacer X?"`) and action plates (`LUCHA / MOCHILA / POKéMON / HUIR`), and restored Gen 5's native translucent dialogue bar for standalone battle narration frames.
+- **Regional DS Companion save support (`WAITING FOR SAVE DATA` fix)**: wired all 28 regional Gen 4 / Gen 5 builds from `pk_nds_ports_gen.h` (including Spanish `IRBS`, `IRAS`, `IRES`, `IRDS`, `IPKS`, `IPGS`, `CPUS` plus French, German, Italian, Japanese, Korean and European builds) into `ds_select_port_by_code` and `ds_read_companion`, so non-US DS ROMs read their exact `saveControl`/`saveDataPtr` and `gameSystem`/`fieldSystemPtr` RAM addresses in the PokeDaisy Companion.
+- **Nintendo Switch PokeDaisy settings save fix (`Could not save settings` fix)**: stubbed `fsync` to `0` and unlinked the destination file before `rename` on Nintendo Switch (`__SWITCH__`) in `pd_fs.h` and `pd_settings.c`, and fixed the doubled `/pokedaisy-ds/pokedaisy-ds` settings directory path in `PdDs::Bridge::Load`.
+- **Pause Menu (`+`) and Companion (`⚙`) menu deduplication**: removed duplicate/dead libretro display, layout and button-binding rows from the DS and GBA/GB Companion's `⚙` Settings tab, removed the redundant `QUICK MENU` entry from the `+` Pause Menu root (`L3` opens it directly in-game), moved **Field HUD** under **Settings → Graphics**, and moved **Auto-Run** and **Rewind** under **Settings → Gameplay** (or **Settings** on DS).
+
+
 ## v1.3.0-beta.2 — FullDex 1.7 GBA Gameplay, Day/Night, Following Pokémon & DS Fixes
 
 - **GBA Gameplay options (`Settings → Gameplay`)**: ported FullDex 1.7's ROM-independent GBA Gameplay toggles — **Instant Text**, **Reusable TMs**, **Run Indoors**, **Wild Encounters** (`Normal / 75% / 50% / 25% / Off`), **Shiny Odds** (up to `1 in 128`), and separate **Battle**, **Text**, **Bike** and **Surf** speeds without fast forward.

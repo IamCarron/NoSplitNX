@@ -200,7 +200,7 @@ bool pd_settings_save(const struct pd_settings* s, const char* path) {
         remove(tmp);
         return false;
     }
-#if defined(__3DS__) || defined(_WIN32)
+#if defined(__3DS__) || defined(__SWITCH__) || defined(_WIN32)
     // The SD card's rename won't replace a file: without this only the first settings.ini was ever written, and every
     // later change (THEME, DARK MODE, VIEW ...) was gone at the next start (1.6.0).
     remove(path);

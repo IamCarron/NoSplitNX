@@ -36,7 +36,7 @@ class SwitchPerfAndLangTests(unittest.TestCase):
         self.assertIn('bool anyOpaque = false;', gpucomp)
         self.assertIn('if (!anyOpaque)', gpucomp)
         self.assertIn('const uint8_t keepBg = (uint8_t)(0x0F & ~el.drop);', gpucomp)
-        self.assertIn('SDL_UpdateTexture(t, &sub, CrispBuf.data(), bw * 4);', gpucomp)
+        self.assertIn('SDL_UpdateTexture(t, nullptr, CrispBuf.data(), el.sw * 4);', gpucomp)
 
         # Switch NRO must not build the unused OpenGL 3.3 renderer or deko3D bring-up probe by default,
         # and must not carry dead overclocking code.

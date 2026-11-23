@@ -174,6 +174,7 @@ struct Bridge::Impl
     bool pendingTouchAccept = false;
     bool pendingTouchBack = false;
     std::vector<uint32_t> battleStage;
+    int battleStageW = 512;
     SDL_Texture* battleTex = nullptr;
     int battleTexW = 0, battleTexH = 0;
     SDL_Rect battleDst{};
@@ -504,6 +505,12 @@ bool Bridge::Load(const uint8_t* romData, size_t romLen, const std::string& data
         impl->supported = (impl->game != DsGame::Unsupported);
     }
     if (!impl->supported) return false;
+    if (romLen >= 0x20)
+    {
+        char code4[5] = {};
+        memcpy(code4, romData + 12, 4);
+        ds_select_port_by_code(code4, romData[0x1E]);
+    }
 
     impl->fieldGame = pk_nds_field_game_rom(romData, (uint32_t)romLen);
     if (!impl->fieldGame && romLen >= 0x20)
@@ -517,8 +524,9 @@ bool Bridge::Load(const uint8_t* romData, size_t romLen, const std::string& data
     impl->battleName.clear();
 
     impl->dir = dataDir + "/pokedaisy-ds";
+    pd_mkdir(dataDir.c_str());
     pd_mkdir(impl->dir.c_str());
-    impl->shell.init(impl->dir, 0, false);
+    impl->shell.init(dataDir, 0, false);
     impl->shell.set_game(impl->game, impl->soulSilver);
     // Keep HUD off by default until enabled so existing DS players see zero surprise clutter.
     SyncLanguage(langCode);
@@ -801,18 +809,21 @@ bool Bridge::HandleBattleTouch(int sx, int sy, int ow, int oh, bool down)
     const bool moves = impl->drawnBattle.panel == DsBattlePanel::Moves;
     const int bandTop = 2 * impl->battleStyle->bandTop - (moves ? 14 : 0);
     const int bandH = 384 - bandTop;
-    const int lx = (sx - impl->battleDst.x) * 512 / impl->battleDst.w;
+    const int stageW = std::max(512, impl->battleStageW);
+    const int right = stageW - 4;
+    const int commandLeft = stageW * 270 / 512;
+    const int lx = (sx - impl->battleDst.x) * stageW / impl->battleDst.w;
     const int ly = bandTop + (sy - impl->battleDst.y) * bandH / impl->battleDst.h;
 
     const int top = moves ? bandTop : 2 * impl->battleStyle->textTop;
     const int height = (moves ? 384 : 382) - top;
     const int rowGap = moves ? 2 : 4;
-    const int left = moves ? 6 : 270;
-    const int end = moves ? (508 - 52) : 508;
+    const int left = moves ? 6 : commandLeft;
+    const int end = moves ? (right - 52) : right;
     const int cellW = (end - left - 4) / 2;
     const int cellH = (height - rowGap) / 2;
 
-    if (moves && lx >= end && lx <= 508 && ly >= top && ly < top + height)
+    if (moves && lx >= end && lx <= right && ly >= top && ly < top + height)
     {
         impl->pendingTouchBack = true;
         return true;
@@ -845,7 +856,9 @@ void Bridge::DrawBattleStrip(SDL_Renderer* ren, int ow, int oh, const uint32_t* 
     const int bandH = 384 - bandTop;
     if (bandH <= 0 || bandTop < 0 || bandTop >= 384) return;
 
-    if (impl->battleStage.size() != 512u * 384u) impl->battleStage.assign(512u * 384u, 0);
+    const int stageW = std::max(512, ((384 * ow + oh / 2) / oh) & ~1);
+    impl->battleStageW = stageW;
+    if (impl->battleStage.size() != (size_t)stageW * 384u) impl->battleStage.assign((size_t)stageW * 384u, 0);
     // Copy the game's bottom-band rows from the top DS screen for Gen 4's native message box frame.
     if (topFb && !moves && impl->battleStyle->look != DsBattleLook::Unova &&
         impl->battleStyle->look != DsBattleLook::Unova2)
@@ -853,7 +866,7 @@ void Bridge::DrawBattleStrip(SDL_Renderer* ren, int ow, int oh, const uint32_t* 
         for (int y = bandTop; y < 384; ++y)
         {
             const uint32_t* src = topFb + (size_t)(y / 2) * 256u;
-            uint32_t* dst = impl->battleStage.data() + (size_t)y * 512u;
+            uint32_t* dst = impl->battleStage.data() + (size_t)y * (size_t)stageW;
             for (int x = 0; x < 256; ++x)
             {
                 const uint32_t p = 0xFF000000u | (src[x] & 0xFFFFFFu);
@@ -864,7 +877,7 @@ void Bridge::DrawBattleStrip(SDL_Renderer* ren, int ow, int oh, const uint32_t* 
     }
     else
     {
-        std::fill(impl->battleStage.begin() + (size_t)bandTop * 512u, impl->battleStage.end(), 0xFF101418u);
+        std::fill(impl->battleStage.begin() + (size_t)bandTop * (size_t)stageW, impl->battleStage.end(), 0xFF101418u);
     }
 
     const bool pressed = impl->battleStrip.tapFrames > 0;
@@ -872,19 +885,18 @@ void Bridge::DrawBattleStrip(SDL_Renderer* ren, int ow, int oh, const uint32_t* 
                              : (pressed && impl->battleStrip.cancelingMove) ? 4 : impl->battleStrip.moveFocus;
     ds_draw_battle_strip(impl->battleStage.data(), *impl->battleStyle, impl->drawnBattle, impl->battleName,
                          focus, impl->battleActive && !pressed, ++impl->battleTick,
-                         impl->battlePanelArtValid ? impl->battlePanelArt.data() : nullptr, pressed);
+                         impl->battlePanelArtValid ? impl->battlePanelArt.data() : nullptr, pressed, stageW);
 
     // Ensure opaque alpha across the drawn strip band before uploading.
-    uint32_t* bandPtr = impl->battleStage.data() + (size_t)bandTop * 512u;
-    for (size_t i = 0; i < (size_t)bandH * 512u; ++i) bandPtr[i] |= 0xFF000000u;
+    uint32_t* bandPtr = impl->battleStage.data() + (size_t)bandTop * (size_t)stageW;
+    for (size_t i = 0; i < (size_t)bandH * (size_t)stageW; ++i) bandPtr[i] |= 0xFF000000u;
 
-    Impl::UploadTexture(ren, impl->battleTex, impl->battleTexW, impl->battleTexH, 512, bandH, bandPtr);
+    Impl::UploadTexture(ren, impl->battleTex, impl->battleTexW, impl->battleTexH, stageW, bandH, bandPtr);
     if (impl->battleTex)
     {
-        // Fit cleanly along the bottom edge, keeping 512:bandH proportions (scales cleanly to 720p/1080p).
-        const int dw = std::min(ow, oh * 4 / 3);
-        const int dh = std::max(1, dw * bandH / 512);
-        impl->battleDst = { (ow - dw) / 2, oh - dh, dw, dh };
+        // Span the full bottom width of the view while keeping square 1:1 stage proportions.
+        const int dh = std::max(1, (oh * bandH + 192) / 384);
+        impl->battleDst = { 0, oh - dh, ow, dh };
         SDL_RenderCopy(ren, impl->battleTex, nullptr, &impl->battleDst);
     }
 }

@@ -10,6 +10,7 @@
 extern "C" {
 #include "pd_canvas.h"
 #include "pd_tables.h"
+#include "pd_tr.h"
 }
 
 const DsBattleStyle ds_platinum_battle_style={144,146,{{
@@ -232,8 +233,40 @@ void press(pd_canvas& canvas,Rect r){
   }
 }
 
+void battle_prompt_lines(const std::string& nickname,std::string& line1,std::string& line2,std::string& full){
+  switch(pd_tr_language()){
+  case PD_LANG_ES:
+    line1="¿Qué debería hacer";
+    line2=nickname+"?";
+    break;
+  case PD_LANG_FR:
+    line1="Que doit faire";
+    line2=nickname+" ?";
+    break;
+  case PD_LANG_DE:
+    line1="Was soll";
+    line2=nickname+" tun?";
+    break;
+  case PD_LANG_IT:
+    line1="Cosa deve fare";
+    line2=nickname+"?";
+    break;
+  case PD_LANG_BR:
+  case PD_LANG_PT:
+    line1="O que "+nickname;
+    line2="vai fazer?";
+    break;
+  default:
+    line1="What will";
+    line2=nickname+" do?";
+    break;
+  }
+  full=line1+" "+line2;
+}
+
 void message(pd_canvas& canvas,Rect r,const std::string& nickname,DsBattleLook look){
-  const std::string prompt="What will "+nickname+" do?";
+  std::string line1,line2,prompt;
+  battle_prompt_lines(nickname,line1,line2,prompt);
   if(look!=DsBattleLook::Platinum){
     if(!unova(look)){
       // DsBattleMenu.kt's two Johto message frame palettes.
@@ -249,13 +282,13 @@ void message(pd_canvas& canvas,Rect r,const std::string& nickname,DsBattleLook l
     if(unova(look)){
       // No frame to sit in: the two lines start higher, and the ball rows take the band's foot.
       pd_clip(&canvas,r.x,r.y,r.w,r.h);
-      caps2(canvas,r.x+16,r.y+4,"What will",ink,shadow);
-      caps2(canvas,r.x+16,r.y+32,(nickname+" do?").c_str(),ink,shadow);
+      caps2(canvas,r.x+16,r.y+4,line1.c_str(),ink,shadow);
+      caps2(canvas,r.x+16,r.y+32,line2.c_str(),ink,shadow);
       pd_unclip(&canvas);
       return;
     }
-    text2(canvas,{r.x+16,r.y+9,r.w-30,30},"What will",ink,shadow,false);
-    text2(canvas,{r.x+16,r.y+38,r.w-30,30},(nickname+" do?").c_str(),ink,shadow,false);
+    text2(canvas,{r.x+16,r.y+9,r.w-30,30},line1.c_str(),ink,shadow,false);
+    text2(canvas,{r.x+16,r.y+38,r.w-30,30},line2.c_str(),ink,shadow,false);
     return;
   }
   // Checkerwork and cool white center from Platinum's native battle dialogue.
@@ -271,9 +304,8 @@ void message(pd_canvas& canvas,Rect r,const std::string& nickname,DsBattleLook l
   if(pd_text_width(prompt.c_str())*2+2<=width)
     text2(canvas,{r.x+24,r.y+8,width,32},prompt.c_str(),0x38343c,0xb2aab5,false);
   else {
-    const std::string subject=nickname+" do?";
-    text2(canvas,{r.x+24,r.y+8,width,30},"What will",0x38343c,0xb2aab5,false);
-    text2(canvas,{r.x+24,r.y+36,width,30},subject.c_str(),0x38343c,0xb2aab5,false);
+    text2(canvas,{r.x+24,r.y+8,width,30},line1.c_str(),0x38343c,0xb2aab5,false);
+    text2(canvas,{r.x+24,r.y+36,width,30},line2.c_str(),0x38343c,0xb2aab5,false);
   }
 }
 
@@ -309,13 +341,14 @@ bool native_message_frame(pd_canvas& canvas,int top,int width){
 void native_message_text(pd_canvas& canvas,int top,int width,const std::string& nickname){
   // The games' grey ink and its light shadow, where the native line starts.
   constexpr uint32_t ink=0x505058,shadow=0xb0b0b8;
-  const std::string prompt="What will "+nickname+" do?";
+  std::string line1,line2,prompt;
+  battle_prompt_lines(nickname,line1,line2,prompt);
   const int x=30,room=width-44-x-4;
   if(pd_text_width(prompt.c_str())*2+2<=room)
     text2(canvas,{x,top+8,room,32},prompt.c_str(),ink,shadow,false);
   else {
-    text2(canvas,{x,top+6,room,30},"What will",ink,shadow,false);
-    text2(canvas,{x,top+34,room,30},(nickname+" do?").c_str(),ink,shadow,false);
+    text2(canvas,{x,top+6,room,30},line1.c_str(),ink,shadow,false);
+    text2(canvas,{x,top+34,room,30},line2.c_str(),ink,shadow,false);
   }
 }
 
@@ -692,15 +725,16 @@ bool ds_platinum_has_move_art(const uint32_t* lower,const DsBattleView& view){
 
 void ds_draw_battle_strip(uint32_t* stage,const DsBattleStyle& style,const DsBattleView& view,
                           const std::string& nickname,int focus,bool active,unsigned frame,
-                          const uint32_t* panelArt,bool pressed){
+                          const uint32_t* panelArt,bool pressed,int stageWidth){
   if(view.panel==DsBattlePanel::Native)return;
+  const int W=std::max(512,stageWidth);
   pd_canvas canvas;
-  pd_canvas_init(&canvas,512,384,stage);
+  pd_canvas_init(&canvas,W,384,stage);
   const bool moves=view.panel==DsBattlePanel::Moves;
   const int bandTop=2*style.bandTop-(moves?14:0);
   const bool platinum=style.look==DsBattleLook::Platinum;
   const bool unovan=unova(style.look);
-  constexpr int gap=4,right=508,commandLeft=270;
+  const int gap=4,right=W-4,commandLeft=W*270/512;
   // Gen 4's prompt box is the game's own frame, narrowed beside the plates: taken before the band covers it.
   const bool nativeBox=!moves && !unovan && native_message_frame(canvas,bandTop,commandLeft-4);
   // DsBattleMenu.kt's drawBand: the two Unova families have distinct message bands.
@@ -708,14 +742,14 @@ void ds_draw_battle_strip(uint32_t* stage,const DsBattleStyle& style,const DsBat
   const uint32_t band=platinum?0x000000:style.look==DsBattleLook::Unova?0x0c3c34:
     style.look==DsBattleLook::Unova2?0x0c3851:0x202020;
   const int bandLeft=nativeBox?commandLeft-4:0;
-  pd_fill(&canvas,bandLeft,bandTop,512-bandLeft,bandHeight,band);
-  auto line=[&](int y,uint32_t color){pd_fill(&canvas,0,y*2,512,2,color);};
+  pd_fill(&canvas,bandLeft,bandTop,W-bandLeft,bandHeight,band);
+  auto line=[&](int y,uint32_t color){pd_fill(&canvas,0,y*2,W,2,color);};
   if(style.look==DsBattleLook::Unova){
     const int mid=bandTop+bandHeight*35/100;
-    pd_fill(&canvas,0,mid,512,384-mid,0x08302c);
+    pd_fill(&canvas,0,mid,W,384-mid,0x08302c);
     line(147,0x4d201c);line(148,0x24201c);line(187,0x24201c);line(188,0x4d201c);
   }else if(style.look==DsBattleLook::Unova2){
-    pd_fill(&canvas,0,bandTop+bandHeight*30/100,512,bandHeight*40/100,0x184155);
+    pd_fill(&canvas,0,bandTop+bandHeight*30/100,W,bandHeight*40/100,0x184155);
     line(147,0x083855);line(148,0x305d7d);line(187,0x285165);line(188,0x41697d);
   }
   const int top=moves?bandTop:2*style.textTop;
@@ -748,7 +782,7 @@ void ds_draw_battle_strip(uint32_t* stage,const DsBattleStyle& style,const DsBat
       else family_plate(canvas,card,style.actions[i].face,enabled,style.actions[i].dark);
       // FIGHT's lettering on its filled Unova plate is the colour's dark; the other Unova plates' is the colour.
       const uint32_t ink=!unovan?white:i==0?0x601018:style.actions[i].face;
-      command_label(canvas,card,labels[i],enabled?ink:0xa0a0a0,
+      command_label(canvas,card,pd_tr(labels[i]),enabled?ink:0xa0a0a0,
                     platinum?style.actions[i].shadow:unovan&&i==0?PD_NO_SHADOW:outline);
     }
     if(i==focus)selected=card;

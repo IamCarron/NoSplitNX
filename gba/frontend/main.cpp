@@ -1887,6 +1887,14 @@ struct App
                         pause.items.push_back({ s.name, set.Shown(s) });
                         pageSettings.push_back(&s);
                     }
+#ifdef GBAW_POKEDAISY
+            if (pausePage == P_DISPLAY && companion.active)
+                pause.items.push_back({ "FIELD HUD", companion.HudEnabled() ? "ON" : "OFF" });
+            if (pausePage == P_GAMEPLAY && companion.active)
+                pause.items.push_back({ "AUTO-RUN", companion.AutoRunEnabled() ? "ON" : "OFF" });
+#endif
+            if (pausePage == P_GAMEPLAY)
+                pause.items.push_back({ "REWIND", companion.rewindEnabled ? "ON" : "OFF" });
 #ifdef GBAW_PHONE
             if (pausePage == P_CONTROLS) pause.items.push_back({ "TOUCH CONTROLS", "EDIT LAYOUT" });
 #endif
@@ -1898,7 +1906,7 @@ struct App
             const bool on = ra && ra->on && ra->on(ra->ud);
             pause.items.push_back({ "GRAPHICS", "" });
             pause.items.push_back({ "SOUND", "" });
-            if (AnyGameplayOffered()) pause.items.push_back({ "GAMEPLAY", "" });
+            pause.items.push_back({ "GAMEPLAY", "" });
             pause.items.push_back({ "CONTROLS", "" });
             if (raReady) pause.items.push_back({ "RETROACHIEVEMENTS", on ? "ON" : "OFF" });
             pause.items.push_back({ "BACK", "" });
@@ -1920,14 +1928,8 @@ struct App
         pause.items.push_back({ "RESUME", "" });
 #ifdef GBAW_POKEDAISY
         if (companion.active)
-        {
             pause.items.push_back({ "COMPANION", "" });
-            pause.items.push_back({ "QUICK MENU", "" });
-            pause.items.push_back({ "FIELD HUD", companion.HudEnabled() ? "ON" : "OFF" });
-            pause.items.push_back({ "AUTO-RUN", companion.AutoRunEnabled() ? "ON" : "OFF" });
-        }
 #endif
-        pause.items.push_back({ "REWIND", companion.rewindEnabled ? "ON" : "OFF" });
         pause.items.push_back({ "SAVE STATE", "" });
         pause.items.push_back({ "LOAD STATE", "" });
         pause.items.push_back({ "FAST FORWARD", fastToggle ? "ON" : "OFF" });
@@ -2163,6 +2165,32 @@ struct App
             return;
         }
 #endif
+        if (in.left || in.right || in.accept)
+        {
+            const std::string& item = pause.items[i].label;
+            if (item == "REWIND")
+            {
+                companion.SetRewind(core, !companion.rewindEnabled);
+                pause.items[i].value = companion.rewindEnabled ? "ON" : "OFF";
+                set.values["rewind"] = companion.rewindEnabled ? "1" : "0";
+                set.Save();
+                return;
+            }
+#ifdef GBAW_POKEDAISY
+            if (item == "FIELD HUD")
+            {
+                companion.SetHud(!companion.HudEnabled());
+                pause.items[i].value = companion.HudEnabled() ? "ON" : "OFF";
+                return;
+            }
+            if (item == "AUTO-RUN")
+            {
+                companion.SetAutoRun(!companion.AutoRunEnabled());
+                pause.items[i].value = companion.AutoRunEnabled() ? "ON" : "OFF";
+                return;
+            }
+#endif
+        }
         if (!(in.left || in.right || in.accept) || i < 0 || i >= (int)pageSettings.size()) return;
         const Setting& s = *pageSettings[i];
         set.Step(s, in.left ? -1 : 1);

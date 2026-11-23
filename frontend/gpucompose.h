@@ -241,7 +241,7 @@ public:
                                 const bool skip = (lc & dropMask) ||
                                     (lc == LAYER_BACKDROP && wideCol[x] >= 0 && (wideRow[wideCol[x]] >> 24) != 0);
                                 if (!skip) anyOpaque = true;
-                                out[x] = skip ? (premul ? 0 : c) : (0xFF000000u | c);
+                                out[x] = skip ? 0 : (0xFF000000u | c);
                             }
                         }
                         else
@@ -251,7 +251,7 @@ public:
                                 const uint32_t c = row[x] & 0xFFFFFF;
                                 const bool skip = (LayerClass(frow[x]) & dropMask) != 0;
                                 if (!skip) anyOpaque = true;
-                                out[x] = skip ? (premul ? 0 : c) : (0xFF000000u | c);
+                                out[x] = skip ? 0 : (0xFF000000u | c);
                             }
                         }
                         continue;
@@ -274,7 +274,7 @@ public:
                                 skip = true;
                         }
                         if (skip)
-                            out[x] = premul ? 0 : c;
+                            out[x] = 0;
                         else if (premul && al != 255)
                         {
                             if (al) anyOpaque = true;
@@ -346,7 +346,7 @@ private:
     void BlitCrisp(Tex& x, const Element& el, const SDL_Rect& dst)
     {
         SDL_Texture* t = x.t;
-        if (!t || x.crispBounds.w <= 0 || x.crispBounds.h <= 0) return;
+        if (!t) return;
         if (!x.hasScale || x.scale != SDL_ScaleModeNearest)
         {
             SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
@@ -359,20 +359,11 @@ private:
             x.blend = SDL_BLENDMODE_BLEND;
             x.hasBlend = true;
         }
-        const SDL_Rect& b = x.crispBounds;
-        const int fx = el.flipX ? (el.sw - (b.x + b.w)) : b.x;
-        const int fy = el.flipY ? (el.sh - (b.y + b.h)) : b.y;
-        const SDL_FRect dstSub = {
-            dst.x + (float)fx * dst.w / el.sw,
-            dst.y + (float)fy * dst.h / el.sh,
-            (float)b.w * dst.w / el.sw,
-            (float)b.h * dst.h / el.sh,
-        };
         if (el.flipX || el.flipY)
-            SDL_RenderCopyExF(R, t, &b, &dstSub, 0.0, nullptr,
+            SDL_RenderCopyEx(R, t, nullptr, &dst, 0.0, nullptr,
                 (SDL_RendererFlip)((el.flipX ? SDL_FLIP_HORIZONTAL : 0) | (el.flipY ? SDL_FLIP_VERTICAL : 0)));
         else
-            SDL_RenderCopyF(R, t, &b, &dstSub);
+            SDL_RenderCopy(R, t, nullptr, &dst);
     }
 
     // TEXT STAYS SHARP (GitHub #183): a piece drawn with MergedSharp's even pixels has its
@@ -473,14 +464,13 @@ private:
         if (!t) return;
         if (!x.hasSig || x.sig != h)
         {
-            const int bw = maxX - minX + 1, bh = maxY - minY + 1;
-            CrispBuf.assign((size_t)bw * bh, 0);
+            CrispBuf.assign((size_t)el.sw * el.sh, 0);
             for (int y = minY; y <= maxY; y++)
             {
                 const int sy = el.sy + y;
                 const uint32_t* row = src.pixels + sy * 256 + el.sx;
                 const uint8_t* f = src.flags + sy * 256 + el.sx;
-                uint32_t* dstRow = &CrispBuf[(size_t)(y - minY) * bw];
+                uint32_t* dstRow = &CrispBuf[(size_t)y * el.sw];
                 for (int i = minX; i <= maxX; i++)
                 {
                     const uint8_t fv = f[i];
@@ -489,14 +479,12 @@ private:
                     if (keyed && MergedKeyed(el, c) &&
                         (!el.keyRing || std::min({ i, el.sw - 1 - i, y, el.sh - 1 - y }) < el.keyRing))
                         continue;
-                    dstRow[i - minX] = 0xFF000000u | c;
+                    dstRow[i] = 0xFF000000u | c;
                 }
             }
-            const SDL_Rect sub = { minX, minY, bw, bh };
-            SDL_UpdateTexture(t, &sub, CrispBuf.data(), bw * 4);
+            SDL_UpdateTexture(t, nullptr, CrispBuf.data(), el.sw * 4);
             x.hasSig = true;
             x.sig = h;
-            x.crispBounds = sub;
         }
         x.hasPieceSig = canCachePiece && pieceSig != 0;
         x.pieceSig = pieceSig;

@@ -2,12 +2,15 @@
 #include "companion.h"
 #include "data_gen.h"
 #include "pk_nds_field.h"
+#include "pk_nds_ports_gen.h"
 #include <cstring>
 #include <algorithm>
 
 namespace {
-// The loaded cart while it is a language port (ds_open_cart): its globals stand in for its US game's.
+// The loaded cart while it is a language port (ds_open_cart / ds_select_port_by_code): its globals stand in for its US game's.
 const pd_ds_data::Port* port=nullptr;
+pd_ds_data::Port dynamicPort{};
+char dynamicCode[5]={};
 const char* port_digest(const char* code){
   for(const auto& p:pd_ds_data::ports)if(!std::strcmp(p.code,code))return p.sha1;
   return nullptr;
@@ -59,6 +62,55 @@ const char* ds_open_cart(const char* digest){
   digest=ds_canonical_sha1(digest);port=nullptr;
   for(const auto& p:pd_ds_data::ports)if(!std::strcmp(digest,p.sha1)){port=&p;return p.base;}
   return digest;
+}
+void ds_select_port_by_code(const char* code4,int revision){
+  using namespace pd_ds_data;
+  if(port || !code4 || std::strlen(code4)<4)return;
+  std::memcpy(dynamicCode,code4,4);dynamicCode[4]=0;
+  for(const auto& p:ports)if(!std::strcmp(p.code,dynamicCode)){port=&p;return;}
+  auto set_port=[&](const char* base,uint32_t save,uint32_t sys){
+    dynamicPort={base,base,dynamicCode,save,sys};
+    port=&dynamicPort;
+  };
+  const PkNdsPort5* best5=nullptr;
+  for(const auto& p:PK_NDS_PORTS5){
+    if(std::strcmp(p.code,dynamicCode)!=0)continue;
+    if(p.revision==revision){best5=&p;break;}
+    if(!best5)best5=&p;
+  }
+  if(best5){
+    const char* base=!std::strncmp(dynamicCode,"IRB",3)?blackSha1:!std::strncmp(dynamicCode,"IRA",3)?whiteSha1:
+      !std::strncmp(dynamicCode,"IRE",3)?black2Sha1:white2Sha1;
+    set_port(base,best5->saveControl,best5->gameSystem);
+    return;
+  }
+  const PkNdsPort4* best4=nullptr;
+  for(const auto& p:PK_NDS_PORTS4){
+    if(std::strcmp(p.code,dynamicCode)!=0)continue;
+    if(p.revision==revision){best4=&p;break;}
+    if(!best4)best4=&p;
+  }
+  if(best4){
+    const char* base=!std::strncmp(dynamicCode,"IPG",3)?soulSilverSha1:heartGoldSha1;
+    set_port(base,best4->saveDataPtr,best4->fieldSystemPtr);
+    return;
+  }
+  const PkNdsPort4P* best4p=nullptr;
+  for(const auto& p:PK_NDS_PORTS4P){
+    if(std::strcmp(p.code,dynamicCode)!=0)continue;
+    if(p.revision==revision){best4p=&p;break;}
+    if(!best4p)best4p=&p;
+  }
+  if(best4p){
+    set_port(sha1,best4p->saveDataPtr,best4p->fieldSystemPtr);
+    return;
+  }
+  // French carts (PLATINUM_FR, HEARTGOLD_FR, BLACK_FR, WHITE_FR from pk_nds_field.cpp).
+  if(!std::strcmp(dynamicCode,"CPUF")){set_port(sha1,0x021C0974,0x021C09BC);return;}
+  if(!std::strcmp(dynamicCode,"IPKF")){set_port(heartGoldSha1,0x021D2248,0x021D4178);return;}
+  if(!std::strcmp(dynamicCode,"IPGF")){set_port(soulSilverSha1,0x021D2248,0x021D4178);return;}
+  if(!std::strcmp(dynamicCode,"IRBF")){set_port(blackSha1,0x020A7218,0x021461C8);return;}
+  if(!std::strcmp(dynamicCode,"IRAF")){set_port(whiteSha1,0x020A7238,0x021461E8);return;}
 }
 DsGame ds_companion_game(const char* digest){
   using namespace pd_ds_data;
@@ -263,7 +315,8 @@ DsCompanion ds_read_companion(const uint8_t* ram,size_t size,DsGame game) {
   if(game!=DsGame::Platinum)return read_other_companion(memory,game);
   DsCompanion out;
   auto at=[&](uint32_t a,size_t n){return memory.at(a,n);};
-  const uint8_t* ptr=at(pd_ds_data::saveDataPtr,4);if(!ptr)return out;
+  const uint32_t savePtrAddr=port?port->saveData:pd_ds_data::saveDataPtr;
+  const uint8_t* ptr=at(savePtrAddr,4);if(!ptr)return out;
   uint32_t base=u32(ptr);if(base<0x02000000 || base>=0x023e0000)return out;base+=pd_ds_data::bodyOff;
   if(!read_party(memory,base+pd_ds_data::partyOff,out))return {};
   auto trainer=at(base+pd_ds_data::trainerOff,28);if(!trainer)return {};out.trainer=text(trainer,8);out.money=u32(trainer+20);out.badges=trainer[26];
@@ -273,7 +326,7 @@ DsCompanion ds_read_companion(const uint8_t* ram,size_t size,DsGame game) {
   read_dex(memory,base+pd_ds_data::pokedexOff,out,pd_ds_data::nationalDexOff);
   out.playerGender=trainer[24];
   auto read=[&](uint32_t addr)->uint32_t{auto p=at(addr,4);return p?u32(p):0;};
-  uint32_t fs=read(pd_ds_data::fieldSystemPtr),header=out.map;
+  uint32_t fs=read(port?port->system:pd_ds_data::fieldSystemPtr),header=out.map;
   uint32_t x=read(base+pd_ds_data::locationOff+8),z=read(base+pd_ds_data::locationOff+12);
   if(at(fs,4)){
     uint32_t location=read(fs+pd_ds_data::map_offLocation),avatar=read(fs+pd_ds_data::map_offPlayerAvatar);
@@ -361,7 +414,7 @@ DsRepelResult ds_use_repel(const uint8_t* bytes,size_t size,DsGame game,int item
     slots=unovaPockets[0];
   }else{
     const bool johto=game==DsGame::Johto;
-    const uint32_t save=ram.word(johto?(port?port->saveData:johto_saveDataPtr):saveDataPtr);
+    const uint32_t save=ram.word(johto?(port?port->saveData:johto_saveDataPtr):(port?port->saveData:saveDataPtr));
     if(save<0x02000000||save>=0x023e0000)return R::NotAvailable;
     const uint32_t body=save+(johto?johto_bodyOff:bodyOff);
     bag=body+(johto?johto_bagOff:bagOff);counter=body+(johto?johto_repelStepsOff:repelStepsOff);

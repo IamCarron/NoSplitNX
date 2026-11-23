@@ -335,7 +335,8 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
         const bool objEmptyNow = LineObjEmpty[num];
         if (cache->valid && cache->epoch == CacheEpoch[num] && cache->hide == rc_hide_layers[num] &&
             !memcmp(cache->regs, regs, regBytes) &&
-            ((cache->emptyObj && objEmptyNow) ||
+            cache->emptyObj == objEmptyNow &&
+            (objEmptyNow ||
              (!memcmp(cache->obj, OBJLine[num], sizeof(cache->obj)) && !memcmp(cache->objWindow, OBJWindow[num], sizeof(cache->objWindow)))) &&
             (!with3D || !memcmp(cache->line3D, _3DLine, sizeof(cache->line3D))))
         {

@@ -901,7 +901,7 @@ inline bool MergedWhiteBoxIsGlyph(const ScreenImage& src, int sx, int sy, uint32
     const int mn = std::min({ r, g, b });
     const int sat = mx - mn;
     const int lum = (r + g + b) / 3;
-    if (lum >= 184 && sat < 48)
+    if (lum >= 224 && sat < 36)
     {
         outRgb = 0x282E3Au;
         return true;

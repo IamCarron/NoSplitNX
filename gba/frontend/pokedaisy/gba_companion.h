@@ -274,7 +274,11 @@ public:
         host.hideScreenMode = true;
         host.hasQuickMenu = true;
         host.hasHud = true;
-        host.hasExpand = true;
+        host.hasExpand = false;
+        host.hasButtonRows = false;
+        host.hasDisplayFilter = false;
+        host.hasPerf = false;
+        host.fullSettings = false;
         host.frontendOwnsPlayback = true;
         if (core) pd_snapshot_read(&snap, &game, ReadMemory, core);
         fprintf(stderr, "[pokedaisy] %s (%s) fly=%d flight=%d pc=%d wild=%d\n",

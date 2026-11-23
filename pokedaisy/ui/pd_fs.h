@@ -26,7 +26,16 @@ static inline int pd_rename(const char *from, const char *to) {
 static inline int pd_mkdir(const char *path) {
   return mkdir(path, 0755);
 }
+#if defined(__SWITCH__) || defined(__3DS__)
+#undef fsync
+#define fsync(fd) (0)
+static inline int pd_rename(const char *from, const char *to) {
+  remove(to);
+  return rename(from, to);
+}
+#else
 #define pd_rename(from, to) rename(from, to)
+#endif
 #endif
 
 /* Another ROM beside romPath with its stem (X.gb beside X.gba): then a save named after the stem could be either's. */

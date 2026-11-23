@@ -42,7 +42,7 @@ public:
     //   PANEL:    touch-screen panel scaled to the message box's band, mutually co-sized;
     //   STANDARD: flat rounded strip buttons from Gen5Strip (BattleStrip), co-sized;
     //   SUNMOON:  Sun and Moon styled buttons (Gen5Strip::Commands).
-    enum { BUTTONS_CORNER, BUTTONS_STRIP, BUTTONS_PANEL, BUTTONS_STANDARD, BUTTONS_SUNMOON };
+    enum { BUTTONS_CORNER, BUTTONS_STRIP, BUTTONS_PANEL, BUTTONS_STANDARD, BUTTONS_SUNMOON, BUTTONS_POKEDAISY };
     int battleButtons = BUTTONS_STRIP;
 
     // romPath: the game being started; names: the functions the layouts watch (Black's own
@@ -59,7 +59,8 @@ public:
                     battleButtons = !strncmp(line + 15, "corner", 6) ? BUTTONS_CORNER
                         : !strncmp(line + 15, "panel", 5) ? BUTTONS_PANEL
                         : (!strncmp(line + 15, "standard", 8) || !strncmp(line + 15, "rounded", 7)) ? BUTTONS_STANDARD
-                        : !strncmp(line + 15, "sunmoon", 7) ? BUTTONS_SUNMOON : BUTTONS_STRIP;
+                        : !strncmp(line + 15, "sunmoon", 7) ? BUTTONS_SUNMOON
+                        : !strncmp(line + 15, "pokedaisy", 9) ? BUTTONS_POKEDAISY : BUTTONS_STRIP;
             fclose(f);
         }
         char code[5] = {};
@@ -269,6 +270,23 @@ public:
             for (const Element& e : sc.items)
                 if (e.wideOnly) boxes.push_back(e);
             boxesAge = 0;
+            if (battleButtons == BUTTONS_POKEDAISY)
+            {
+                std::vector<Element> keep;
+                for (const Element& e : sc.items)
+                    if (e.screen != 1 && !(e.screen == -1 && e.border)) keep.push_back(e);
+                sc.items = std::move(keep);
+                if (!sc.items.empty() && (Fw->Ran(moveMenu, 4) || Fw->Ran(commandMenu, 4) || Fw->Ran(targetMenu, 4)))
+                {
+                    Element& top = sc.items[0];
+                    if (top.holeCount < 4)
+                    {
+                        const int h[4] = { 0, 145, 256, 192 };
+                        std::copy(h, h + 4, top.holes[top.holeCount++]);
+                    }
+                }
+                return;
+            }
             const int buttons = many && battleButtons == BUTTONS_CORNER ? BUTTONS_PANEL : battleButtons;
             if (!screens) return;
             const bool moves = Fw->Ran(moveMenu, 1), command = !moves && Fw->Ran(commandMenu, 1);
@@ -280,10 +298,7 @@ public:
             if (buttons == BUTTONS_CORNER || buttons == BUTTONS_PANEL)
             {
                 if (!wideView || !(moves || command || target))
-                {
-                    if (!topFaded) AdaptGen5BattleMessage(sc, viewWidth, screens);
                     return;
-                }
                 std::vector<Element> cornerKeep, keep;
                 for (const Element& e : sc.items)
                 {
@@ -341,10 +356,7 @@ public:
             const bool strip = (buttons == BUTTONS_STRIP || buttons == BUTTONS_STANDARD || buttons == BUTTONS_SUNMOON) &&
                 (Fw->Ran(moveMenu, 4) || Fw->Ran(commandMenu, 4) || Fw->Ran(targetMenu, 4));
             if (!strip)
-            {
-                if (!topFaded) AdaptGen5BattleMessage(sc, viewWidth, screens);
                 return;
-            }
             std::vector<Element> keep;
             for (const Element& e : sc.items)
                 if (e.screen != 1 && !(e.screen == -1 && e.border)) keep.push_back(e);
@@ -380,8 +392,6 @@ public:
                     promptRight, targetBtnW);
                 availRoom = std::max(84.0f, viewRight - 2.0f - (promptRight + 5.0f));
             }
-            else if (!topFaded)
-                AdaptGen5BattleMessage(sc, viewWidth, screens);
             BattleStrip(sc, wideView ? viewRight : 256, screens, gridArg, party, availRoom, buttons == BUTTONS_STRIP);
             return;
         }
@@ -411,11 +421,10 @@ public:
             }
             if (Gen5Strip::ChoiceBars(sc, (wideView ? viewRight : 256) - 2, screens, 147, 42, availRoom))
                 choiceMissing = 0;
+            else if (++choiceMissing > 30)
+                sc = cut;
             else
-            {
-                if (++choiceMissing > 30) sc = cut;
-                else if (!topFaded) { sc = cut; AdaptGen5BattleMessage(sc, viewWidth, screens); }
-            }
+                sc = cut;
             return;
         }
         if (!strcmp(sc.name, "pokedex-list"))

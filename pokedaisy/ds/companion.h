@@ -17,6 +17,9 @@ const char* ds_canonical_sha1(const char* sha1);
 // a language port this reader takes (data_gen.h's ports), the digest of the US game it shares its tables and save layout
 // with. Every read after it goes through that cart's own globals.
 const char* ds_open_cart(const char* sha1);
+// Selects a regional port's saveData and fieldSystem pointers by 4-char cartridge code and header revision when the
+// dump's SHA-1 did not match one of the retail digests in data_gen.h's ports table.
+void ds_select_port_by_code(const char* code4, int revision = 0);
 int ds_egg_icon(DsGame game);
 struct DsMon {
   int species=0, level=0, hp=0, maxHp=0, heldItem=0;
