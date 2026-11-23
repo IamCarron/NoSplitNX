@@ -30,6 +30,7 @@ extern "C" {
 #include "pokedaisy/pk_wide.h"
 }
 #include "pokedaisy/wide_camera.h"
+#include "pokedaisy/gba_companion.h"
 #ifdef GBAW_EMBEDDED
 #include "embed.h"
 #include "auto_state.h"
@@ -357,6 +358,7 @@ struct MenuIn
 {
     bool up = false, down = false, left = false, right = false, accept = false, back = false;
     bool menu = false, settings = false, folder = false, escape = false, erase = false;
+    bool pageL = false, pageR = false, toggleCompanion = false, toggleQuick = false;
 };
 
 // A controller button as printed on it: SDL_CONTROLLER_BUTTON_A is the button labelled A. On a PC
@@ -685,14 +687,32 @@ struct App
     struct mCore* core = nullptr;
     Games::Game game;
     std::vector<uint32_t> video = std::vector<uint32_t>((size_t)MaxW * GbaH);
-    // PokeDaisy WIDE (pokedaisy/): dynamic widescreen rebuild and Zoom/Look-Around for hacks and vanilla games.
+    // PokeDaisy WIDE (pokedaisy/): dynamic widescreen rebuild, GB/GBC wide, Rewind, Companion, HUD & Quick Menu.
     bool pkWide = false;
     PkWideCamera::Camera camera;
+    GbaCompanion companion;
     std::vector<uint32_t> frame240 = std::vector<uint32_t>((size_t)GbaW * GbaH);
     std::vector<uint32_t> zoomBuf = std::vector<uint32_t>((size_t)PkWideCamera::Camera::MaxW * PkWideCamera::Camera::MaxH);
     PkWideCamera::Window zoomWin;
     bool zoomShown = false;
     bool zoomRefresh = false;
+    int CoreW() const { return game.isGb ? 160 : GbaW; }
+    int CoreH() const { return game.isGb ? 144 : GbaH; }
+    GbaCompanion::HostActions CompanionActions()
+    {
+        GbaCompanion::HostActions a;
+        a.saveState = [this]() { SaveState(); return true; };
+        a.loadState = [this]() { LoadState(); return true; };
+        a.stateExists = [this]() { return Games::Exists(states + "/" + game.key + ".ss"); };
+        a.getFf = [this]() { return fastToggle; };
+        a.setFf = [this](bool on) {
+            fastToggle = on;
+            set.values["fast_lock"] = fastToggle ? "1" : "0";
+            set.Save(); set.ToHost("fast_lock");
+        };
+        a.toast = [this](const std::string& m) { Toast(m, 2600); };
+        return a;
+    }
     int wideExtra = -1;
     bool paused = false;
     Menu pause;
@@ -988,7 +1008,7 @@ struct App
             Toast(error, 5000);
             return false;
         }
-        core = mCoreCreate(mPLATFORM_GBA);
+        core = mCoreCreate(g.isGb ? mPLATFORM_GB : mPLATFORM_GBA);
         if (!core || !core->init(core))
         {
             Toast("CAN'T START THE EMULATOR");
@@ -1004,9 +1024,18 @@ struct App
         opts.audioBuffers = 4096;
         mCoreConfigLoadDefaults(&core->config, &opts);
         mCoreConfigSetDefaultValue(&core->config, "idleOptimization", "detect");
-        // Without a static IPS widescreen patch, keep mGBA at 240x160 so pk_wide rebuilds wide views cleanly.
-        wideExtra = !g.patch.empty() ? WantedExtra() : 0;
-        mCoreConfigSetIntValue(&core->config, "gba.wideExtra", wideExtra);
+        if (g.isGb)
+        {
+            // Keep GB/GBC at native 160x144 (no SGB border) so PokeDaisy pk_wide_gb expands cleanly.
+            wideExtra = 0;
+            mCoreConfigSetIntValue(&core->config, "gb.sgb.borders", 0);
+        }
+        else
+        {
+            // Without a static IPS widescreen patch, keep mGBA at 240x160 so pk_wide rebuilds wide views cleanly.
+            wideExtra = !g.patch.empty() ? WantedExtra() : 0;
+            mCoreConfigSetIntValue(&core->config, "gba.wideExtra", wideExtra);
+        }
         mCoreLoadConfig(core);
         core->setVideoBuffer(core, video.data(), MaxW);
         core->setAudioBufferSize(core, 4096);
@@ -1027,13 +1056,17 @@ struct App
         }
         if (struct VFile* sv = VFileOpen(save.c_str(), O_CREAT | O_RDWR)) core->loadSave(core, sv);
         core->reset(core);
-        pkWide = pk_wide_configure(doCrc32(sold.data(), sold.size())) != 0;
+        const uint32_t soldCrc = doCrc32(sold.data(), sold.size());
+        pkWide = pk_wide_configure(soldCrc) != 0;
+        camera.frameW = g.isGb ? 160 : GbaW;
+        camera.frameH = g.isGb ? 144 : GbaH;
         camera.Reset();
         camera.level = 0;
         zoomShown = false;
         zoomRefresh = false;
-        fprintf(stderr, "[gba] pk_wide: %s (patch='%s', crc=%08X)\n",
-                pkWide ? "active" : "none", g.patch.c_str(), (unsigned)doCrc32(sold.data(), sold.size()));
+        companion.Start(core, sold.data(), sold.size(), soldCrc, g.isGb, data, set.Get("language"), set.Get("rewind") != "0");
+        fprintf(stderr, "[gba] pk_wide: %s (platform=%s, patch='%s', crc=%08X)\n",
+                pkWide ? "active" : "none", g.isGb ? "GB/GBC" : "GBA", g.patch.c_str(), (unsigned)soldCrc);
 #ifdef GBAW_CHEATS
         cheatBus.core = core;
         cheatsFile = GbaCheats::FolderFor(saves) + "/" + g.key + "-on.txt";
@@ -1086,6 +1119,7 @@ struct App
         if (typing) SDL_StopTextInput();
         typing = false;
 #endif
+        companion.Shutdown(core);
         pk_wide_reset();
         pkWide = false;
         zoomShown = false;
@@ -1205,6 +1239,7 @@ struct App
         }
         const bool ok = mCoreLoadStateNamed(core, vf, SAVESTATE_RTC);
         vf->close(vf);
+        if (ok) companion.OnReset(core);
         if (ok && (DynamicWide1x() || ZoomOn()))
         {
             camera.Reset();
@@ -1264,6 +1299,7 @@ struct App
         before->close(before);
         autoStatePlayed = true;
         camera.Reset();
+        companion.OnReset(core);
         if (DynamicWide1x() || ZoomOn()) { pk_wide_jump(core, frame240.data()); zoomShown = false; }
 #ifdef GBAW_CHEATS
         cheats.Reset();
@@ -1328,9 +1364,10 @@ struct App
         const bool dyn1x = DynamicWide1x();
         const bool zoomOn = ZoomOn();
         if (!dyn1x && !zoomOn) return;
+        const int cw = CoreW(), ch = CoreH();
         const int e = std::max(0, wideExtra);
-        for (int y = 0; y < GbaH; y++)
-            memcpy(frame240.data() + (size_t)y * GbaW, video.data() + (size_t)y * MaxW + e, GbaW * 4);
+        for (int y = 0; y < ch; y++)
+            memcpy(frame240.data() + (size_t)y * cw, video.data() + (size_t)y * MaxW + e, (size_t)cw * 4);
         int ow = 0, oh = 0;
         if (ren) SDL_GetRendererOutputSize(ren, &ow, &oh);
         if (!zoomOn)
@@ -1346,14 +1383,14 @@ struct App
             camera.lookAround = true;
             camera.zoomOnText = set.Get("zoom_text") == "1";
             const int dirs = pads.Dirs();
-            camera.walking = !paused && ((GameKeys() & 0xF0) != 0 || dirs);
+            camera.walking = !paused && !companion.TakesInput() && ((GameKeys() & 0xF0) != 0 || dirs);
             float sx = pads.Axis(SDL_CONTROLLER_AXIS_RIGHTX) / 32767.0f, sy = pads.Axis(SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0f;
             if (key[SDL_SCANCODE_J]) sx = -1;
             if (key[SDL_SCANCODE_L]) sx = 1;
             if (key[SDL_SCANCODE_I]) sy = -1;
             if (key[SDL_SCANCODE_K]) sy = 1;
-            camera.stickX = paused ? 0 : sx;
-            camera.stickY = paused ? 0 : sy;
+            camera.stickX = (paused || companion.TakesInput()) ? 0 : sx;
+            camera.stickY = (paused || companion.TakesInput()) ? 0 : sy;
         }
         const bool panIdle = camera.level == 0 && std::fabs(camera.stickX) < 0.2f && std::fabs(camera.stickY) < 0.2f;
         const double aspect = WantedAspect();
@@ -1364,7 +1401,7 @@ struct App
         PkWideCamera::Window w = camera.Frame(pk_wide_scene(),
             (int64_t)SDL_GetPerformanceCounter() * 1000000000LL / (int64_t)SDL_GetPerformanceFrequency());
         if (capW < ow) w.offX += (ow - capW) * 0.5f;
-        const bool inside = w.valid && w.x >= -e && w.y >= 0 && w.x + w.w <= GbaW + e && w.y + w.h <= GbaH;
+        const bool inside = w.valid && w.x >= -e && w.y >= 0 && w.x + w.w <= cw + e && w.y + w.h <= ch;
         if (!shown || !w.valid || (!dyn1x && panIdle && camera.Plain()))
         {
             pk_wide_skip(core, frame240.data());
@@ -1382,8 +1419,8 @@ struct App
         if (e > 0)
         {
             const int trim = std::min(8, e);
-            const int x0 = std::max(w.x, -e + trim), x1 = std::min(w.x + w.w, GbaW + e - trim);
-            const int y0 = std::max(w.y, 0), y1 = std::min(w.y + w.h, GbaH);
+            const int x0 = std::max(w.x, -e + trim), x1 = std::min(w.x + w.w, cw + e - trim);
+            const int y0 = std::max(w.y, 0), y1 = std::min(w.y + w.h, ch);
             if (x1 > x0)
                 for (int y = y0; y < y1; y++)
                     memcpy(zoomBuf.data() + (size_t)(y - w.y) * w.w + (x0 - w.x),
@@ -1447,25 +1484,36 @@ struct App
         return fastButton.Requested(set.Get("fast_button") == "toggle", FastDown(), fastToggle);
     }
 
-    // Runs one GBA frame, with sound if `sound` and dynamic wide/zoom work if `shown`.
+    // Runs one GBA/GB frame, with sound if `sound` and dynamic wide/zoom work if `shown`.
     void RunFrame(bool sound, bool ff = false, bool shown = true)
     {
-        const int e = !game.patch.empty() ? WantedExtra() : 0;
-        if (e != wideExtra)
+        if (!game.isGb)
         {
-            wideExtra = e;
-            mCoreConfigSetIntValue(&core->config, "gba.wideExtra", wideExtra);
-            core->reloadConfigOption(core, "gba.wideExtra", nullptr);
+            const int e = !game.patch.empty() ? WantedExtra() : 0;
+            if (e != wideExtra)
+            {
+                wideExtra = e;
+                mCoreConfigSetIntValue(&core->config, "gba.wideExtra", wideExtra);
+                core->reloadConfigOption(core, "gba.wideExtra", nullptr);
+            }
         }
-        uint32_t keys = paused ? 0 : GameKeys();
+        uint32_t keys = (paused || companion.TakesInput()) ? 0 : GameKeys();
         if (holdKeys)
         {
             if (keys == 0) holdKeys = false;
             keys = 0;
         }
+        const bool rewindHeld = !paused && !companion.TakesInput() &&
+            (key[SDL_SCANCODE_R] || (leftTrigger && (pads.Button(SDL_CONTROLLER_BUTTON_BACK) || pads.Button(SDL_CONTROLLER_BUTTON_LEFTSHOULDER))));
+        if (companion.PreFrame(core, keys, rewindHeld))
+        {
+            ZoomFrame(shown);
+            return;
+        }
         core->setKeys(core, keys);
         core->runFrame(core);
         ZoomFrame(shown);
+        companion.PostFrame(core, CompanionActions());
 #ifdef GBAW_CHEATS
         cheats.Frame(cheatBus, keys);
 #endif
@@ -1593,6 +1641,16 @@ struct App
         }
 #endif
         pause.items.push_back({ "RESUME", "" });
+#ifdef GBAW_POKEDAISY
+        if (companion.active)
+        {
+            pause.items.push_back({ "COMPANION", "" });
+            pause.items.push_back({ "QUICK MENU", "" });
+            pause.items.push_back({ "FIELD HUD", companion.HudEnabled() ? "ON" : "OFF" });
+            pause.items.push_back({ "AUTO-RUN", companion.AutoRunEnabled() ? "ON" : "OFF" });
+        }
+#endif
+        pause.items.push_back({ "REWIND", companion.rewindEnabled ? "ON" : "OFF" });
         pause.items.push_back({ "SAVE STATE", "" });
         pause.items.push_back({ "LOAD STATE", "" });
         pause.items.push_back({ "FAST FORWARD", fastToggle ? "ON" : "OFF" });
@@ -1942,8 +2000,34 @@ struct App
             set.Save(); set.ToHost("fast_lock");
             return;
         }
+        if (item == "REWIND" && (in.left || in.right || in.accept))
+        {
+            companion.SetRewind(core, !companion.rewindEnabled);
+            pause.items[pause.selected].value = companion.rewindEnabled ? "ON" : "OFF";
+            set.values["rewind"] = companion.rewindEnabled ? "1" : "0";
+            set.Save();
+            return;
+        }
+#ifdef GBAW_POKEDAISY
+        if (item == "FIELD HUD" && (in.left || in.right || in.accept))
+        {
+            companion.SetHud(!companion.HudEnabled());
+            pause.items[pause.selected].value = companion.HudEnabled() ? "ON" : "OFF";
+            return;
+        }
+        if (item == "AUTO-RUN" && (in.left || in.right || in.accept))
+        {
+            companion.SetAutoRun(!companion.AutoRunEnabled());
+            pause.items[pause.selected].value = companion.AutoRunEnabled() ? "ON" : "OFF";
+            return;
+        }
+#endif
         if (!in.accept) return;
         if (item == "RESUME") Resume();
+#ifdef GBAW_POKEDAISY
+        else if (item == "COMPANION") { Resume(); companion.ToggleCompanion(core); }
+        else if (item == "QUICK MENU") { Resume(); companion.ToggleQuickMenu(core); }
+#endif
         else if (item == "SAVE STATE")
         {
             SaveState();
@@ -1985,6 +2069,7 @@ struct App
         {
             core->reset(core);
             camera.Reset();
+            companion.OnReset(core);
             if (DynamicWide1x() || ZoomOn()) { pk_wide_jump(core, frame240.data()); zoomShown = false; }
 #ifdef GBAW_CHEATS
             cheats.Reset();
@@ -2199,22 +2284,23 @@ struct App
             DrawZoom();
             return;
         }
-        const int w = GbaW + 2 * wideExtra;
+        const int cw = CoreW(), ch = CoreH();
+        const int w = cw + 2 * (game.isGb ? 0 : wideExtra);
         int ow, oh;
         SDL_GetRendererOutputSize(ren, &ow, &oh);
         const std::string scaling = set.Get("scaling");
         const bool hd = set.Get("hd_filter") == "1", colour = set.Get("colour") == "1", lcd = set.Get("lcd") == "1";
-        double scale = std::min((double)ow / w, (double)oh / GbaH);
+        double scale = std::min((double)ow / w, (double)oh / ch);
         if (scaling == "whole") scale = std::max(1.0, std::floor(scale));
-        const int dw = (int)lround(w * scale), dh = (int)lround(GbaH * scale);
+        const int dw = (int)lround(w * scale), dh = (int)lround(ch * scale);
         const SDL_Rect dst = { (ow - dw) / 2, (oh - dh) / 2, dw, dh };
-        const SDL_Rect src = { 0, 0, w, GbaH };
+        const SDL_Rect src = { 0, 0, w, ch };
         if (hd || colour)
         {
             // The picture's w columns, colour corrected; for xBRZ as ARGB (it weighs the channels).
             if (colour && colourLut.empty()) BuildColourLut();
-            fxSrc.resize((size_t)w * GbaH);
-            for (int y = 0; y < GbaH; y++)
+            fxSrc.resize((size_t)w * ch);
+            for (int y = 0; y < ch; y++)
                 for (int x = 0; x < w; x++)
                 {
                     uint32_t p = video[(size_t)y * MaxW + x];
@@ -2235,11 +2321,11 @@ struct App
                 workers.Start((int)std::min(3u, cores > 1 ? cores - 1 : 0u));
 #endif
             }
-            fxOut.resize((size_t)w * HdFactor * GbaH * HdFactor);
+            fxOut.resize((size_t)w * HdFactor * ch * HdFactor);
             const int slices = 8;
             workers.Run(slices, [&](int i) {
-                xbrz::scale(HdFactor, fxSrc.data(), fxOut.data(), w, GbaH, xbrz::ColorFormat::RGB, xbrz::ScalerCfg(),
-                            GbaH * i / slices, GbaH * (i + 1) / slices);
+                xbrz::scale(HdFactor, fxSrc.data(), fxOut.data(), w, ch, xbrz::ColorFormat::RGB, xbrz::ScalerCfg(),
+                            ch * i / slices, ch * (i + 1) / slices);
             });
             if (!hdTex)
             {
@@ -2248,10 +2334,10 @@ struct App
             }
             if (hdTex)
             {
-                const SDL_Rect r = { 0, 0, w * HdFactor, GbaH * HdFactor };
+                const SDL_Rect r = { 0, 0, w * HdFactor, ch * HdFactor };
                 SDL_UpdateTexture(hdTex, &r, fxOut.data(), w * HdFactor * 4);
                 SDL_RenderCopy(ren, hdTex, &r, &dst);
-                if (lcd) DrawLcd(dst, w);
+                if (lcd) DrawLcd(dst, w, ch);
                 return;
             }
         }
@@ -2274,11 +2360,11 @@ struct App
             if (bigTex)
             {
                 SDL_SetRenderTarget(ren, bigTex);
-                const SDL_Rect bd = { 0, 0, w * n, GbaH * n };
+                const SDL_Rect bd = { 0, 0, w * n, ch * n };
                 SDL_RenderCopy(ren, gameTex, &src, &bd);
                 SDL_SetRenderTarget(ren, nullptr);
                 SDL_RenderCopy(ren, bigTex, &bd, &dst);
-                if (lcd) DrawLcd(dst, w);
+                if (lcd) DrawLcd(dst, w, ch);
                 return;
             }
         }
@@ -2484,6 +2570,8 @@ struct App
         // the game list); on a phone about 300, so they are bigger under a finger.
         int ow, oh;
         SDL_GetRendererOutputSize(ren, &ow, &oh);
+        if (core && screen == PLAY && !paused)
+            companion.Draw(ren, ow, oh, CompanionActions());
 #if defined(GBAW_PHONE)
         int lines = 300;
 #else
@@ -2871,7 +2959,19 @@ struct App
                     break;
                 case SDL_SCANCODE_F11: ToggleFullscreen(); break;
                 case SDL_SCANCODE_C:
-                    if (!e.key.repeat && screen == PLAY && !paused) ZoomCycle();
+                    if (!e.key.repeat && screen == PLAY && !paused && !companion.TakesInput()) ZoomCycle();
+                    break;
+                case SDL_SCANCODE_TAB:
+                    if (!e.key.repeat && screen == PLAY && !paused) in.toggleCompanion = true;
+                    break;
+                case SDL_SCANCODE_F:
+                    if (!e.key.repeat && screen == PLAY && !paused) in.toggleQuick = true;
+                    break;
+                case SDL_SCANCODE_Q:
+                    if (!e.key.repeat && companion.TakesInput()) in.pageL = true;
+                    break;
+                case SDL_SCANCODE_E:
+                    if (!e.key.repeat && companion.TakesInput()) in.pageR = true;
                     break;
                 default: break;
                 }
@@ -2928,11 +3028,13 @@ struct App
                 // (+ leaves the program from the game list, as Switch homebrew does.)
                 if (b == SDL_CONTROLLER_BUTTON_START && screen == LIST) in.escape = true;
 #endif
-                // The pause menu: START (+), as in the DS games, as it is let go (pressed with
-                // SELECT (-) it is the GBA's START instead); START BUTTON GBA START: the other way
-                // round. The Guide (Home, PS) button and a stick click open it too.
-                // (ZOOM AND LOOK AROUND: in a game it knows, a click of the right stick zooms instead.)
-                if (b == SDL_CONTROLLER_BUTTON_RIGHTSTICK && screen == PLAY && !paused && ZoomOn()) ZoomCycle();
+                if (b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER && companion.TakesInput()) in.pageL = true;
+                if (b == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER && companion.TakesInput()) in.pageR = true;
+                // L3 opens PokeDaisy Quick Menu; R3 cycles Zoom/Look-Around; Guide opens Pause.
+                if (b == SDL_CONTROLLER_BUTTON_LEFTSTICK && screen == PLAY && !paused && companion.active)
+                    in.toggleQuick = true;
+                else if (b == SDL_CONTROLLER_BUTTON_RIGHTSTICK && screen == PLAY && !paused && !companion.TakesInput() && ZoomOn())
+                    ZoomCycle();
                 else if (b == SDL_CONTROLLER_BUTTON_GUIDE || b == SDL_CONTROLLER_BUTTON_LEFTSTICK || b == SDL_CONTROLLER_BUTTON_RIGHTSTICK)
                     in.menu = true;
                 if (screen == PLAY)
@@ -2971,14 +3073,19 @@ struct App
                 break;
             }
             case SDL_CONTROLLERAXISMOTION:
-                // The left trigger opens the pause menu too (it has nothing else to do).
+                // ZL toggles PokeDaisy Companion (while SELECT+ZL or L+ZL holds Rewind); falls back to Pause if Companion inactive.
                 if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT)
                 {
                     const bool held = e.caxis.value > 16000;
                     if (held && !leftTrigger)
                     {
                         padLast = true;
-                        in.menu = true;
+                        const bool rewindCombo = pads.Button(SDL_CONTROLLER_BUTTON_BACK) || pads.Button(SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+                        if (!rewindCombo)
+                        {
+                            if (screen == PLAY && !paused && companion.active) in.toggleCompanion = true;
+                            else in.menu = true;
+                        }
                     }
                     leftTrigger = held;
                 }
@@ -3005,6 +3112,12 @@ struct App
         padLast = false;
         if (screen == PLAY && !paused)
         {
+            if (companion.active && (f.type == SDL_FINGERDOWN || f.type == SDL_FINGERUP || f.type == SDL_FINGERMOTION))
+            {
+                const int px = (int)(f.x * ow), py = (int)(f.y * oh);
+                if (companion.HandleTouch(core, px, py, ow, oh, f.type != SDL_FINGERUP, CompanionActions()))
+                    return;
+            }
             if (f.type == SDL_FINGERUP)
                 fingers.erase(f.fingerId);
             else
@@ -3311,6 +3424,13 @@ struct App
                 if (!pause.items.empty() && (pause.selected < 0 || pause.selected >= (int)pause.items.size()))
                     pause.selected = (int)pause.items.size() - 1;
             }
+            else if (in.toggleCompanion && core && screen == PLAY && !paused) companion.ToggleCompanion(core);
+            else if (in.toggleQuick && core && screen == PLAY && !paused) companion.ToggleQuickMenu(core);
+            else if (companion.TakesInput() && core && screen == PLAY && !paused)
+            {
+                if (in.menu) { companion.companionOpen = companion.quickOpen = false; OpenPause(); }
+                else companion.HandleNav(core, in.up, in.down, in.left, in.right, in.accept, in.back, in.pageL, in.pageR, CompanionActions());
+            }
             else if (in.menu) OpenPause();
 
             if (fastButton.Update(set.Get("fast_button") == "toggle", FastDown(), fastInputFocused && screen == PLAY && !paused, fastToggle))
@@ -3322,7 +3442,7 @@ struct App
             const double dt = (double)(now - last) / freq;
             last = now;
             const unsigned long long framesBefore = gameFrames;
-            if (core && screen == PLAY && !paused)
+            if (core && screen == PLAY && !paused && !companion.companionOpen)
             {
                 int run = 1;
                 if (lockToVsync)
@@ -3517,6 +3637,7 @@ std::vector<ListGame> Find(const std::string& roms, const std::string& saves)
         l.hasSave = g.hasSave;
         l.widescreen = !g.patch.empty() || pk_wide_knows(g.crc);
         l.hack = !g.known;
+        l.isGb = g.isGb;
         out.push_back(l);
     }
     return out;

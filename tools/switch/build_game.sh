@@ -248,10 +248,11 @@ all)
         SSR_NRO_TITLE="NoSplitNX" bash tools/switch/build.sh
     mkdir -p build-sd/switch/nosplitnx/roms
     cp "$BUILD/ssrecomp.nro" build-sd/switch/nosplitnx/nosplitnx.nro
-    # The licences: this program's (GPL-3) and, with the GBA games built in, mGBA's (MPL-2.0).
+    # The licences: this program's (GPL-3), PokeDaisy's notice (GPL-3) and, with the GBA/GB games built in, mGBA's (MPL-2.0).
     cp LICENSE build-sd/switch/nosplitnx/LICENSE.txt
     cp LICENSE-Noto.txt build-sd/switch/nosplitnx/LICENSE-Noto.txt
-    LICENCES="switch/nosplitnx/LICENSE.txt switch/nosplitnx/LICENSE-Noto.txt"
+    cp pokedaisy/NOTICE build-sd/switch/nosplitnx/NOTICE-PokeDaisy.txt
+    LICENCES="switch/nosplitnx/LICENSE.txt switch/nosplitnx/LICENSE-Noto.txt switch/nosplitnx/NOTICE-PokeDaisy.txt"
     if [ -n "${SSR_GBA_DIR:-}" ]; then
         [ -f "$GBAW_MGBA/LICENSE" ] || fail "no mGBA LICENSE in $GBAW_MGBA"
         cp "$GBAW_MGBA/LICENSE" build-sd/switch/nosplitnx/LICENSE-mGBA.txt

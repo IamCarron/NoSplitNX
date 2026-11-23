@@ -93,6 +93,12 @@ jobs:
           path: build-sd/pokemon-platinum-wide-switch.zip
           if-no-files-found: warn
 
+      - name: Prepare Beta Pre-release Package
+        if: startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-')
+        run: |
+          mv build-sd/nosplitnx-switch.zip build-sd/nosplitnx-switch-beta.zip
+          python3 tools/updater/write_checksums.py build-sd --build "nosplitnx-switch-beta.zip=build-switch-all/fulldex-build-id.txt"
+
       - name: Generate Release Notes
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -121,8 +127,8 @@ jobs:
           cat << 'EOF' >> build-sd/RELEASE_NOTES.md
 
           ### Installation & Updating
-          - **From console:** Open `SETTINGS (Y)` -> `CHECK FOR UPDATES` and press `A` to install.
-          - **Manual install:** Extract `nosplitnx-switch.zip` to the root of your microSD card (`sdmc:/switch/nosplitnx/nosplitnx.nro`) and place your ROMs in `sdmc:/switch/nosplitnx/roms/`.
+          - **From console:** Open `SETTINGS (Y)` -> `HELP` -> `CHECK FOR UPDATES` and press `A` to install. For beta pre-releases, set `UPDATE CHANNEL` to `BETA` first.
+          - **Manual install:** Extract the `.zip` archive to the root of your microSD card (`sdmc:/switch/nosplitnx/nosplitnx.nro`) and place your ROMs in `sdmc:/switch/nosplitnx/roms/`.
 
           ### Checksums (`SHA256SUMS.txt`)
           ```text
@@ -139,5 +145,5 @@ jobs:
           body_path: build-sd/RELEASE_NOTES.md
           generate_release_notes: false
           files: |
-            build-sd/nosplitnx-switch.zip
+            build-sd/nosplitnx-switch*.zip
             build-sd/SHA256SUMS.txt

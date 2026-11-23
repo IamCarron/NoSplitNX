@@ -34,4 +34,5 @@ __pycache__/
 /ssrecomp.rom
 /gen.new/
 /dist/
+/pokedaisy-main/
 .DS_Store

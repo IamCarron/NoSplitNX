@@ -46,13 +46,13 @@ inline void Add(const std::string& roms, const std::string& saves, std::vector<L
     for (const GbaWide::ListGame& l : GbaWide::Find(roms, saves))
     {
         Launcher::Game g;
-        g.platform = Launcher::GBA;
+        g.platform = l.isGb ? Launcher::GB : Launcher::GBA;
         g.rom = l.file;
         g.folder = saves;
-        g.code = CodeOf(l.key);
+        g.code = l.isGb ? ("GB-" + l.key) : CodeOf(l.key);
         g.name = l.name;
         g.saveName = l.key + ".sav";
-        g.known = true; // (any GBA game plays: with widescreen when it is one of these)
+        g.known = true; // (any GBA / GB / GBC game plays: with widescreen when supported)
         g.hack = l.hack;
         g.hasSave = l.hasSave;
         auto it = artCache.find(g.rom);
@@ -68,16 +68,15 @@ inline void Add(const std::string& roms, const std::string& saves, std::vector<L
     }
 }
 
-// The GBA games in a roms folder (saves in saves), and in a GBA folder inside it (any case), as
-// Pokemon GBA Widescreen keeps its own on a phone: those with their saves in its saves folder, so
-// that they carry on. One that is in both is marked with where it is.
+// The GBA / GB / GBC games in a roms folder (saves in saves), and in GBA / GB / GBC subfolders
+// inside it (any case): those with their saves in their saves folder.
 inline void AddWithGbaFolder(const std::string& roms, const std::string& saves, std::vector<Launcher::Game>& games,
                              std::map<std::string, std::vector<uint32_t>>& artCache)
 {
     const size_t before = games.size();
     Add(roms, saves, games, artCache);
     const size_t mine = games.size();
-    std::vector<std::string> subs;
+    std::vector<std::pair<std::string, std::string>> subs;
     if (DIR* d = opendir(roms.c_str()))
     {
         while (dirent* e = readdir(d))
@@ -85,18 +84,20 @@ inline void AddWithGbaFolder(const std::string& roms, const std::string& saves, 
             std::string n = e->d_name;
             for (char& ch : n) ch = (char)tolower((unsigned char)ch);
             struct stat st;
-            if (n == "gba" && stat((roms + "/" + e->d_name).c_str(), &st) == 0 && S_ISDIR(st.st_mode))
-                subs.push_back(roms + "/" + e->d_name);
+            if ((n == "gba" || n == "gb" || n == "gbc") && stat((roms + "/" + e->d_name).c_str(), &st) == 0 && S_ISDIR(st.st_mode))
+                subs.push_back({ roms + "/" + e->d_name, n });
         }
         closedir(d);
     }
-    for (const std::string& sub : subs)
+    for (const auto& sub : subs)
     {
         const size_t from = games.size();
-        Add(sub, sub + "/saves", games, artCache);
+        const std::string subSaves = sub.second == "gba" ? (sub.first + "/saves") : saves;
+        Add(sub.first, subSaves, games, artCache);
+        const std::string label = sub.second == "gb" ? "IN GB FOLDER" : sub.second == "gbc" ? "IN GBC FOLDER" : "IN GBA FOLDER";
         for (size_t i = from; i < games.size(); i++)
             for (size_t j = before; j < mine; j++)
-                if (games[j].code == games[i].code) games[i].where = "IN GBA FOLDER";
+                if (games[j].code == games[i].code) games[i].where = label;
     }
 }
 

@@ -16,7 +16,7 @@ static enum mPlatform FakePlatform(const struct mCore*) { return mPLATFORM_GBA; 
 
 int main()
 {
-    // 1. PokeDaisy WIDE CRC database recognises SoulGold (all builds incl. v1.2.1) and major hacks.
+    // 1. PokeDaisy WIDE CRC database recognises SoulGold (all builds incl. v1.2.1), major GBA hacks, and GB/GBC games.
     const uint32_t knownHacks[] = {
         0x5578ebea, // SoulGold v1.2.1 (Alt 1)
         0x601664c3, // SoulGold v1.2.1
@@ -28,8 +28,31 @@ int main()
         0x6c5ee1b2, // Odyssey v4.1.1
     };
     for (uint32_t crc : knownHacks) assert(pk_wide_knows(crc) == 1);
+    const uint32_t knownGb[] = {
+        0x9f7fdd53, // Pokemon Red (US)
+        0xd6da8a1a, // Pokemon Blue (US)
+        0x7d527d62, // Pokemon Yellow (US)
+        0x3358e30a, // Pokemon Yellow (ES)
+        0x6bde3c3e, // Pokemon Gold (US)
+        0x8ad48636, // Pokemon Silver (US)
+        0xee6f5188, // Pokemon Crystal (US 1.0)
+        0x3358e30a, // Pokemon Yellow (ES)
+    };
+    for (uint32_t crc : knownGb) assert(pk_wide_knows(crc) == 1);
     assert(pk_wide_knows(0) == 0);
     assert(pk_wide_knows(0xDEADBEEFu) == 0);
+
+    // 1b. Camera supports both GBA (240x160) and GB/GBC (160x144) widescreen windows cleanly.
+    {
+        PkWideCamera::Camera gbCam;
+        gbCam.frameW = 160;
+        gbCam.frameH = 144;
+        gbCam.viewW = 1280;
+        gbCam.viewH = 720;
+        const PkWideCamera::Window gw = gbCam.Frame(PkWideCamera::SCENE_FIELD, 1000000000LL);
+        assert(gw.valid && gw.x < 0 && gw.w == 256 && gw.y == 0 && gw.h == 144);
+        assert(std::fabs(gw.scale - 5.0f) < 0.01f);
+    }
 
     // 2. Configure SoulGold v1.2.1 and compute the 1280x720 1x widescreen camera window.
     assert(pk_wide_configure(0x601664c3) == 1);

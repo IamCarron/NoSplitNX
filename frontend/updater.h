@@ -17,6 +17,7 @@ struct Release
 {
     std::string asset, url, sumsUrl, page, tag;
     long long updated = 0; // the asset's upload time (seconds since 1970, UTC)
+    bool prerelease = false;
 };
 std::string Sha256Hex(const std::string& data);
 // SHA256SUMS.txt's lines ("<sha256>  <file>", sha256sum's own form): file -> lowercase hash.
@@ -28,11 +29,11 @@ bool IsNewerBuild(long long remoteBuild, long long currentBuild, const std::stri
 std::string BuildLabel(long long build);
 // "2026-11-01T16:07:00Z" -> seconds since 1970 (0 when it is not one).
 long long ParseTime(const std::string& iso);
-// The newest release (not a draft or a pre-release) of GitHub's list of releases with this
-// asset, downloaded from an address starting with urlPrefix; with its SHA256SUMS.txt when the
-// release has one. False when none has it.
+// The newest release (not a draft; pre-releases included only when includeBetas is true) of
+// GitHub's list of releases with this asset, downloaded from an address starting with urlPrefix;
+// with its SHA256SUMS.txt when the release has one. False when none has it.
 bool FindRelease(const std::string& json, const std::string& asset, const std::string& urlPrefix, Release& out,
-                 std::string& error);
+                 std::string& error, bool includeBetas = false);
 // Puts the new download's files (fresh: its top folder, unpacked) in dir, each one already
 // there moved into backup first (emptied before), and puts everything back when a step fails.
 // The player's folders and files (roms, saves, settings, logs) are never touched.
@@ -45,6 +46,8 @@ struct Status
     State state = State::Idle;
     std::string text;  // for the settings page's CHECK FOR UPDATES (the list's font: capitals)
     std::string page;  // the release's page
+    std::string tag;   // the release's tag name (e.g. v1.3.0-beta.1)
+    bool prerelease = false;
     bool canInstall = false;
     long long currentBuild = 0, availableBuild = 0;
     unsigned serial = 0; // changes with every new state
@@ -55,6 +58,10 @@ struct Status
 void Init(const std::string& programDir, const std::string& dataDir, const std::string& program = "");
 // quiet: the list's own check at launch (a failed connection is not shown as an error).
 void Check(bool quiet);
+// Clears any cached update result (e.g. after switching between STABLE and BETA channels).
+void ResetCheck();
+// Whether settings.cfg currently opts into beta pre-releases (update_channel=beta).
+bool IncludeBetas();
 // CHECK FOR UPDATES chosen: checks, installs what was found, or gives the page to open ("": none).
 std::string Choose();
 Status Get();
@@ -68,7 +75,8 @@ inline const char* PopupLater() { return "LATER"; }
 inline std::string PopupNote(bool canInstall)
 {
     const Status s=Get();
-    const std::string versions=UiLang::Tr("CURRENT ")+BuildLabel(s.currentBuild)+UiLang::Tr(". AVAILABLE ")+BuildLabel(s.availableBuild)+". ";
+    const std::string tagLabel=s.tag.empty() ? std::string() : (s.tag + " ");
+    const std::string versions=UiLang::Tr("CURRENT ")+BuildLabel(s.currentBuild)+UiLang::Tr(". AVAILABLE ")+tagLabel+BuildLabel(s.availableBuild)+". ";
     return versions + UiLang::Tr(canInstall
         ? "DOWNLOAD VERIFIED. YOUR ROMS, SAVES AND SETTINGS STAY. PREVIOUS PROGRAM KEPT."
         : "OPEN THE RELEASE PAGE FOR DETAILS AND THE DOWNLOAD.");

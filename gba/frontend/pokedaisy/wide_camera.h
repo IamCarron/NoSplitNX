@@ -32,6 +32,7 @@ class Camera
 public:
     static constexpr int FrameW = 240, FrameH = 160, MaxW = 800, MaxH = 800;
 
+    int frameW = FrameW, frameH = FrameH; // active core frame size (240x160 GBA, 160x144 GB/GBC)
     int viewW = 0, viewH = 0;  // the screen's size, in pixels
     int level = 0;             // the zoom step picked: 0 = 1x
     float stickX = 0, stickY = 0; // the right stick, -1..1 (right / down positive)
@@ -39,8 +40,8 @@ public:
     bool zoomOnText = true;    // AUTO ZOOM IN: a text box pulls in to 1x
     bool lookAround = true;    // LOOK AROUND off: the stick does nothing
 
-    // Screen pixels per GBA pixel for each zoom step, 1x first.
-    std::vector<float> Levels() const { return LevelsFor(viewW, viewH); }
+    // Screen pixels per game pixel for each zoom step, 1x first.
+    std::vector<float> Levels() const { return LevelsFor(viewW, viewH, frameW, frameH); }
 
     // How much more of the map step i shows than 1x ("1.7x").
     float Factor(int i) const
@@ -113,11 +114,11 @@ public:
             lookY += sy * speed * dt;
         }
         // As far as a screen's worth of map past the game's own view each way.
-        const float limX = std::max(fw, (float)FrameW), limY = std::max(fh, (float)FrameH);
+        const float limX = std::max(fw, (float)frameW), limY = std::max(fh, (float)frameH);
         lookX = std::clamp(lookX, -limX, limX);
         lookY = std::clamp(lookY, -limY, limY);
 
-        const float fx = FrameW / 2.0f + lookX - fw / 2, fy = FrameH / 2.0f + lookY - fh / 2;
+        const float fx = frameW / 2.0f + lookX - fw / 2, fy = frameH / 2.0f + lookY - fh / 2;
         out.x = (int)std::floor(fx);
         out.y = (int)std::floor(fy);
         out.w = std::min(MaxW, (int)std::ceil(fx + fw) - out.x);
@@ -131,10 +132,10 @@ public:
 
     // Screen pixels per game pixel for each step on a w x h screen: 1x (the whole frame as large as it fits), then
     // the whole numbers below it that show at least 1.2x more each and fit the largest window.
-    static std::vector<float> LevelsFor(int w, int h)
+    static std::vector<float> LevelsFor(int w, int h, int fw = FrameW, int fh = FrameH)
     {
-        if (w <= 0 || h <= 0) return { 1.0f };
-        const float fit = std::min(w / (float)FrameW, h / (float)FrameH);
+        if (w <= 0 || h <= 0 || fw <= 0 || fh <= 0) return { 1.0f };
+        const float fit = std::min(w / (float)fw, h / (float)fh);
         std::vector<float> out = { fit };
         int k = (int)std::floor(fit);
         if ((float)k == fit) k--;

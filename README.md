@@ -1,8 +1,8 @@
 # NoSplitNX
 
-**Every DS and GBA Pokémon game in one Nintendo Switch homebrew: one screen, widescreen, 60 fps at 720p.** No more squinting at two stacked DS screens.
+**Every DS, GBA and GB/GBC Pokémon game in one Nintendo Switch homebrew: one screen, widescreen, 60 fps at 720p, with a built-in PokeDaisy Companion, Field HUD, Quick Menu and Rewind.** No more squinting at two stacked DS screens.
 
-NoSplitNX is a Switch-only program with a console-style game list, a built-in DS core and a built-in GBA player. It handles clean games, regional versions and ROM hacks, and has HOME Menu icons, cover downloads, cheats and RetroAchievements. You bring your own ROMs; the download contains no game code or assets.
+NoSplitNX is a Switch-only program with a console-style game list, a built-in DS core and a built-in GB/GBC/GBA player. It handles clean games, regional versions and ROM hacks, and has HOME Menu icons, cover downloads, cheats, RetroAchievements and a live PokeDaisy Companion (Pokédex, Party, Bag, World Map and Walkthrough Guide). You bring your own ROMs; the download contains no game code or assets.
 
 | Download | Install |
 |---|---|
@@ -17,8 +17,9 @@ NoSplitNX is a Switch-only program with a console-style game list, a built-in DS
 | Console | Games |
 |---|---|
 | **Nintendo DS** | Black 2, White 2, Black, White, SoulSilver, HeartGold, Platinum, plus Diamond and Pearl (experimental) |
-| **Game Boy Advance** | Emerald, FireRed, LeafGreen, Ultra Violet, Generation 3 Evolved |
-| **ROM hacks** | DS and GBA hacks of these games, as a patched ROM or as an `.ips`, `.ups`, `.bps` or `.xdelta` patch |
+| **Game Boy Advance** | Emerald, FireRed, LeafGreen, Ultra Violet, Generation 3 Evolved, plus dynamic widescreen for dozens of decomp hacks |
+| **Game Boy / Color** | Red, Blue, Yellow, Gold, Silver, Crystal, plus Crystal Legacy, Crystal Clear, Polished Crystal and more — in true widescreen |
+| **ROM hacks** | DS, GBA and GB/GBC hacks of these games, as a patched ROM or as an `.ips`, `.ups`, `.bps` or `.xdelta` patch |
 | **Languages** | English, Spanish, French, German, Italian, Japanese and Korean versions ([details](#regional-versions)) |
 
 Each game is shown as **one 16:9 picture**. The touch screen's controls sit beside the action, the 3D world reaches the edges of the screen, and in-between frames bring it to 60 fps.
@@ -231,7 +232,7 @@ NoSplitNX started as a Switch fork of [mamesj/pokemon-fulldex](https://github.co
 - [ClickingMaster/ssrecomp](https://github.com/ClickingMaster/ssrecomp): the original single-screen SoulSilver project.
 - [melonDS](https://melonds.kuribo64.net): DS emulation.
 - [mGBA](https://mgba.io) and Pokémon GBA Widescreen: GBA emulation and widescreen patches.
-- [PokeDaisy](https://github.com/lidor30/pokedaisy) by Lidor Itzhari: based on PokeDaisy for dynamic GBA widescreen rebuild (`WIDE`), Zoom and Look-Around (`GPL-3.0`).
+- [PokeDaisy](https://github.com/lidor30/pokedaisy) by Lidor Itzhari (`Based on PokeDaisy by Lidor Itzhari - https://github.com/lidor30/pokedaisy`, `GPL-3.0`): dynamic GBA and GB/GBC widescreen rebuild (`WIDE`), Rewind, Free Flight, Field HUD, Quick Menu and the live Pokédex / Party / Bag / World Map / Guide Companion across GB, GBC, GBA and DS.
 - [sphaira](https://github.com/ITotalJustice/sphaira): HOME Menu forwarder generation.
 - DeadSkullzJr and libretro-database: cheat databases. Libretro Thumbnails and SteamGridDB: cover art.
 

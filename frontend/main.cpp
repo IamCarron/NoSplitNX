@@ -88,6 +88,9 @@
 #endif
 #include "battlewide.h"
 #include "platinum.h" // Pokemon Platinum: which of its screens is up
+#ifdef SSR_POKEDAISY
+#include "ds_bridge.h" // PokeDaisy Companion, Field HUD and Quick Menu for Gen 4/5 DS games
+#endif
 #include "belowscreen.h"
 #include "recomp_rt.h"
 #include "recomp_api.h"
@@ -1643,10 +1646,9 @@ struct Settings
     bool ds3dGpu = true;         // with it, the DS-resolution 3D picture too
     bool zoom = true, zoomText = true; // ZOOM AND LOOK AROUND, AUTO ZOOM IN (ds_zoom.h)
     // Black and Black 2: how a battle's buttons are shown beside the wide view (BATTLE BUTTONS):
-    // 0 CORNER, touch-screen panel in the lower right corner; 1 STRIP (default), authentic BW/B2W2
-    // plates with party Poké Balls, Shift/Rotate/Back and prompt co-sizing; 2 PANEL, panel scaled
-    // to the message box; 3 STANDARD, Gen5Strip rounded buttons; 4 SUN AND MOON (Bw1Layouts::BUTTONS_*).
-    int battleButtons = 1;
+    // 0 CORNER, 1 STRIP, 2 PANEL, 3 STANDARD, 4 SUN AND MOON, 5 POKEDAISY (default: PokeDaisy's
+    // live battle strip across Gen 4 and Gen 5, falling back to STRIP during transitions).
+    int battleButtons = 5;
     // The PC all-games program: the window's size when it last closed (0: 1280x720, a wide view).
     int windowW = 0, windowH = 0;
     Controls::Bindings controls; // CONTROLS (controls.h): map_key_* and map_pad_* lines
@@ -1657,8 +1659,12 @@ struct Settings
     // OTHER VERSION POKEMON (exclusives.h): SoulSilver and HeartGold's wild Pokemon of both
     // versions. Off to start.
     bool bothVersions = false;
+    // PokeDaisy DS Companion / Field HUD / QoL preferences.
+    bool pdHud = true;
+    bool pdAutoRun = false;
+    bool pdWildOff = false;
     // Updater and Switch launcher state kept inside settings.cfg so extra .txt files are unneeded.
-    std::string updateSha, updateTime, lastGame;
+    std::string updateSha, updateTime, updateChannel, lastGame;
 
     void Load(const std::string& path)
     {
@@ -1725,15 +1731,19 @@ struct Settings
             else if (k == "ds3d_gpu") ds3dGpu = v != "0";
             else if (k == "ra") ra.on = v == "1";
             else if (k == "both_versions") bothVersions = v == "1";
+            else if (k == "pd_hud") pdHud = v != "0";
+            else if (k == "pd_autorun") pdAutoRun = v == "1";
+            else if (k == "pd_wild_off") pdWildOff = v == "1";
             else if (k == "ra_user") ra.user = v;
             else if (k == "ra_token") ra.token = v;
             else if (k == "unlock_banner") raClassicBanner = v == "classic";
             else if (k == "update_sha") updateSha = v;
             else if (k == "update_time") updateTime = v;
+            else if (k == "update_channel") updateChannel = v;
             else if (k == "last_game") lastGame = v;
             else if (k == "zoom") zoom = v != "0";
             else if (k == "zoom_text") zoomText = v != "0";
-            else if (k == "battle_buttons") battleButtons = v == "corner" ? 0 : v == "panel" ? 2 : (v == "standard" || v == "rounded") ? 3 : v == "sunmoon" ? 4 : 1;
+            else if (k == "battle_buttons") battleButtons = v == "corner" ? 0 : v == "strip" ? 1 : v == "panel" ? 2 : (v == "standard" || v == "rounded") ? 3 : v == "sunmoon" ? 4 : 5;
             else if (k == "window")
             {
                 const size_t x = v.find('x');
@@ -1780,16 +1790,20 @@ struct Settings
         f << "start_button=" << (startMenu ? "menu" : "ds") << "\n";
         f << "zoom=" << (zoom ? 1 : 0) << "\n";
         f << "zoom_text=" << (zoomText ? 1 : 0) << "\n";
-        static const char* const battleButtonNames[] = { "corner", "strip", "panel", "standard", "sunmoon" };
-        f << "battle_buttons=" << battleButtonNames[std::clamp(battleButtons, 0, 4)] << "\n";
+        static const char* const battleButtonNames[] = { "corner", "strip", "panel", "standard", "sunmoon", "pokedaisy" };
+        f << "battle_buttons=" << battleButtonNames[std::clamp(battleButtons, 0, 5)] << "\n";
         controls.Save(f);
         f << "both_versions=" << (bothVersions ? 1 : 0) << "\n";
+        f << "pd_hud=" << (pdHud ? 1 : 0) << "\n";
+        f << "pd_autorun=" << (pdAutoRun ? 1 : 0) << "\n";
+        f << "pd_wild_off=" << (pdWildOff ? 1 : 0) << "\n";
         f << "ra=" << (ra.on ? 1 : 0) << "\n";
         if (!ra.user.empty()) f << "ra_user=" << ra.user << "\n";
         if (!ra.token.empty()) f << "ra_token=" << ra.token << "\n";
         if (raClassicBanner) f << "unlock_banner=classic\n";
         if (!updateSha.empty()) f << "update_sha=" << updateSha << "\n";
         if (!updateTime.empty()) f << "update_time=" << updateTime << "\n";
+        if (!updateChannel.empty()) f << "update_channel=" << updateChannel << "\n";
         if (!lastGame.empty()) f << "last_game=" << lastGame << "\n";
 #ifdef SSR_GPU3D
         f << "gpu3d_test=" << (gpu3d ? 1 : 0) << "\n";
@@ -2856,7 +2870,7 @@ int main(int argc, char** argv)
         // (Platinum has functions with Black 2's names, StartMenu_Main and CARD_WaitBackupAsync
         // among them: Black 2's layouts must not pick them up.)
         if (pt.on) bw2 = Bw2Funcs();
-        bw1.battleButtons = cfg.battleButtons;
+        bw1.battleButtons = cfg.battleButtons == 5 ? 1 : cfg.battleButtons;
         {
             char code[5] = {};
             if (FILE* rf = fopen(opt.rom.c_str(), "rb"))
@@ -3571,7 +3585,7 @@ int main(int argc, char** argv)
             {
                 if (funcWatch.CurrentFrame() - bw2BoxesFrame < 600 && !topScreenFaded())
                     Gen5Strip::KeepBoxes(sc, bw2BoxesTop, bw2Boxes, 1);
-                if (cfg.battleButtons == 1 || cfg.battleButtons == 3 || cfg.battleButtons == 4)
+                if (cfg.battleButtons == 1 || cfg.battleButtons == 3 || cfg.battleButtons == 4 || cfg.battleButtons == 5)
                 {
                     const Scene cut = sc;
                     float availRoom = -1.0f;
@@ -3636,7 +3650,7 @@ int main(int argc, char** argv)
             }
             // (The compositor leaves the boxes where they are in any frame without the wide arena.)
             // The player's box is lifted higher when STRIP / STANDARD / SUNMOON draws party balls under it.
-            const int BattleBoxLift = !bw1.on && (cfg.battleButtons == 1 || cfg.battleButtons == 3 || cfg.battleButtons == 4) ? 8 : 4;
+            const int BattleBoxLift = !bw1.on && (cfg.battleButtons == 1 || cfg.battleButtons == 3 || cfg.battleButtons == 4 || cfg.battleButtons == 5) ? 8 : 4;
             // How much of a part of the top screen is 2D, in tenths: where the HP boxes are, some
             // of it; none when the boxes are not shown (the screen going black into an evolution,
             // where the wide arena can still show the last picture through the holes); nearly all
@@ -3731,7 +3745,7 @@ int main(int argc, char** argv)
             // Choosing the target of a move in a double, triple or rotation battle: the foes'
             // panels above, the player's side below (touch screen rows 22-131).
             const bool target = !moves && !command && funcWatch.Ran(bw2.battleTarget, 1);
-            int style = bw1.on || !screens ? 0 : cfg.battleButtons;
+            int style = bw1.on || !screens ? 0 : (cfg.battleButtons == 5 ? 1 : cfg.battleButtons);
             const bool stripStyle = style == 1 || style == 3 || style == 4;
             const bool strip = stripStyle && (funcWatch.Ran(bw2.battleMove, 4) ||
                 funcWatch.Ran(bw2.battleCommand, 4) || funcWatch.Ran(bw2.battleTarget, 4));
@@ -5309,6 +5323,7 @@ int main(int argc, char** argv)
         M_RA_LIST, M_ACH_POINTS, M_ACH_STATUS, M_ACH_RARITY,
         M_CSEARCH, M_SEARCH_LETTER, M_SEARCH_DELETE, M_SEARCH_SPACE, M_SEARCH_CLEAR, M_SEARCH_DONE,
         M_CDETAIL_TOGGLE, M_CINFO, M_BACKUPS, M_RESTORE_CONFIRM, M_LOAD_CONFIRM,
+        M_PD_COMPANION, M_PD_QUICK, M_PD_HUD, M_PD_WILD, M_PD_AUTORUN,
         M_BACKUP0 = 70000,
         M_CHEAT0 = 1000, // (M_CHEAT0 + i: cheat i, CHEATS)
         M_ACH0 = 30000,  // (M_ACH0 + i: achievement i, ACHIEVEMENTS)
@@ -5379,6 +5394,13 @@ int main(int argc, char** argv)
     bool navHoldOff = false; // (the button just given: ignored by the menu until let go)
     PadState physPad, prevPhysPad; // the controller as it is, before RemapPad
     bool saveEdge = false, loadEdge = false, resetEdge = false, zoomEdge = false; // physical shortcut presses
+#ifdef SSR_POKEDAISY
+    PdDs::Bridge dsCompanion;
+    PdDs::HostActions pdActions;
+    bool pdTouchCaptured = false;
+    bool pdPrevOverworld = false;
+    bool pdPrevBattle = false;
+#endif
     const int ctlRow0 = ctlHasKeyboard ? 1 : 0; // the first action's row
     const int ctlRowReset = ctlRow0 + Controls::COUNT, ctlRowBack = ctlRowReset + 1;
     auto buildMenu = [&]() {
@@ -5413,6 +5435,13 @@ int main(int argc, char** argv)
         if (menuPage == PAGE_MAIN)
         {
             add(M_RESUME, "RESUME", "");
+#ifdef SSR_POKEDAISY
+            if (dsCompanion.Supported())
+            {
+                add(M_PD_COMPANION, "COMPANION", "");
+                add(M_PD_QUICK, "QUICK MENU", "");
+            }
+#endif
             add(M_SAVESTATE, "SAVE STATE", "");
             add(M_LOADSTATE, "LOAD STATE", "");
 #ifdef __SWITCH__
@@ -5431,6 +5460,14 @@ int main(int argc, char** argv)
             add(M_SOUND, "SOUND", "");
             add(M_CONTROLMENU, "CONTROLS", "");
             add(M_LANGUAGE, "LANGUAGE", UiLang::ChoiceName());
+#ifdef SSR_POKEDAISY
+            if (dsCompanion.Supported())
+            {
+                add(M_PD_HUD, "FIELD HUD", onOff(dsCompanion.HudEnabled()));
+                add(M_PD_WILD, "WILD ENCOUNTERS", onOff(!dsCompanion.WildOffEnabled()));
+                add(M_PD_AUTORUN, "AUTO-RUN", onOff(dsCompanion.AutoRunEnabled()));
+            }
+#endif
             if (exclusives.Supported()) add(M_BOTHVER, "OTHER VERSION POKEMON", onOff(exclusives.on));
             if (!opt.noSave) add(M_BACKUPS, "SAVE BACKUPS", "");
             if (Achievements::Available()) add(M_RA, "RETROACHIEVEMENTS", onOff(cfg.ra.on));
@@ -5442,10 +5479,10 @@ int main(int argc, char** argv)
             add(M_WIDE, "WIDESCREEN WORLD", onOff(cfg.wide));
             add(M_SMOOTH, "SMOOTH SCALING", onOff(cfg.smooth));
             {
-                static const char* const btnNames[] = { "CORNER", "STRIP", "PANEL", "STANDARD", "SUN AND MOON" };
+                static const char* const btnNames[] = { "CORNER", "STRIP", "PANEL", "STANDARD", "SUN AND MOON", "POKEDAISY" };
                 const bool gen4Own = pt.on || !funcWatchOn;
-                const char* btnVal = gen4Own ? (cfg.battleButtons == 4 ? "SUN AND MOON" : "STANDARD")
-                                             : btnNames[std::clamp(cfg.battleButtons, 0, 4)];
+                const char* btnVal = gen4Own ? (cfg.battleButtons == 5 ? "POKEDAISY" : cfg.battleButtons == 4 ? "SUN AND MOON" : "STANDARD")
+                                             : btnNames[std::clamp(cfg.battleButtons, 0, 5)];
                 add(M_BATTLEBUTTONS, "BATTLE BUTTONS", btnVal);
             }
             add(M_ZOOM, "ZOOM AND LOOK AROUND", onOff(cfg.zoom));
@@ -5738,6 +5775,9 @@ int main(int argc, char** argv)
     auto resetGame = [&]() {
         nds->Reset(); nds->SetupDirectBoot("game.nds"); nds->Start();
         rc_reset(); Achievements::Reset(); SetClock(*nds, false);
+#ifdef SSR_POKEDAISY
+        dsCompanion.OnReset();
+#endif
     };
     auto loadQuickNow = [&]() {
         // LOAD STATE: back where the state was made, the in-game save kept as it is. A state
@@ -5763,11 +5803,56 @@ int main(int argc, char** argv)
         say("STATE LOADED");
         Achievements::Reset();
         SetClock(*nds, false);
+#ifdef SSR_POKEDAISY
+        dsCompanion.OnReset();
+#endif
     };
     auto loadQuick = [&]() {
         menu.open = true;
         goPage(PAGE_LOAD_CONFIRM, M_BACK);
     };
+#ifdef SSR_POKEDAISY
+    if (!opt.headless && !opt.lockstep && nds && nds->GetNDSCart())
+    {
+        const auto* cart = nds->GetNDSCart();
+        const std::string dataDir = std::filesystem::path(opt.config).parent_path().string();
+        if (dsCompanion.Load(cart->GetROM(), cart->GetROMLength(), dataDir, UiLang::Codes[UiLang::lang]))
+        {
+            dsCompanion.SetHud(cfg.pdHud);
+            dsCompanion.SetAutoRun(cfg.pdAutoRun);
+            dsCompanion.SetWildOff(cfg.pdWildOff);
+            pdActions.saveState = [&]() -> bool {
+                const bool saved = StateSlots::Save(quickState, [&](const std::string& temporary) {
+                    return WriteSnapshot(*nds, temporary, frame);
+                });
+                say(saved ? "STATE SAVED" : "SAVE STATE FAILED - PREVIOUS STATE KEPT");
+                return saved;
+            };
+            pdActions.loadState = [&]() -> bool {
+                loadQuickNow();
+                return true;
+            };
+            pdActions.stateExists = [&]() -> bool {
+                std::error_code ec;
+                return std::filesystem::exists(quickState, ec) && !ec;
+            };
+            pdActions.getFf = [&]() -> bool { return fastLock; };
+            pdActions.setFf = [&](bool on) {
+#ifdef __SWITCH__
+                if (on && !cfg.switchFastForward)
+                {
+                    say("ENABLE IN SETTINGS -> GRAPHICS FIRST");
+                    return;
+                }
+#endif
+                fastLock = on;
+                cfg.fastLock = fastLock;
+                cfg.Save(opt.config);
+            };
+            pdActions.toast = [&](const std::string& msg) { say(msg); };
+        }
+    }
+#endif
 #if defined(__ANDROID__) && !defined(SSR_PC_LAUNCHER)
     bool updateSaid = false;
     UpdateCheck::Start();
@@ -5868,6 +5953,7 @@ int main(int argc, char** argv)
     {
         bool valid = false;
         bool merged = false, overlayUsed = false, hudUsed = false, wantShot = false;
+        bool pdOverworld = false;
         uint32_t frameNo = 0; // (for the name of a screenshot)
         int outW = 0, outH = 0;
         SDL_Rect rects[2] {};
@@ -6115,6 +6201,14 @@ int main(int argc, char** argv)
                 if (j.rects[i].w > 0) SDL_RenderCopy(renderer, tex[i], nullptr, &j.rects[i]);
             }
         }
+#ifdef SSR_POKEDAISY
+        if (dsCompanion.Supported() && !menu.open)
+        {
+            if (cfg.battleButtons == 5 && dsCompanion.BattleStripActive() && !dsCompanion.AnyMenuOpen())
+                dsCompanion.DrawBattleStrip(renderer, j.outW, j.outH, j.top);
+            dsCompanion.Draw(renderer, j.outW, j.outH, j.pdOverworld, pdActions);
+        }
+#endif
         if (j.overlayUsed)
         {
             if (menu.open)
@@ -6461,6 +6555,12 @@ int main(int argc, char** argv)
         bool touching = false;
         int touchX = 0, touchY = 0;
         MenuInput nav;              // edge-triggered menu input for this tick
+#ifdef SSR_POKEDAISY
+        PdDs::NavInput pdNav;
+        bool pdToggleCompanion = false, pdToggleQuick = false;
+        int pdBattleDx = 0, pdBattleDy = 0;
+        bool pdBattleAccept = false, pdBattleBack = false;
+#endif
         bool toggleMenu = false;
         bool kbFast = false;
         float curDX = 0, curDY = 0;
@@ -6541,6 +6641,34 @@ int main(int argc, char** argv)
                     int ow = 0, oh = 0;
                     SDL_GetRendererOutputSize(renderer, &ow, &oh);
                     const float fx = ev.tfinger.x * ow, fy = ev.tfinger.y * oh;
+#ifdef SSR_POKEDAISY
+                    if (!menu.open && dsCompanion.Supported() && cfg.battleButtons == 5 &&
+                        dsCompanion.BattleStripActive() && !dsCompanion.AnyMenuOpen())
+                    {
+                        if (ev.type == SDL_FINGERDOWN && dsCompanion.HandleBattleTouch((int)fx, (int)fy, ow, oh, true))
+                            continue;
+                    }
+                    if (!menu.open && dsCompanion.Supported() &&
+                        (dsCompanion.AnyMenuOpen() || dsCompanion.HudEnabled() || pdTouchCaptured))
+                    {
+                        const bool down = ev.type != SDL_FINGERUP;
+                        const size_t ramSz = (size_t)nds->MainRAMMask + 1u;
+                        if (ev.type == SDL_FINGERDOWN)
+                        {
+                            if (dsCompanion.HandleTouch((int)fx, (int)fy, ow, oh, true, nds->MainRAM, ramSz, pdActions))
+                            {
+                                pdTouchCaptured = true;
+                                continue;
+                            }
+                        }
+                        else if (pdTouchCaptured)
+                        {
+                            dsCompanion.HandleTouch((int)fx, (int)fy, ow, oh, down, nds->MainRAM, ramSz, pdActions);
+                            if (ev.type == SDL_FINGERUP) pdTouchCaptured = false;
+                            continue;
+                        }
+                    }
+#endif
                     if (ev.type == SDL_FINGERDOWN && !switchFinger)
                     {
                         if (menu.open)
@@ -6617,6 +6745,9 @@ int main(int argc, char** argv)
                     else if (k == SDLK_ESCAPE || k == SDLK_AC_BACK || act == Controls::MENU)
                     {
                         if (menu.open) nav.back = true;
+#ifdef SSR_POKEDAISY
+                        else if (dsCompanion.AnyMenuOpen()) pdNav.back = true;
+#endif
                         else toggleMenu = true;
                     }
                     else if (menu.open)
@@ -6628,6 +6759,23 @@ int main(int argc, char** argv)
                         else if (k == SDLK_RETURN || act == Controls::A) nav.accept = true;
                         else if (act == Controls::B) nav.back = true;
                     }
+#ifdef SSR_POKEDAISY
+                    else if (dsCompanion.AnyMenuOpen())
+                    {
+                        if (k == SDLK_UP || act == Controls::UP) pdNav.up = true;
+                        else if (k == SDLK_DOWN || act == Controls::DOWN) pdNav.down = true;
+                        else if (k == SDLK_LEFT || act == Controls::LEFT) pdNav.left = true;
+                        else if (k == SDLK_RIGHT || act == Controls::RIGHT) pdNav.right = true;
+                        else if (k == SDLK_RETURN || act == Controls::A) pdNav.accept = true;
+                        else if (act == Controls::B || k == SDLK_BACKSPACE) pdNav.back = true;
+                        else if (act == Controls::L || k == SDLK_q) pdNav.pageL = true;
+                        else if (act == Controls::R || k == SDLK_w) pdNav.pageR = true;
+                        else if (k == SDLK_F9) pdToggleQuick = true;
+                        else if (k == SDLK_F10) pdToggleCompanion = true;
+                    }
+                    else if (dsCompanion.Supported() && k == SDLK_F9) pdToggleQuick = true;
+                    else if (dsCompanion.Supported() && k == SDLK_F10) pdToggleCompanion = true;
+#endif
                     else if (act == Controls::SWAP) focus.manualFlip = !focus.manualFlip;
                     else if (act == Controls::SAVE) saveQuick();
                     else if (act == Controls::LOAD) loadQuick();
@@ -6655,8 +6803,52 @@ int main(int argc, char** argv)
                 // A quick click can go down and up between two frames, and the game, which reads the
                 // touch screen once a frame, never saw it (the Pokeathlon's START did nothing): a
                 // click lasts at least 4 frames.
-                else if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) { mouseDown = true; mouseTapHold = 4; }
-                else if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) mouseDown = false;
+                else if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT)
+                {
+#if defined(SSR_POKEDAISY) && !defined(__SWITCH__)
+                    if (!menu.open && dsCompanion.Supported() &&
+                        (dsCompanion.AnyMenuOpen() || dsCompanion.HudEnabled() ||
+                         (cfg.battleButtons == 5 && dsCompanion.BattleStripActive())))
+                    {
+                        int ow = 0, oh = 0, ww = 0, wh = 0;
+                        SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                        SDL_GetWindowSize(window, &ww, &wh);
+                        if (ow > 0 && oh > 0 && ww > 0 && wh > 0)
+                        {
+                            const int cx = (int)((double)ev.button.x * ow / ww);
+                            const int cy = (int)((double)ev.button.y * oh / wh);
+                            if (cfg.battleButtons == 5 && dsCompanion.BattleStripActive() && !dsCompanion.AnyMenuOpen() &&
+                                dsCompanion.HandleBattleTouch(cx, cy, ow, oh, true))
+                                continue;
+                            const size_t ramSz = (size_t)nds->MainRAMMask + 1u;
+                            if (dsCompanion.HandleTouch(cx, cy, ow, oh, true, nds->MainRAM, ramSz, pdActions))
+                            {
+                                pdTouchCaptured = true;
+                                continue;
+                            }
+                        }
+                    }
+#endif
+                    mouseDown = true;
+                    mouseTapHold = 4;
+                }
+                else if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT)
+                {
+#if defined(SSR_POKEDAISY) && !defined(__SWITCH__)
+                    if (pdTouchCaptured)
+                    {
+                        int ow = 0, oh = 0, ww = 0, wh = 0;
+                        SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                        SDL_GetWindowSize(window, &ww, &wh);
+                        const int cx = (ww > 0 && ow > 0) ? (int)((double)ev.button.x * ow / ww) : 0;
+                        const int cy = (wh > 0 && oh > 0) ? (int)((double)ev.button.y * oh / wh) : 0;
+                        dsCompanion.HandleTouch(cx, cy, ow, oh, false, nds->MainRAM, (size_t)nds->MainRAMMask + 1u, pdActions);
+                        pdTouchCaptured = false;
+                        continue;
+                    }
+#endif
+                    mouseDown = false;
+                }
                 // (Every joystick is announced by SDL_JOYDEVICEADDED, game controllers also
                 // by SDL_CONTROLLERDEVICEADDED; Open takes each once.)
                 else if (ev.type == SDL_JOYDEVICEADDED || ev.type == SDL_CONTROLLERDEVICEADDED)
@@ -6971,10 +7163,74 @@ int main(int argc, char** argv)
             nav.accept |= pressed(cfg.byLabel ? PAD_A : PAD_B);
             nav.back |= pressed(cfg.byLabel ? PAD_B : PAD_A);
         }
+#ifdef SSR_POKEDAISY
+        else if (dsCompanion.Supported())
+        {
+            const bool padTouchBlock = cfg.padTouch || athlonNow || touchOnlyNow;
+            if (!swallowMenuButtons)
+            {
+                // L3 opens Quick Menu (always on Switch; on PC when not using stick touch cursor).
+                const bool lsFree =
+#ifdef __SWITCH__
+                    true;
+#else
+                    !padTouchBlock;
+#endif
+                if (lsFree && pressed(PAD_LS)) pdToggleQuick = true;
+                // ZL opens Companion when not used by the stick touch cursor.
+                if (!padTouchBlock && ps.lt > 0.5f && prevPad.lt <= 0.5f) pdToggleCompanion = true;
+            }
+            if (pdToggleCompanion)
+            {
+                const bool wasOpen = dsCompanion.CompanionOpen();
+                dsCompanion.ToggleCompanion();
+                if (wasOpen) swallowMenuButtons = true;
+            }
+            else if (pdToggleQuick)
+            {
+                const bool wasOpen = dsCompanion.QuickOpen();
+                dsCompanion.ToggleQuickMenu();
+                if (wasOpen) swallowMenuButtons = true;
+            }
+            else if (dsCompanion.AnyMenuOpen())
+            {
+                pdNav.up |= heldNow.up && !heldNav.up;
+                pdNav.down |= heldNow.down && !heldNav.down;
+                pdNav.left |= heldNow.left && !heldNav.left;
+                pdNav.right |= heldNow.right && !heldNav.right;
+                static int pdNavHold = 0;
+                const bool holdUp = heldNow.up && !heldNow.down, holdDown = heldNow.down && !heldNow.up;
+                if ((holdUp && heldNav.up) || (holdDown && heldNav.down)) pdNavHold++;
+                else pdNavHold = 0;
+                if (pdNavHold >= 20 && (pdNavHold - 20) % 4 == 0)
+                {
+                    if (holdUp) pdNav.up = true;
+                    else pdNav.down = true;
+                }
+                pdNav.accept |= pressed(cfg.byLabel ? PAD_A : PAD_B);
+                pdNav.back |= pressed(cfg.byLabel ? PAD_B : PAD_A);
+                pdNav.pageL |= pressed(PAD_LB);
+                pdNav.pageR |= pressed(PAD_RB);
+                const bool wasOpen = dsCompanion.AnyMenuOpen();
+                dsCompanion.HandleNav(pdNav, nds->MainRAM, (size_t)nds->MainRAMMask + 1u, pdActions);
+                if (wasOpen && !dsCompanion.AnyMenuOpen()) swallowMenuButtons = true;
+            }
+            else if (cfg.battleButtons == 5 && !swallowMenuButtons)
+            {
+                pdBattleDx = ((heldNow.right && !heldNav.right) ? 1 : 0) - ((heldNow.left && !heldNav.left) ? 1 : 0);
+                pdBattleDy = ((heldNow.down && !heldNav.down) ? 1 : 0) - ((heldNow.up && !heldNav.up) ? 1 : 0);
+                pdBattleAccept = pressed(cfg.byLabel ? PAD_A : PAD_B);
+                pdBattleBack = pressed(cfg.byLabel ? PAD_B : PAD_A);
+            }
+        }
+#endif
         heldNav = heldNow;
 
         if (toggleMenu)
         {
+#ifdef SSR_POKEDAISY
+            if (!menu.open && dsCompanion.AnyMenuOpen()) dsCompanion.CloseMenus();
+#endif
             if(menuPage == PAGE_CSEARCH) SDL_StopTextInput();
             menu.open = !menu.open;
             menuPage = 0;
@@ -7248,9 +7504,15 @@ int main(int argc, char** argv)
                 cfg.aspect = (cfg.aspect + (dir < 0 ? 4 : 1)) % 5;
                 break;
             case M_BATTLEBUTTONS:
-                if (pt.on || !funcWatchOn) cfg.battleButtons = cfg.battleButtons == 4 ? 1 : 4;
-                else cfg.battleButtons = (cfg.battleButtons + (dir < 0 ? 4 : 1)) % 5; // CORNER, STRIP, PANEL, STANDARD, SUN AND MOON
-                bw1.battleButtons = cfg.battleButtons;
+                if (pt.on || !funcWatchOn)
+                {
+                    // Gen 4 cycles POKEDAISY (5) -> STANDARD (1) -> SUN AND MOON (4).
+                    static const int gen4Order[] = { 5, 1, 4 };
+                    int idx = cfg.battleButtons == 1 ? 1 : cfg.battleButtons == 4 ? 2 : 0;
+                    cfg.battleButtons = gen4Order[(idx + (dir < 0 ? 2 : 1)) % 3];
+                }
+                else cfg.battleButtons = (cfg.battleButtons + (dir < 0 ? 5 : 1)) % 6; // CORNER, STRIP, PANEL, STANDARD, SUN AND MOON, POKEDAISY
+                bw1.battleButtons = cfg.battleButtons == 5 ? 1 : cfg.battleButtons;
                 break;
             case M_ZOOM:
                 cfg.zoom = !cfg.zoom;
@@ -7349,8 +7611,40 @@ int main(int argc, char** argv)
             {
                 cfg.listLang = UiLang::NextChoice(dir);
                 UiLang::Set(cfg.listLang);
+#ifdef SSR_POKEDAISY
+                dsCompanion.SyncLanguage(UiLang::Codes[UiLang::lang]);
+#endif
                 break;
             }
+#ifdef SSR_POKEDAISY
+            case M_PD_COMPANION:
+                menu.open = false;
+                swallowMenuButtons = true;
+                dsCompanion.ToggleCompanion();
+                hit = -1;
+                break;
+            case M_PD_QUICK:
+                menu.open = false;
+                swallowMenuButtons = true;
+                dsCompanion.ToggleQuickMenu();
+                hit = -1;
+                break;
+            case M_PD_HUD:
+                cfg.pdHud = !dsCompanion.HudEnabled();
+                dsCompanion.SetHud(cfg.pdHud);
+                cfg.Save(opt.config);
+                break;
+            case M_PD_WILD:
+                cfg.pdWildOff = !dsCompanion.WildOffEnabled();
+                dsCompanion.SetWildOff(cfg.pdWildOff);
+                cfg.Save(opt.config);
+                break;
+            case M_PD_AUTORUN:
+                cfg.pdAutoRun = !dsCompanion.AutoRunEnabled();
+                dsCompanion.SetAutoRun(cfg.pdAutoRun);
+                cfg.Save(opt.config);
+                break;
+#endif
             case M_CONTROLS:
                 capturing = -1;
                 // (The keyboard's keys shown first when no controller is connected.)
@@ -7462,11 +7756,19 @@ int main(int argc, char** argv)
         if (menu.open && menuPage == PAGE_RA && !raTyping && frame % 20 == 0) buildMenu();
 
         bool paused = menu.open;
+#ifdef SSR_POKEDAISY
+        if (dsCompanion.CompanionOpen()) paused = true;
+        if (dsCompanion.AnyMenuOpen()) keys = 0;
+#endif
         speed = 1;
         ffRefreshes = 1;
         SmButtons::S().clock = frame;
         SmButtons::S().on = cfg.battleButtons == 4;
-        if (!paused && !swallowMenuButtons)
+        if (!paused && !swallowMenuButtons
+#ifdef SSR_POKEDAISY
+            && !dsCompanion.AnyMenuOpen()
+#endif
+        )
         {
             if (saveEdge) saveQuick();
             if (loadEdge) loadQuick();
@@ -8459,6 +8761,44 @@ int main(int argc, char** argv)
                     if (skipFrames % 30 == 0) fprintf(stderr, "[ss] frame %u: NO INFO NEEDED chosen on the new game's first menu\n", frame);
                 }
             }
+#ifdef SSR_POKEDAISY
+            if (dsCompanion.AnyMenuOpen())
+            {
+                keys = 0;
+                touching = false;
+            }
+            else if (dsCompanion.Supported())
+            {
+                if (cfg.battleButtons == 5)
+                {
+                    const u32* botFb = nds->GPU.Framebuffer[nds->GPU.FrontBuffer][1 - topUnitOf()].get();
+                    const PdDs::BattleTouchResult btap = dsCompanion.TickBattle(
+                        nds->MainRAM, (size_t)nds->MainRAMMask + 1u, botFb, true,
+                        pdBattleDx, pdBattleDy, pdBattleAccept, pdBattleBack);
+                    if (dsCompanion.BattleStripActive())
+                    {
+                        // PokeDaisy's Battle Strip owns D-pad/A/B and drives the DS touch panel directly.
+                        keys &= ~((1u << KEY_A) | (1u << KEY_B) | (1u << KEY_RIGHT) | (1u << KEY_LEFT) |
+                                  (1u << KEY_UP) | (1u << KEY_DOWN));
+                        if (btap.down)
+                        {
+                            touching = true;
+                            touchX = btap.x;
+                            touchY = btap.y;
+                        }
+                    }
+                }
+                else
+                {
+                    dsCompanion.TickBattle(nds->MainRAM, (size_t)nds->MainRAMMask + 1u, nullptr, false, 0, 0, false, false);
+                }
+                if (dsCompanion.AutoRunEnabled() && pdPrevOverworld && !pdPrevBattle)
+                {
+                    const uint32_t dirMask = (1u << KEY_RIGHT) | (1u << KEY_LEFT) | (1u << KEY_UP) | (1u << KEY_DOWN);
+                    if (keys & dirMask) keys ^= (1u << KEY_B);
+                }
+            }
+#endif
             nds->SetKeyMask(~keys & 0xFFF);
             if (touching) nds->TouchScreen((u16)touchX, (u16)touchY);
             else nds->ReleaseScreen();
@@ -9032,6 +9372,28 @@ int main(int argc, char** argv)
             audioWasFastForward = audioFastForward;
         }
         const bool inBattle = std::strncmp(scene.name, "battle", 6) == 0;
+#ifdef SSR_POKEDAISY
+        const bool pdInBattleNow = inBattle ||
+            (funcWatchOn && (funcWatch.Ran(bw2.battle, 2) || funcWatch.Ran(pt.battle, 2)));
+        const bool pdOnOverworldNow = !menu.open && !pdInBattleNow &&
+            (!strcmp(scene.name, "top") || !strcmp(scene.name, "underground")) &&
+            (funcWatchOn ? (scene.wide || (pt.on && funcWatch.Ran(pt.field, 16))) : fieldActive());
+        pdPrevOverworld = pdOnOverworldNow;
+        pdPrevBattle = pdInBattleNow;
+        if (!paused && dsCompanion.Supported())
+        {
+            dsCompanion.Tick(nds->MainRAM, (size_t)nds->MainRAMMask + 1u, pdInBattleNow, !pdOnOverworldNow, pdActions);
+            if (cfg.pdHud != dsCompanion.HudEnabled() ||
+                cfg.pdAutoRun != dsCompanion.AutoRunEnabled() ||
+                cfg.pdWildOff != dsCompanion.WildOffEnabled())
+            {
+                cfg.pdHud = dsCompanion.HudEnabled();
+                cfg.pdAutoRun = dsCompanion.AutoRunEnabled();
+                cfg.pdWildOff = dsCompanion.WildOffEnabled();
+                cfg.Save(opt.config);
+            }
+        }
+#endif
         if (speed > 1 && inBattle != ffInBattle && !ffAudio.Empty())
         {
             ffAudio.Clear();
@@ -9774,6 +10136,9 @@ int main(int argc, char** argv)
             job.merged = merged;
             job.overlayUsed = overlayUsed;
             job.hudUsed = hudUsed;
+#ifdef SSR_POKEDAISY
+            job.pdOverworld = pdOnOverworldNow;
+#endif
             job.wantShot = wantShot && opt.windowShots;
             job.frameNo = frame;
             job.outW = outW;
@@ -9898,6 +10263,9 @@ int main(int argc, char** argv)
             SDL_CloseAudioDevice(audio);
         }
         exitStep("SDL");
+#ifdef SSR_POKEDAISY
+        dsCompanion.Unload();
+#endif
         SDL_Quit();
     }
 #ifdef __SWITCH__

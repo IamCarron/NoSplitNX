@@ -557,8 +557,9 @@ void RunCheck(bool quiet)
         Set(quiet ? State::Idle : State::Failed, quiet ? "CHECK" : "NO CONNECTION TO GITHUB");
         return;
     }
+    const bool includeBetas = IncludeBetas();
     Release r;
-    if (!FindRelease(body, asset, DownloadPrefix(), r, error))
+    if (!FindRelease(body, asset, DownloadPrefix(), r, error, includeBetas))
     {
         fprintf(stderr, "[update] %s\n", error.c_str());
         Set(State::UpToDate, "UP TO DATE");
@@ -569,8 +570,9 @@ void RunCheck(bool quiet)
     if (!r.sumsUrl.empty())
     {
         std::string sums;
+        const std::string& sumAsset = r.asset.empty() ? std::string(asset) : r.asset;
         if (Get(r.sumsUrl, sums, error))
-        { digest = ParseSums(sums)[asset]; remoteBuild = ParseBuilds(sums)[asset]; }
+        { digest = ParseSums(sums)[sumAsset]; remoteBuild = ParseBuilds(sums)[sumAsset]; }
         else fprintf(stderr, "[update] SHA256SUMS.txt: %s\n", error.c_str());
     }
     fprintf(stderr, "[update] newest %s: %s (%s), sha256 %s\n", asset, r.tag.c_str(), r.url.c_str(),
@@ -604,6 +606,8 @@ void RunCheck(bool quiet)
         S().release = r;
         S().digest = digest;
         S().status.page = r.page;
+        S().status.tag = r.tag;
+        S().status.prerelease = r.prerelease;
         S().status.canInstall = canInstall;
         S().status.currentBuild = (long long)SSR_BUILT_AT;
         S().status.availableBuild = remoteBuild > 0 ? remoteBuild : r.updated;
@@ -968,15 +972,25 @@ long long ParseTime(const std::string& iso)
 }
 
 bool FindRelease(const std::string& json, const std::string& asset, const std::string& urlPrefix, Release& out,
-                 std::string& error)
+                 std::string& error, bool includeBetas)
 {
     Json root;
     JsonReader rd{ json.data(), json.data() + json.size() };
     if (!rd.Value(root, 0) || root.type != Json::Array) { error = "not a list of releases"; return false; }
+    // Beta pre-releases may ship under a "-beta" asset name (e.g. nosplitnx-switch-beta.zip) so
+    // older stable installs that did not filter prerelease flags never pull a beta by mistake.
+    std::string betaAsset;
+    if (includeBetas)
+    {
+        const size_t dot = asset.rfind('.');
+        if (dot != std::string::npos) betaAsset = asset.substr(0, dot) + "-beta" + asset.substr(dot);
+    }
     bool found = false;
     for (const Json& rel : root.items)
     {
         if (rel.type != Json::Object || rel.True("draft")) continue;
+        const bool isPre = rel.True("prerelease");
+        if (isPre && !includeBetas) continue;
         const Json* assets = rel.Get("assets");
         if (!assets || assets->type != Json::Array) continue;
         Release r;
@@ -984,7 +998,8 @@ bool FindRelease(const std::string& json, const std::string& asset, const std::s
         {
             const std::string name = a.Str("name"), url = a.Str("browser_download_url");
             if (url.compare(0, urlPrefix.size(), urlPrefix) != 0) continue;
-            if (name == asset && a.Num("size") > 0)
+            const bool matchAsset = (name == asset) || (includeBetas && !betaAsset.empty() && name == betaAsset);
+            if (matchAsset && a.Num("size") > 0)
             {
                 r.asset = name;
                 r.url = url;
@@ -995,6 +1010,7 @@ bool FindRelease(const std::string& json, const std::string& asset, const std::s
         if (r.url.empty() || (found && r.updated <= out.updated)) continue;
         r.page = rel.Str("html_url");
         r.tag = rel.Str("tag_name");
+        r.prerelease = isPre;
         out = r;
         found = true;
     }
@@ -1058,6 +1074,28 @@ void Init(const std::string& programDir, const std::string& dataDir, const std::
 void Check(bool quiet)
 {
     Spawn([](bool q) { RunCheck(q); }, quiet);
+}
+
+bool IncludeBetas()
+{
+    const std::string cfg = ReadFile(SettingsPath());
+    std::string v = ReadCfgValue(cfg, "update_channel");
+    for (char& c : v) c = (char)tolower((unsigned char)c);
+    return v == "beta";
+}
+
+void ResetCheck()
+{
+    std::lock_guard<std::mutex> l(S().lock);
+    if (S().busy) return;
+    S().status.state = State::Idle;
+    S().status.text = "CHECK";
+    S().status.page.clear();
+    S().status.tag.clear();
+    S().status.prerelease = false;
+    S().status.canInstall = false;
+    S().status.availableBuild = 0;
+    S().status.serial++;
 }
 
 std::string Choose()

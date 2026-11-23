@@ -401,6 +401,7 @@ struct Game
     // A hack whose widescreen patch doesn't fit (why says what is in the way): tried all the same,
     // unless the player chose the GBA's own shape (ASPECT RATIO 3:2 or 4:3).
     bool forced = false;
+    bool isGb = false;     // Game Boy / Game Boy Color ROM (.gb / .gbc)
 };
 
 // A save the player put beside the ROM (or beside a hack's patch), with the ROM's name.
@@ -420,12 +421,77 @@ inline bool LooksLikeGba(const std::vector<uint8_t>& rom)
 {
     return rom.size() >= 0x200 && rom.size() <= (32u << 20) && rom[0xB2] == 0x96;
 }
+inline bool LooksLikeGb(const std::vector<uint8_t>& rom)
+{
+    if (rom.size() < 0x8000 || rom.size() > (8u << 20)) return false;
+    static const uint8_t kLogo[8] = { 0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B };
+    return memcmp(rom.data() + 0x104, kLogo, sizeof kLogo) == 0;
+}
+struct KnownGb
+{
+    uint32_t crc;
+    const char* key;
+    const char* name;
+    uint32_t colour;
+    bool hack;
+};
+inline const std::vector<KnownGb>& KnownGbGames()
+{
+    static const std::vector<KnownGb> k = {
+        { 0x9F7FDD53u, "red", "POKEMON RED", 0xFFC8382Au, false },
+        { 0xD6DA8A1Au, "blue", "POKEMON BLUE", 0xFF2B60C8u, false },
+        { 0x7D527D62u, "yellow", "POKEMON YELLOW", 0xFFD9AE28u, false },
+        { 0x964B7A10u, "yellowes", "POKEMON EDICION AMARILLA", 0xFFD9AE28u, false },
+        { 0x7A01E45Au, "yellowde", "POKEMON GELBE EDITION", 0xFFD9AE28u, false },
+        { 0xD03426E9u, "yellowfr", "POKEMON VERSION JAUNE", 0xFFD9AE28u, false },
+        { 0x8B56FE33u, "yellowit", "POKEMON VERSIONE GIALLA", 0xFFD9AE28u, false },
+        { 0x6BDE3C3Eu, "gold", "POKEMON GOLD", 0xFFD4A02Au, false },
+        { 0x8AD48636u, "silver", "POKEMON SILVER", 0xFF8EA4BEu, false },
+        { 0x3358E30Au, "crystal", "POKEMON CRYSTAL", 0xFF4CA4D8u, false },
+        { 0xEE6F5188u, "crystal", "POKEMON CRYSTAL", 0xFF4CA4D8u, false },
+        { 0xBB6DD80Cu, "crystal", "POKEMON CRYSTAL", 0xFF4CA4D8u, false },
+        { 0x616D85DEu, "crystalde", "POKEMON KRISTALL", 0xFF4CA4D8u, false },
+        { 0xE7D07A3Fu, "yellowlegacy", "POKEMON YELLOW LEGACY", 0xFFD9AE28u, true },
+        { 0x12E97FB4u, "crystallegacy", "POKEMON CRYSTAL LEGACY", 0xFF4CA4D8u, true },
+        { 0x17617CDEu, "crystalclear", "POKEMON CRYSTAL CLEAR", 0xFF3E94C8u, true },
+        { 0x58F40DE1u, "crystalclear", "POKEMON CRYSTAL CLEAR", 0xFF3E94C8u, true },
+        { 0x5AF9A949u, "crystalclear", "POKEMON CRYSTAL CLEAR", 0xFF3E94C8u, true },
+        { 0xFC33D126u, "crystalclear", "POKEMON CRYSTAL CLEAR", 0xFF3E94C8u, true },
+    };
+    return k;
+}
 inline std::string KeyFromFile(const std::string& file)
 {
     std::string k;
     for (char c : Lower(file.substr(0, file.rfind('.'))))
         k += isalnum((unsigned char)c) ? c : '-';
     return k.empty() ? "game" : k;
+}
+
+inline void IdentifyGb(Game& g, const std::vector<uint8_t>& rom)
+{
+    g.isGb = true;
+    g.sha1 = Sha1(rom);
+    g.crc = doCrc32(rom.data(), rom.size());
+    g.patch.clear();
+    g.forced = false;
+    g.why.clear();
+    for (const KnownGb& k : KnownGbGames())
+    {
+        if (g.crc == k.crc)
+        {
+            g.known = !k.hack;
+            g.key = k.key;
+            g.name = k.name;
+            g.colour = k.colour;
+            return;
+        }
+    }
+    g.known = false;
+    g.key = KeyFromFile(g.fileName);
+    g.name = g.fileName.substr(0, g.fileName.rfind('.'));
+    for (char& c : g.name) c = c == '_' ? ' ' : (char)toupper((unsigned char)c);
+    g.colour = EndsWith(g.fileName, ".gbc") ? 0xFF4C8EC4u : 0xFF4C9A6Eu;
 }
 
 inline uint32_t PatchColour(const char* name)
@@ -644,8 +710,8 @@ struct ScanCache
                 if (t == std::string::npos) break;
                 a = t + 1;
             }
-            // (An older list's lines: looked at again. Version 6 also stores pre-wide CRC-32 for PokeDaisy WIDE.)
-            if (f.size() != 14 || f[13] != "6") continue;
+            // (An older list's lines: looked at again. Version 7 also stores isGb for GB/GBC ROMs.)
+            if (f.size() != 15 || f[14] != "7") continue;
             Game g;
             g.rom = f[1];
             g.ips = f[2];
@@ -659,6 +725,7 @@ struct ScanCache
             g.known = f[10] == "1";
             g.forced = f[11] == "1";
             g.crc = (uint32_t)strtoul(f[12].c_str(), nullptr, 16);
+            g.isGb = f[13] == "1";
             entries.push_back({ f[0], g });
             used.push_back(false);
         }
@@ -701,18 +768,18 @@ struct ScanCache
             snprintf(crcHex, sizeof crcHex, "%08X", (unsigned)g.crc);
             out += clean(e.first) + "\t" + clean(g.rom) + "\t" + clean(g.ips) + "\t" + clean(g.fileName) + "\t" + clean(g.key) +
                    "\t" + clean(g.name) + "\t" + g.sha1 + "\t" + g.patch + "\t" + clean(g.why) + "\t" + colour + "\t" +
-                   (g.known ? "1" : "0") + "\t" + (g.forced ? "1" : "0") + "\t" + crcHex + "\t6\n";
+                   (g.known ? "1" : "0") + "\t" + (g.forced ? "1" : "0") + "\t" + crcHex + "\t" + (g.isGb ? "1" : "0") + "\t7\n";
         }
         WriteFile(path, std::vector<uint8_t>(out.begin(), out.end()));
         changed = false;
     }
 };
 
-// Every game in the roms folder: .gba files, and hacks as patches (.ips; with romhacks.h also
+// Every game in the roms folder: .gba, .gb and .gbc files, and hacks as patches (.ips; with romhacks.h also
 // .ups, .bps, .xdelta) put on one of the games found here (Ultra Violet's .ips on FireRed 1.0).
 inline std::vector<Game> Scan(const std::string& romsDir, const std::string& savesDir, const std::string& cacheFile = "")
 {
-    std::vector<std::string> gba, ips;
+    std::vector<std::string> gba, gbFiles, ips;
     if (DIR* d = opendir(romsDir.c_str()))
     {
         while (dirent* e = readdir(d))
@@ -720,11 +787,13 @@ inline std::vector<Game> Scan(const std::string& romsDir, const std::string& sav
             const std::string n = e->d_name;
             if (n.empty() || n[0] == '.') continue;
             if (EndsWith(n, ".gba") || EndsWith(n, ".agb") || EndsWith(n, ".bin")) gba.push_back(n);
+            else if (EndsWith(n, ".gb") || EndsWith(n, ".gbc")) gbFiles.push_back(n);
             else if (IsPatchFile(n)) ips.push_back(n);
         }
         closedir(d);
     }
     std::sort(gba.begin(), gba.end());
+    std::sort(gbFiles.begin(), gbFiles.end());
     std::sort(ips.begin(), ips.end());
     std::vector<Game> games;
     std::vector<Game> bases;    // (known base ROMs tried for any patch including IPS)
@@ -750,6 +819,23 @@ inline std::vector<Game> Scan(const std::string& romsDir, const std::string& sav
         {
             if (g.known) bases.push_back(g);
             allBases.push_back(g);
+        }
+        games.push_back(g);
+    }
+    for (const std::string& n : gbFiles)
+    {
+        Game g;
+        g.rom = romsDir + "/" + n;
+        g.fileName = n;
+        const std::string stamp = ScanCache::Stamp(g.rom);
+        if (const Game* c = cache.Find(stamp))
+            g = *c;
+        else
+        {
+            std::vector<uint8_t> rom;
+            if (!ReadFile(g.rom, rom, 8 << 20) || !LooksLikeGb(rom)) continue;
+            IdentifyGb(g, rom);
+            cache.Put(stamp, g);
         }
         games.push_back(g);
     }

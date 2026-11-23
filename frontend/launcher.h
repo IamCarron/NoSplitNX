@@ -50,8 +50,8 @@ inline void ModernText(Canvas& c, int x, int y, const std::string& text, int tar
 }
 
 // The consoles the list has games of, in the order its sections and tabs come in.
-enum Platform { DS, GBA, PLATFORMS };
-inline const char* PlatformName(int p) { return p == DS ? "DS" : "GBA"; }
+enum Platform { DS, GBA, GB, PLATFORMS };
+inline const char* PlatformName(int p) { return p == DS ? "DS" : p == GBA ? "GBA" : "GB/GBC"; }
 // The tabs along the top: ALL (every section, each under its console's heading), then one per
 // console.
 constexpr int TABS = 1 + PLATFORMS;
@@ -853,15 +853,16 @@ inline void DrawPhysicalCartridge(Canvas& c, int cx, int cy, int cw, int ch, int
                                   const std::string& code, const std::string& name, int s, int iconScale)
 {
     const bool isGba = (platform == GBA);
+    const bool isGb = (platform == GB);
     const int rad = std::max(3, 3 * s);
 
     // Drop shadow behind cartridge body
     c.ShadowRound(cx, cy, cw, ch, rad, s, 85);
 
-    // Molded cartridge shell (Dark charcoal for DS, Slate purple-grey for GBA)
-    const uint32_t shellTop = isGba ? 0xFF302B40 : 0xFF2B3548;
-    const uint32_t shellBot = isGba ? 0xFF1E1A2B : 0xFF1A2230;
-    const uint32_t shellBorder = isGba ? 0xFF564B73 : 0xFF475874;
+    // Molded cartridge shell (Dark charcoal for DS, Slate purple-grey for GBA, Emerald-slate for GB/GBC)
+    const uint32_t shellTop = isGba ? 0xFF302B40 : isGb ? 0xFF233834 : 0xFF2B3548;
+    const uint32_t shellBot = isGba ? 0xFF1E1A2B : isGb ? 0xFF142420 : 0xFF1A2230;
+    const uint32_t shellBorder = isGba ? 0xFF564B73 : isGb ? 0xFF427864 : 0xFF475874;
     c.FillGradV(cx, cy, cw, ch, shellTop, shellBot, rad);
     c.OutlineRound(cx, cy, cw, ch, rad, 1, shellBorder);
 
@@ -894,9 +895,9 @@ inline void DrawPhysicalCartridge(Canvas& c, int cx, int cy, int cw, int ch, int
 
     // Coloured console header band at the top of the sticker (soft matte tones to avoid colour clashes)
     const int hdrH = std::max(6, 5 * s);
-    const uint32_t hdrCol = isGba ? 0xFF5D538Au : 0xFF2F698Cu;
+    const uint32_t hdrCol = isGba ? 0xFF5D538Au : platform == GB ? 0xFF287D64u : 0xFF2F698Cu;
     c.FillRound(stX + s, stY + s, stW - 2 * s, hdrH, std::max(1, stRad - 1), hdrCol);
-    const char* hdrText = isGba ? "GAME BOY" : "NINTENDO DS";
+    const char* hdrText = (isGba || platform == GB) ? "GAME BOY" : "NINTENDO DS";
     const int hdrFontH = std::max(10, 3 * s + 1);
     const int htw = ModernTextWidth(hdrText, hdrFontH);
     if (htw < stW - 2 * s)
@@ -978,14 +979,21 @@ inline uint32_t GameAccentTint(const std::string& name, int platform)
     if (lo.find("leafgreen") != std::string::npos || lo.find("hoja") != std::string::npos || lo.find("vert") != std::string::npos || lo.find("blatt") != std::string::npos) return 0xFF5EAA7B;
     if (lo.find("diamond") != std::string::npos || lo.find("diamant") != std::string::npos) return 0xFF6EA8DE;
     if (lo.find("pearl") != std::string::npos || lo.find("perla") != std::string::npos || lo.find("perle") != std::string::npos) return 0xFFC78FB2;
-    return platform == GBA ? 0xFF8C7DB5 : 0xFF5CA4C9;
+    if (lo.find("yellow") != std::string::npos || lo.find("amarill") != std::string::npos || lo.find("jaune") != std::string::npos || lo.find("gelb") != std::string::npos) return 0xFFD9AE28;
+    if (lo.find("crystal") != std::string::npos || lo.find("cristal") != std::string::npos || lo.find("kristall") != std::string::npos) return 0xFF4CA4D8;
+    if (lo.find("gold") != std::string::npos) return 0xFFD4A02A;
+    if (lo.find("silver") != std::string::npos) return 0xFF94A3B8;
+    if (lo.find("blue") != std::string::npos || lo.find("azul") != std::string::npos) return 0xFF3B74D4;
+    if (lo.find("red") != std::string::npos) return 0xFFD15B5B;
+    return platform == GBA ? 0xFF8C7DB5 : platform == GB ? 0xFF56A87C : 0xFF5CA4C9;
 }
 
 inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& g, int s, uint32_t accent, int gameIdx = 0, int totalGames = 0, const float* musicBands = nullptr)
 {
     const bool isGba = (g.platform == GBA);
+    const bool isGb = (g.platform == GB);
     const uint32_t gameTint = GameAccentTint(g.name, g.platform);
-    const uint32_t baseTheme = accent ? accent : (isGba ? 0xFF8C7DB5u : 0xFF5CA4C9u);
+    const uint32_t baseTheme = accent ? accent : (isGba ? 0xFF8C7DB5u : isGb ? 0xFF56A87Cu : 0xFF5CA4C9u);
     const uint32_t platAccent = MixArgb(baseTheme, gameTint ? gameTint : baseTheme, 55, 100);
     const float t = AnimTime();
 
@@ -1025,7 +1033,7 @@ inline void DrawDsiTopBanner(Canvas& c, int x, int y, int w, int h, const Game& 
     const int rpx = x + w - rightPanelW - 4 * s;
     const int maxTextW = w - (contentX - x) - rightPanelW - 8 * s;
 
-    const std::string subHeader = isGba ? "GAME BOY ADVANCE" : "NINTENDO DS";
+    const std::string subHeader = isGba ? "GAME BOY ADVANCE" : g.platform == GB ? "GAME BOY / COLOR" : "NINTENDO DS";
     const int subFontH = std::max(14, 5 * s);
 
     std::string title = TitleCase(g.name);
@@ -1140,9 +1148,9 @@ inline void DrawCartridgeCase(Canvas& c, int x, int y, int tileW, int tileH, int
     c.Fill(x + rad, y + s, tileW - 2 * rad, std::max(1, s / 2 + 1), (accent & 0x00FFFFFFu) | (sel ? 0x88000000u : 0x42000000u));
 
     // Understated frosted platform badge in top-left
-    const char* badge = isGba ? "GBA" : "NDS";
-    const uint32_t badgeBg = isGba ? 0x552E2A4Au : 0x551B324Au;
-    const uint32_t badgeBorder = isGba ? 0x997B6FA6u : 0x995B8FB8u;
+    const char* badge = isGba ? "GBA" : platform == GB ? "GB/C" : "NDS";
+    const uint32_t badgeBg = isGba ? 0x552E2A4Au : platform == GB ? 0x551F3C30u : 0x551B324Au;
+    const uint32_t badgeBorder = isGba ? 0x997B6FA6u : platform == GB ? 0x9958A882u : 0x995B8FB8u;
     const uint32_t badgeCol = isGba ? 0xFFDCD6F7u : 0xFFD4E8F8u;
     const int badgeH = 12 * s;
     const int badgeFontH = std::max(14, 5 * s + 1);
@@ -1712,12 +1720,12 @@ inline void Draw(Canvas& c, const std::vector<Game>& games, int tab, int selecte
             DrawCartridgeCase(c, x, y, tile, tileH, g.platform, g.hasIcon ? g.icon : nullptr, g.code, g.name, s, g.hasSave, sel);
         }
 
-        // Platform badge (NDS / GBA) on top-left of box art
+        // Platform badge (NDS / GBA / GB/C) on top-left of box art
         if (!g.art.empty())
         {
-            const char* platText = g.platform == GBA ? "GBA" : "NDS";
-            const uint32_t platBg = g.platform == GBA ? 0xAA2E2A4A : 0xAA1B324A;
-            const uint32_t platBorder = g.platform == GBA ? 0xCC7B6FA6 : 0xCC5B8FB8;
+            const char* platText = g.platform == GBA ? "GBA" : g.platform == GB ? "GB/C" : "NDS";
+            const uint32_t platBg = g.platform == GBA ? 0xAA2E2A4A : g.platform == GB ? 0xAA1F3C30 : 0xAA1B324A;
+            const uint32_t platBorder = g.platform == GBA ? 0xCC7B6FA6 : g.platform == GB ? 0xCC58A882 : 0xCC5B8FB8;
             const int bW = ModernTextWidth(platText, 11) + 8 * s;
             const int bH = 10 * s;
             const int bx = x + 4 * s, by = y + 4 * s;
@@ -1867,10 +1875,14 @@ inline std::vector<Setting> SettingsList()
     l.push_back({ "!updates", "CHECK FOR UPDATES", { { "", "CHECK" } }, "",
                   "CHECKS GITHUB FOR A NEW VERSION. CHOOSE AGAIN TO INSTALL IT: IT IS CHECKED AGAINST THE RELEASE SHA256SUMS.TXT "
                   "AND THE OLD .NRO IS KEPT IN THE UPDATE FOLDER. YOUR ROMS / SAVES AND SETTINGS STAY AS THEY ARE." });
+    l.push_back({ "update_channel", "UPDATE CHANNEL", { { "stable", "STABLE" }, { "beta", "BETA" } }, "stable",
+                  "STABLE: ONLY FINAL RELEASES. BETA: ALSO RECEIVES PRE-RELEASE BUILDS TO TEST NEW FEATURES EARLY." });
 #elif !defined(__SWITCH__)
     l.push_back({ "!updates", "CHECK FOR UPDATES", { { "", "CHECK" } }, "",
                   "CHECKS GITHUB FOR A NEW VERSION. CHOOSE AGAIN TO INSTALL IT: IT IS CHECKED AGAINST THE RELEASE SHA256SUMS.TXT "
                   "AND THE OLD VERSION IS KEPT IN THE UPDATE FOLDER. YOUR ROMS / SAVES AND SETTINGS STAY AS THEY ARE." });
+    l.push_back({ "update_channel", "UPDATE CHANNEL", { { "stable", "STABLE" }, { "beta", "BETA" } }, "stable",
+                  "STABLE: ONLY FINAL RELEASES. BETA: ALSO RECEIVES PRE-RELEASE BUILDS TO TEST NEW FEATURES EARLY." });
 #endif
 
 #ifdef __SWITCH__
@@ -1990,7 +2002,7 @@ inline const std::vector<SettingsGroup>& SettingsGroups()
 // Which group an option is in (SettingsGroups).
 inline int GroupOf(const Setting& s)
 {
-    if (s.key && !strcmp(s.key, "!updates")) return 7;
+    if (s.key && (!strcmp(s.key, "!updates") || !strcmp(s.key, "update_channel"))) return 7;
     if (!s.key) return !strcmp(s.name, "KEYS AND BUTTONS") ? 3 : 7;
     if (!strcmp(s.key, "list_lang")) return 0;
     if (!strcmp(s.key, "!covers")) return 5;

@@ -56,16 +56,17 @@ if(NOT EXISTS "${GBAW_MGBA}/include/mgba/internal/gba/video.h")
     message(FATAL_ERROR "No mGBA source at ${GBAW_MGBA}: run setup.sh first")
 endif()
 
-# mGBA: only the GBA core and what it needs to run a game; no frontends, scripting, debuggers
+# mGBA: the GBA and GB/GBC cores and what they need to run a game; no frontends, scripting, debuggers
 # or extra libraries (so the Windows build needs nothing but SDL2).
 foreach(opt BUILD_QT BUILD_SDL BUILD_LIBRETRO BUILD_GL BUILD_GLES2 BUILD_GLES3 BUILD_SHARED BUILD_PYTHON
             BUILD_TEST BUILD_SUITE BUILD_CINEMA BUILD_EXAMPLE BUILD_PERF BUILD_UPDATER BUILD_DOCGEN BUILD_HEADLESS BUILD_ROM_TEST
             USE_FFMPEG USE_LUA USE_SQLITE3 USE_ELF USE_EPOXY USE_DISCORD_RPC USE_LIBZIP USE_MINIZIP USE_ZLIB USE_PNG
-            USE_FREETYPE USE_LZMA USE_EDITLINE USE_JSON_C USE_GDB_STUB ENABLE_GDB_STUB ENABLE_DEBUGGERS ENABLE_SCRIPTING M_CORE_GB)
+            USE_FREETYPE USE_LZMA USE_EDITLINE USE_JSON_C USE_GDB_STUB ENABLE_GDB_STUB ENABLE_DEBUGGERS ENABLE_SCRIPTING)
     set(${opt} OFF CACHE BOOL "" FORCE)
 endforeach()
 set(BUILD_STATIC ON CACHE BOOL "" FORCE)
 set(M_CORE_GBA ON CACHE BOOL "" FORCE)
+set(M_CORE_GB ON CACHE BOOL "" FORCE)
 set(SKIP_GIT ON CACHE BOOL "" FORCE)
 # Nintendo Switch homebrew: built with devkitPro's toolchain file ($DEVKITPRO/cmake/Switch.cmake);
 # mGBA has its own Switch settings (file access, libnx), switched on by SWITCH.
@@ -128,10 +129,29 @@ else()
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_art.py" ${GBAW_ART}
         VERBATIM)
 endif()
-# PokeDaisy's WIDE (frontend/pokedaisy, GPL-3.0): dynamic overworld rebuild from memory for Zoom,
-# Look-Around and ROM hacks without static widescreen patches (built with PK_WIDE_NO_GUARD on Switch).
-set(GBAW_PK_WIDE frontend/pokedaisy/pk_wide.c frontend/pokedaisy/pk_wide_gb_none.c)
-set_source_files_properties(${GBAW_PK_WIDE} PROPERTIES COMPILE_DEFINITIONS PK_WIDE_NO_GUARD)
+# PokeDaisy's WIDE, GB/GBC WIDE, Rewind, Field Actions & Companion bridge (frontend/pokedaisy, GPL-3.0).
+set(GBAW_PK_WIDE
+    frontend/pokedaisy/pk_wide.c
+    frontend/pokedaisy/pk_wide_gb.c
+    frontend/pokedaisy/pk_rewind.c
+    frontend/pokedaisy/pk_gb_field.c
+    frontend/pokedaisy/pk_call.c
+    frontend/pokedaisy/pk_flight.c
+    frontend/pokedaisy/pk_cheats.c)
+set_source_files_properties(frontend/pokedaisy/pk_wide.c PROPERTIES COMPILE_DEFINITIONS PK_WIDE_NO_GUARD)
+set_source_files_properties(frontend/pokedaisy/pk_wide_gb.c PROPERTIES COMPILE_DEFINITIONS "PK_WIDE_NO_GUARD;PK_WIDE_GB_GLOW=1")
+if(TARGET pokedaisy_core)
+    list(APPEND GBAW_PK_WIDE
+        frontend/pokedaisy/fly.c
+        frontend/pokedaisy/flight.c
+        frontend/pokedaisy/flash.c
+        frontend/pokedaisy/wild.c
+        frontend/pokedaisy/field_items.c
+        frontend/pokedaisy/tm_teach.c
+        frontend/pokedaisy/gb_field.c
+        frontend/pokedaisy/polished_field.c
+        frontend/pokedaisy/pd_flight_area.c)
+endif()
 set(GBAW_SOURCES frontend/main.cpp frontend/third_party/xbrz/xbrz.cpp ${GBAW_PK_WIDE} "${CMAKE_CURRENT_BINARY_DIR}/gen/patches.h" "${CMAKE_CURRENT_BINARY_DIR}/gen/art.h")
 get_target_property(GBAW_MGBA_DEFS mgba COMPILE_DEFINITIONS)
 if(GBAW_EMBEDDED)
@@ -143,6 +163,10 @@ if(GBAW_EMBEDDED)
     target_include_directories(gbawide PUBLIC frontend)
     target_include_directories(gbawide PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/gen")
     target_link_libraries(gbawide PRIVATE mgba)
+    if(TARGET pokedaisy_core)
+        target_link_libraries(gbawide PRIVATE pokedaisy_core)
+        target_compile_definitions(gbawide PRIVATE GBAW_POKEDAISY)
+    endif()
     if(TARGET SDL2::SDL2)
         target_link_libraries(gbawide PRIVATE SDL2::SDL2)
     elseif(SDL2_STATIC_INCLUDE_DIRS)

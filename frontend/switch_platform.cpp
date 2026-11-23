@@ -347,7 +347,7 @@ void RomfsClose()
 // build's).
 bool Playable(const Launcher::Game& g)
 {
-    if (g.platform == Launcher::GBA) return true; // (any GBA game plays, with widescreen or without)
+    if (g.platform == Launcher::GBA || g.platform == Launcher::GB) return true; // (any GBA / GB / GBC game plays)
     if (!g.known) return false;
     const char* hackBase = Launcher::HackBaseCode(g.code);
     if (IsGame(g.code, "IPGE") || IsGame(g.code, "IPKE") || (hackBase && (!strcmp(hackBase, "IPGE") || !strcmp(hackBase, "IPKE"))))
@@ -664,6 +664,15 @@ int PickGame(std::vector<Launcher::Game>& games, int selected, const std::string
             downloadCovers = true;
         }
 #ifdef SSR_UPDATER
+        if (key && !strcmp(key, "update_channel"))
+        {
+            Updater::ResetCheck();
+            updateAsked = false;
+            updateSeen = 0;
+            for (auto* list : { &page.items, &page.all })
+                for (Launcher::Setting& st : *list)
+                    if (st.key && !strcmp(st.key, "!updates") && !st.values.empty()) st.values[0].second = "CHECK";
+        }
         // CHECK FOR UPDATES: the work runs on this thread after CHECKING... is on the screen
         // (a second thread here stops the program).
         if (key && !strcmp(key, "!updates") && !updateWork)
@@ -1581,7 +1590,7 @@ bool Start(int& argc, char**& argv)
     // A GBA game (chosen in the list, which started the program again for it, or from its HOME
     // Menu icon): played here, Pokemon GBA Widescreen built in; then the program starts again for
     // the list, as QUIT does for a DS game.
-    if (games[chosen].platform == Launcher::GBA)
+    if (games[chosen].platform == Launcher::GBA || games[chosen].platform == Launcher::GB)
     {
         const Launcher::Game& game = games[chosen];
         GbaWide::Options o;

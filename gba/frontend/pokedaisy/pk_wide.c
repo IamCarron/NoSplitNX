@@ -56,14 +56,13 @@
 #include "pk_wide_games.h"
 #include "pk_coop_emerald.h"   // gPaletteFade, for the co-op partner's colours
 
-// (FullDex: Windows' headers, which mGBA's bring in, make `far` and `near` empty macros; here they are names.)
 #ifdef far
 #undef far
 #endif
 #ifdef near
 #undef near
 #endif
-// (FullDex: mGBA newer than 0.10.5 named these GBA_SIZE_EWRAM and GBA_BASE_PALETTE_RAM.)
+// mGBA newer than 0.10.5 renamed SIZE_WORKING_RAM and BASE_PALETTE_RAM.
 #ifndef SIZE_WORKING_RAM
 #define SIZE_WORKING_RAM GBA_SIZE_EWRAM
 #endif
@@ -88,6 +87,10 @@ static const int32_t FAMILIES[][PK_WIDE_CONFIG_SIZE - PK_WIDE_ADDRS] = {
     // callback1 there), its sFieldCameraOffset is four s16, it has 80 sprites (its snow and rain sit past 64); its SaveBlock1
     // is its own (PK_WIDE_SB1_OFFSETS / _FLAGS_AT).
     [PK_WIDE_FAMILY_MM] = { 512, 0x10, 2, 12, 0xF, 0, 0, -0x17, 4, 4, 0, 0, 0, 6, 2, 1, 80 },
+    // Epsilon Emerald: EX (Emerald's map and tilesets, expansion's objects) whose tilesets keep FireRed's u32 attributes (the
+    // layer type in bits 29-30), still at the Emerald tileset's +0x10: the u16 reading scored 830 of 1000 on its field, this 1000.
+    // Its struct Subsprite is 6 bytes (s16 x, y; a tile offset byte; shape / size / priority in a byte: buildPieces).
+    [PK_WIDE_FAMILY_EX32] = { 512, 0x10, 4, 29, 3, 0, 0, 0x439, 6, 0x23, 0, 0, 0, 6, 3, 0, 64 },
 };
 
 // Every engine row and every ROM row fills its part of the config, no more, no less.
@@ -485,11 +488,6 @@ static void readConnections(struct Snap* s, uint32_t hdr, int w, int h, int mx, 
     }
 }
 
-// FullDex: the camera of the last frame pk_wide_view placed (pk_wide_map_at: which map is under a point of the screen).
-static bool mapCamOk;
-static int mapCamSnap = -1, mapCamX, mapCamY;
-
-int pk_wide_take_fail = -1;   // FullDex test log: where the last snapshot stopped
 static void take(struct Snap* s) {
     badRead = false;
     s->ok = false;
@@ -513,9 +511,9 @@ static void take(struct Snap* s) {
     uint32_t vm = (uint32_t) C[PK_WIDE_VMAP];
     s->vw = s32(vm);
     s->vh = s32(vm + 4);
-    if (s->vw <= 0 || s->vh <= 0 || s->vw > MAX_MAP_DATA || s->vh > MAX_MAP_DATA || s->vw * s->vh > MAX_MAP_DATA) { pk_wide_take_fail = 1; return; }
+    if (s->vw <= 0 || s->vh <= 0 || s->vw > MAX_MAP_DATA || s->vh > MAX_MAP_DATA || s->vw * s->vh > MAX_MAP_DATA) return;
     const uint8_t* cells = mem(r32(vm + 8), (uint32_t) (s->vw * s->vh * 2));
-    if (!cells) { pk_wide_take_fail = 2; return; }
+    if (!cells) return;
     memcpy(s->vmap, cells, (size_t) (s->vw * s->vh * 2));
 
     uint32_t hdr = (uint32_t) C[PK_WIDE_MAP_HEADER];
@@ -528,11 +526,11 @@ static void take(struct Snap* s) {
     bool emeraldLayout = C[PK_WIDE_LAYOUT_VERSIONED] && r8(layout + 0x18) == 0;
     s->split = C[PK_WIDE_PRIMARY_OVERRIDE] && !emeraldLayout ? C[PK_WIDE_PRIMARY_OVERRIDE] : C[PK_WIDE_PRIMARY_METATILES];
     // Sizes from memory are only trusted within reason: nothing below multiplies a garbage one.
-    if (s->width <= 0 || s->height <= 0 || s->width > MAX_MAP_DATA || s->height > MAX_MAP_DATA) { pk_wide_take_fail = 3; return; }
+    if (s->width <= 0 || s->height <= 0 || s->width > MAX_MAP_DATA || s->height > MAX_MAP_DATA) return;
     if (C[PK_WIDE_BORDER_SIZED]) {
         s->bw = (int) r8(layout + 0x18);
         s->bh = (int) r8(layout + 0x19);
-        if (s->bw <= 0 || s->bh <= 0) { pk_wide_take_fail = 4; return; }
+        if (s->bw <= 0 || s->bh <= 0) return;
     }
     // Where fieldmap.c's Fill*Connection puts a connected map's cell (cx, cy) in VMap:
     // SOUTH (offset + 7 + cx, height + 7 + cy), NORTH (offset + 7 + cx, 7 - cHeight + cy),
@@ -552,7 +550,6 @@ static void take(struct Snap* s) {
     s->coordX = s16((uint32_t) C[PK_WIDE_COORD_OFFSET]);
     s->coordY = s16((uint32_t) C[PK_WIDE_COORD_OFFSET_Y]);
     bool ok = !badRead;
-    pk_wide_take_fail = badRead ? 99 : 0;
     takeGhosts(s, sb1, hdr);
     s->ok = ok;   // the ghosts are extras: a bad read among them doesn't sink the map
 }
@@ -816,6 +813,10 @@ static bool vramTorn, vramTornLast;
 static void (*origWriteVRAM)(struct GBAVideoRenderer*, uint32_t);
 static void followWrote(uint32_t address);
 static void partnerWrote(uint32_t address);
+static void menuWrote(uint32_t address);
+// HIDE BATTLE MENU (menuHideBegin): 0 = off, 1 = hidden with the sign's bottom screen lit, 2 = its top; gBattleTypeFlags (EWRAM), 0 = not read.
+static int menuHideMode;
+static uint32_t menuHideTypeFlags;
 #ifdef PK_WIDE_CACHE
 static uint32_t tileWritten[2][2048 / 32];   // BG VRAM's 32-byte tiles written since the margin cache last looked: the
 static int tileSide;                         // game's side, and the one being looked at (the drawing may be on another thread)
@@ -842,6 +843,7 @@ static void hookWriteVRAM(struct GBAVideoRenderer* r, uint32_t address) {
 #endif
     followWrote(address);
     partnerWrote(address);
+    menuWrote(address);
     origWriteVRAM(r, address);
 }
 
@@ -868,7 +870,8 @@ static void tintPalettes(struct GBAVideoRenderer* r, const uint16_t* pal) {
 }
 
 // FOLLOWER (companion/data/Follower.kt): a Pokémon walking a tile behind the player, drawn as one more hardware sprite -
-// a hidden OAM entry, the last 16 OBJ tiles and an OBJ palette slot no shown sprite uses - written as each frame starts
+// a hidden OAM entry (or, in front of the player, one put in before theirs), the last 16 OBJ tiles and an OBJ palette
+// slot no shown sprite uses - written as each frame starts
 // drawing and the game's own bytes put back after its last line, so the game, its save and its states never hold it
 // (a tile the game writes in the meantime keeps the game's). Where it stands is an offset from the player's tile (map
 // connections shift every coordinate), it steps when the player does, eased by the map's own scroll (any speed).
@@ -887,6 +890,10 @@ static int followWhy, followDbg[8];                                        // wh
 static int followOam = -1, followSlot = -1;                  // this frame's OAM entry / palette slot (-1: not drawn)
 static int followShown[2] = { -1, -1 };                  // the last frame's, kept after followEnd put them back (followinfo)
 static uint16_t followSavedOam[4];
+// In front of the player (its feet lower on screen than theirs): put in at the player's first entry, the game's shown
+// entries from there to a hidden one moved down a place for the frame (RIDE ON's way). -1 = the plain free entry.
+static int followRangeFirst = -1, followRangeN;
+static uint16_t followSavedRange[128 * 4];
 static uint8_t followSavedVram[512];
 static uint8_t followDirty[256];                             // halfwords the game wrote over this frame
 
@@ -973,9 +980,11 @@ void pk_wide_extras_reset(void) {
     rideOam = rideSlot = rideRangeFirst = -1;
     followOn = followHave = false;
     followState = 0;
-    followOam = followSlot = -1;
+    followOam = followSlot = followRangeFirst = -1;
     tintR = tintG = tintB = 256;
     tintShown = false;
+    menuHideMode = 0;
+    menuHideTypeFlags = 0;
 }
 
 static void followBegin(struct GBAVideoRenderer* r);
@@ -1058,6 +1067,9 @@ void pk_wide_lines(int on) {
 // pk_wide_later: the cached view's drawing, running beside the next frame until that frame's lines start to be recorded.
 static void (*laterJoin)(void);
 
+static void menuHideBegin(struct GBAVideoRenderer* r);
+static void menuHideEnd(struct GBAVideoRenderer* r);
+
 static void hookDrawScanline(struct GBAVideoRenderer* r, int y) {
     if (y == 0) {
         if (laterJoin) laterJoin();
@@ -1093,9 +1105,9 @@ static void hookDrawScanline(struct GBAVideoRenderer* r, int y) {
         }
         lineOamOf[y] = (uint8_t) (lineOamN - 1);
     }
-    if (y == 0) { followBegin(r); rideBegin(r); partnerBegin(r); flyBegin(r); }
+    if (y == 0) { followBegin(r); rideBegin(r); partnerBegin(r); flyBegin(r); menuHideBegin(r); }
     origDrawScanline(r, y);
-    if (y == PK_WIDE_H - 1) { flyEnd(r); partnerEnd(r); rideEnd(r); followEnd(r); }
+    if (y == PK_WIDE_H - 1) { menuHideEnd(r); flyEnd(r); partnerEnd(r); rideEnd(r); followEnd(r); }
 }
 
 static void hookScanlines(struct GBA* gba) {
@@ -1157,9 +1169,6 @@ static inline void useLive(void) {
 }
 static int bgPrio[4];
 static uint32_t bgChar[4], bgScreen[4];
-// (FullDex: a BG 512 x 256, its map two screen blocks side by side - FullDex's widescreen patches widen the field's
-// BG1-3 this way to draw the extra columns.)
-static bool bgWide[4];
 static int order3[3];   // BG1-3, front first
 
 static void readBgs(void) {
@@ -1168,7 +1177,6 @@ static void readBgs(void) {
         bgPrio[b] = cnt & 3;
         bgChar[b] = ((cnt >> 2) & 3) * 0x4000u;
         bgScreen[b] = ((cnt >> 8) & 31) * 0x800u;
-        bgWide[b] = (cnt & 0xC000) == 0x4000;
     }
     int n = 0;
     for (int p = 0; p < 4; p++)
@@ -1212,13 +1220,13 @@ static bool windowsUniform(int sx, int n) {
     return true;
 }
 
-/** The field's BG setup: mode 0, BG1-3 on and 256x256 (FullDex: or 512x256, its widescreen patches' field). Windows
- * (Flash's dark circle, battle transitions' wedges) and per-line scroll are drawn as the game sets them, line by line. */
+/** The field's BG setup: mode 0, BG1-3 on and 256x256. Windows (Flash's dark circle, battle
+ * transitions' wedges) and per-line scroll are drawn as the game sets them, line by line. */
 static bool fieldDisplay(void) {
     uint16_t disp = io(0);
     if ((disp & 7) != 0 || (disp & 0x0E00) != 0x0E00) return false;
     for (int b = 1; b <= 3; b++)
-        if ((io(0x08 + 2 * b) & 0xC000) > 0x4000) return false;
+        if (io(0x08 + 2 * b) & 0xC000) return false;
     return true;
 }
 
@@ -1241,13 +1249,11 @@ static int score(const struct Snap* s, int cx, int cy, int hofs, int vofs) {
         for (int sx = 4; sx < 240; sx += 8) {
             int ox = (signed9(lh - hofs) + sx + 256) & 0xFF;
             if (ox >= PK_WIDE_W) continue;
-            int rx = ((lh + sx) >> 3) & 63, mx = cx + ox;
+            int rx = ((lh + sx) >> 3) & 31, mx = cx + ox;
             int mid = block(s, mx >> 4, my >> 4);
             int q = ((my >> 3) & 1) * 2 + ((mx >> 3) & 1);
             for (int b = 1; b <= 3; b++) {
-                // (FullDex: a 512-wide BG's columns 32-63 are in the next screen block.)
-                int bx = bgWide[b] ? rx : rx & 31;
-                uint32_t off = bgScreen[b] + (bx >= 32 ? 0x800u : 0) + 2 * (uint32_t) (ry * 32 + (bx & 31));
+                uint32_t off = bgScreen[b] + 2 * (uint32_t) (ry * 32 + rx);
                 if (metatile(s, mid, b)[q] == le16(vram + off)) hit++;
                 else if (--missLimit < 0) return 0;
                 n++;
@@ -1462,8 +1468,10 @@ struct Piece {
 };
 
 // Weather (field_weather.h's GFXTAG_*: 0x1201 horizontal fog .. 0x1206 rain) is screen-space sprites the
-// game lays only over its own 240 px: fog, ash and sandstorm as 64 px grids, rain and bubbles at random.
-// Repeated 256 px either way (a multiple of the grids' 64) they go on seamlessly into the margins.
+// game lays only over its own 240 x 160: fog, ash and sandstorm as 64 px grids, rain and bubbles at random.
+// Repeated 256 px each way (a multiple of the grids' 64, and OAM's own wrap) they go on seamlessly into the
+// margins: sideways, and above and below too, which ZOOM shows (GitHub #607: Route 113's ash stopped 32 px over
+// the frame with the view zoomed out, headless on Emerald).
 #define WEATHER_TAG_FIRST 0x1201
 #define WEATHER_TAG_LAST 0x1206
 #define WEATHER_REPEAT 256
@@ -1474,7 +1482,9 @@ static const uint8_t OBJ_DIMS[3][4][2] = {
     { { 8, 16 }, { 8, 32 }, { 16, 32 }, { 32, 64 } },
 };
 
-static struct Piece pieces[2][256];
+// Room for a frame's sprites (128 OAM entries, subsprites) and each weather sprite's 8 copies around it.
+#define PIECES_MAX 512
+static struct Piece pieces[2][PIECES_MAX];
 static int npieces[2] = { 0, 0 };
 static int shown = 0;   // pieces[shown]: the list drawn (the last one the frame's OAM agreed with)
 
@@ -1502,7 +1512,7 @@ static int buildPieces(const struct Snap* s, struct Piece* out) {
         if ((flags & 1) && (flags & (1 << 14)) && !(flags & (1 << 13)) && id < nspr) offscreen[id] = true;
     }
     int n = 0;
-    for (int k = 0; k < nspr && n < 256; k++) {
+    for (int k = 0; k < nspr && n < PIECES_MAX; k++) {
         int id = s->order[k];
         if (id >= nspr) continue;
         const uint8_t* sp = s->sprites + 0x44 * id;
@@ -1544,26 +1554,34 @@ static int buildPieces(const struct Snap* s, struct Piece* out) {
             n++;
             uint32_t tmpl = (uint32_t) sp[0x14] | (uint32_t) sp[0x15] << 8 | (uint32_t) sp[0x16] << 16 | (uint32_t) sp[0x17] << 24;
             uint32_t tag = !(fl & 2) && tmpl ? r16(tmpl) : 0;   // struct SpriteTemplate starts with tileTag
-            for (int k2 = -1; k2 <= 1 && tag >= WEATHER_TAG_FIRST && tag <= WEATHER_TAG_LAST; k2 += 2) {
-                if (n >= 256) break;
-                out[n] = out[n - 1 - (k2 > 0)];
-                out[n].x = x + k2 * WEATHER_REPEAT;
-                out[n].copy = true;
-                n++;
+            if (tag >= WEATHER_TAG_FIRST && tag <= WEATHER_TAG_LAST) {
+                const int o = n - 1;
+                for (int ky = -1; ky <= 1; ky++)
+                    for (int kx = -1; kx <= 1 && n < PIECES_MAX; kx++) {
+                        if (!kx && !ky) continue;
+                        out[n] = out[o];
+                        out[n].x = out[o].x + kx * WEATHER_REPEAT;
+                        out[n].y = out[o].y + ky * WEATHER_REPEAT;
+                        out[n].copy = true;
+                        n++;
+                    }
             }
             continue;
         }
         int bx = x - cvx, by = y - cvy;
         int cnt = (int) r8(table);
-        int ss = C[PK_WIDE_SUBSPRITE_SIZE];   // 4: s8 x, y; 8 (Ruby / Sapphire): u16 x, y, read as s16, + 2 bytes' padding
-        for (int j = 0; j < cnt && n < 256; j++) {
+        // 4: s8 x, y; 8 (Ruby / Sapphire): u16 x, y, read as s16, + 2 bytes' padding; 6 (Epsilon Emerald): s16 x, y, a byte of
+        // tile offset, a byte of shape (bits 0-1) / size (2-3) / priority (4-5) - put into the usual bits here.
+        int ss = C[PK_WIDE_SUBSPRITE_SIZE];
+        for (int j = 0; j < cnt && n < PIECES_MAX; j++) {
             const uint8_t* sub = mem(subs + (uint32_t) (ss * j), (uint32_t) ss);
             if (!sub) break;
-            uint32_t v = le16(sub + ss / 2);   // the shape / size / tile / priority bits
+            uint32_t v = ss == 6 ? (uint32_t) (sub[5] & 0xF) | (uint32_t) sub[4] << 4 | (uint32_t) ((sub[5] >> 4) & 3) << 14
+                                 : le16(sub + ss / 2);   // the shape / size / tile / priority bits
             if ((v & 3) > 2) continue;
             int w = OBJ_DIMS[v & 3][(v >> 2) & 3][0], h = OBJ_DIMS[v & 3][(v >> 2) & 3][1];
-            int sx = ss == 8 ? (int16_t) le16(sub) : (signed char) sub[0];
-            int sy = ss == 8 ? (int16_t) le16(sub + 2) : (signed char) sub[1];
+            int sx = ss >= 6 ? (int16_t) le16(sub) : (signed char) sub[0];
+            int sy = ss >= 6 ? (int16_t) le16(sub + 2) : (signed char) sub[1];
             if (base.hflip) sx = -(sx + w);
             if (base.vflip) sy = -(sy + h);
             out[n] = base;
@@ -1759,12 +1777,14 @@ static uint8_t ringMeta[RING_PX][RING_PX];  // prio << 4 | layer
 struct RingCell {
     int x, y;
     uint32_t stamp;
+    uint32_t looked;   // the cached frame (ringFrame) that last looked at it
     uint16_t e[3];
     const void* f;
     bool stale;
 };
 static struct RingCell ringCells[RING_CELLS][RING_CELLS];
 static uint32_t ringStamp = 1, ringKey;
+static uint32_t ringFrame;   // cached frames drawn (cacheDraw)
 static uint16_t ringPal[256];
 static int cacheMode;                 // 0 off, 1 on, 2 on with no limit on stale cells (the same pixels as the rebuild)
 static bool ringOn;                   // this frame's sprites read the cache
@@ -2718,7 +2738,7 @@ static int playerGraphics(void) {
     int k = playerObject();
     const uint8_t* oe = k < 0 ? NULL : mem(F.objects + 0x24u * (uint32_t) k, 0x24);
     if (!oe) return -1;
-    bool wide = F.family == PK_WIDE_FAMILY_EX || F.family == PK_WIDE_FAMILY_FR_EX;
+    bool wide = F.family == PK_WIDE_FAMILY_EX || F.family == PK_WIDE_FAMILY_FR_EX || F.family == PK_WIDE_FAMILY_EX32;
     return wide ? (int) le16(oe + 4) : oe[5];
 }
 
@@ -2732,7 +2752,7 @@ static int playerGraphics(void) {
  */
 int pk_look_refresh(struct mCore* core, const uint8_t* pal) {
     if (!F.locked || !F.sprites || !F.gfxInfo || !core) return 0;
-    if (F.family == PK_WIDE_FAMILY_EX || F.family == PK_WIDE_FAMILY_FR_EX) return 0;
+    if (F.family == PK_WIDE_FAMILY_EX || F.family == PK_WIDE_FAMILY_FR_EX || F.family == PK_WIDE_FAMILY_EX32) return 0;
     G = (struct GBA*) core->board;
     int k = playerObject();
     const uint8_t* oe = k < 0 ? NULL : mem(F.objects + 0x24u * (uint32_t) k, 0x24);
@@ -2855,9 +2875,7 @@ static void playerBox(const uint16_t* oam, int base, struct PlayerBox* b) {
 static bool flyGlide(const uint16_t* io) {
     flyDx = flyDy = 0;
     if (flyViewAge < 99) flyViewAge++;
-    // (FullDex: a map crossing holds the view back a couple of frames while the new map loads; two frames without a view
-    // dropped the glide there - the window jumped back by its offset, then crept up to speed again. Ten now.)
-    if ((!flyOn && !flyTrack) || !io || flyViewAge > 10) {
+    if ((!flyOn && !flyTrack) || !io || flyViewAge > 2) {
         flyTrack = false;
         return false;
     }
@@ -2868,8 +2886,7 @@ static bool flyGlide(const uint16_t* io) {
         flyTrack = true;
         flyCx = flyCy = 0;
         flySx = flySy = 0;
-        flyVxS = flyVx;   // (FullDex: at the flight's own speed at once, not eased up from standing)
-        flyVyS = flyVy;
+        flyVxS = flyVyS = 0;
         dh = dv = 0;
     }
     flyPrevH = h;
@@ -2999,12 +3016,24 @@ static void followBegin(struct GBAVideoRenderer* r) {
     int ox = cxPix - 16, oy = feet - 32;
     followDbg[0] = x0; followDbg[1] = y0; followDbg[2] = x1; followDbg[3] = y1; followDbg[4] = ox; followDbg[5] = oy; followDbg[6] = p; followDbg[7] = base;
     if (ox <= -32 || ox >= 240 || oy <= -32 || oy >= 160) { followWhy = 5; return; }
-    // A free entry (after the game's: drawn under them) and a palette slot no shown sprite uses.
-    int entry = -1;
-    for (int k = 127; k > last; k--) if (oamHidden(oam[k * 4])) { entry = k; break; }
+    // Its OAM entry: an earlier entry is drawn over a later one. Behind the player (its feet as high on screen as theirs
+    // or higher): a free entry after the game's, under them all. In front (lower on screen: walking toward the camera, or
+    // behind a player going north): right before the player's first entry, over the player and whatever is behind them
+    // (a Thor player's report, 2026-11-18: it was drawn under the player even in front of them).
+    int entry = -1, hole = -1, pfirst = -1;
+    bool front = oy + 32 > y1;
+    if (front) {
+        for (int k = 0; k <= last && pfirst < 0; k++) {
+            int t = oam[k * 4 + 2] & 0x3FF;
+            if (!oamHidden(oam[k * 4]) && t >= base && t < base + 16) pfirst = k;
+        }
+        for (int k = pfirst + 1; pfirst >= 0 && k < 128; k++) if (oamHidden(oam[k * 4])) { hole = k; break; }
+        if (hole < 0) front = false;
+    }
+    if (!front) for (int k = 127; k > last; k--) if (oamHidden(oam[k * 4])) { entry = k; break; }
     int slot = -1;
     for (int k = 15; k >= 0; k--) if (!used[k]) { slot = k; break; }
-    if (entry < 0 || slot < 0) { followWhy = 6; return; }
+    if ((!front && entry < 0) || slot < 0) { followWhy = 6; return; }
     // The frame: standing, or stepping in the first half of a step.
     int frame = (followDir == 3 ? 2 : followDir) * 2 + (followMoving && p < 128 ? 1 : 0);
     uint8_t* vram = (uint8_t*) hookGba->video.vram;
@@ -3012,8 +3041,23 @@ static void followBegin(struct GBAVideoRenderer* r) {
     memset(followDirty, 0, sizeof(followDirty));
     memcpy(vram + FOLLOW_VRAM, followFrames + frame * 512, 512);
     for (int i = 0; i < 512; i += 2) origWriteVRAM(r, FOLLOW_VRAM + (uint32_t) i);
+    uint16_t* raw = hookGba->video.oam.raw;
+    if (front) {
+        followRangeFirst = pfirst;
+        followRangeN = hole - pfirst + 1;
+        memcpy(followSavedRange, &raw[pfirst * 4], (size_t) followRangeN * 8);
+        int to = pfirst + 1;
+        for (int e = pfirst; e <= hole; e++) {
+            const uint16_t* was = &followSavedRange[(e - pfirst) * 4];
+            if (oamHidden(was[0])) continue;
+            memcpy(&raw[to * 4], was, 6);   // attr0-2: an entry's 4th halfword is the affine parameters', not its own
+            to++;
+        }
+        for (int e = pfirst + 1; e <= hole; e++) for (int i = 0; i < 3; i++) r->writeOAM(r, (uint32_t) e * 4 + (uint32_t) i);
+        entry = pfirst;
+    }
     memcpy(followSavedOam, &oam[entry * 4], 8);
-    uint16_t* w = &hookGba->video.oam.raw[entry * 4];
+    uint16_t* w = &raw[entry * 4];
     w[0] = (uint16_t) ((oy & 0xFF));                                       // square, 4bpp, shown
     w[1] = (uint16_t) ((ox & 0x1FF) | (2 << 14) | (followDir == 3 ? 0x1000 : 0));   // 32x32, flipped facing east
     w[2] = (uint16_t) (FOLLOW_TILE | prio << 10 | slot << 12);
@@ -3039,8 +3083,17 @@ static void followEnd(struct GBAVideoRenderer* r) {
         memcpy(vram + FOLLOW_VRAM + i * 2, followSavedVram + i * 2, 2);
         origWriteVRAM(r, FOLLOW_VRAM + (uint32_t) i * 2);
     }
-    memcpy(&hookGba->video.oam.raw[followOam * 4], followSavedOam, 8);
-    for (int k = 0; k < 3; k++) r->writeOAM(r, (uint32_t) followOam * 4 + (uint32_t) k);
+    if (followRangeFirst >= 0) {
+        uint16_t* raw = hookGba->video.oam.raw;
+        for (int e = 0; e < followRangeN; e++) {
+            memcpy(&raw[(followRangeFirst + e) * 4], &followSavedRange[e * 4], 6);
+            for (int k = 0; k < 3; k++) r->writeOAM(r, (uint32_t) (followRangeFirst + e) * 4 + (uint32_t) k);
+        }
+        followRangeFirst = -1;
+    } else {
+        memcpy(&hookGba->video.oam.raw[followOam * 4], followSavedOam, 8);
+        for (int k = 0; k < 3; k++) r->writeOAM(r, (uint32_t) followOam * 4 + (uint32_t) k);
+    }
     for (int i = 0; i < 16; i++) {
         uint16_t c = hookGba->video.palette[256 + followSlot * 16 + i];
         r->writePalette(r, (uint32_t) (0x200 + followSlot * 32 + i * 2), tintShown ? tint555(c) : c);
@@ -3049,6 +3102,487 @@ static void followEnd(struct GBAVideoRenderer* r) {
 }
 
 static bool onBike(void);
+
+// HIDE BATTLE MENU (two screens: the companion's battle buttons do the choosing). The Gen 3 battle's BG0 is 32x64 tiles
+// holding three text box layouts one under the other, picked by BG0VOFS: 0 = the message box (rows 14-19), 160 = "What
+// will X do?" + the FIGHT / BAG menu box (rows 34-39), 320 = the move names + the PP box (rows 54-59). While each frame
+// is drawn the menu's cells are swapped for the message box's own frame, its inside left blank, so the prompt's box runs
+// the whole width; in the move menu the whole layout is that prompt box (its window still holds the text). At the box's
+// right a two-screens sign, like a DS game's, lights the companion's screen (the bottom one, or the top when the screens
+// are swapped): as far from the box's right edge as from its top and bottom (the frame's thickness measured in its
+// tiles), drawn in the text's and the frame's colours over a copy of the cells under it, in up to 16 of the message
+// window's tiles (not on screen while the menus are up). Taken out after the
+// last line like the follower (cells and pixels the game wrote meanwhile kept): VRAM, the game and states never see it.
+// Found by shape alone, no per-game address: both layouts' left parts equal, a box beside the prompt, the frame's
+// 15-tile set (corner T .. T + 14, T + 7 its plain middle) - FireRed's and Emerald's alike, every language. Only the battle type is read
+// from the game (its address passed in): a double battle or the Safari Zone keeps its menus.
+static int menuHideRow = -1;              // the first tilemap row swapped this frame, -1 = none
+#define MENU_OAM_MAX 16
+static int menuOamN;                       // Ruby / Sapphire's cursor sprites hidden this frame
+static uint8_t menuOamAt[MENU_OAM_MAX];
+static uint16_t menuOamSaved[MENU_OAM_MAX];
+static uint16_t menuHideSaved[6][30];
+static uint8_t menuHideDirty[6][30];
+static uint32_t menuHideMap;               // the tilemap's VRAM byte offset
+#define MENU_SIGN_TILES 16
+static uint32_t menuArrowAt[MENU_SIGN_TILES];   // the sign's tiles' VRAM byte offsets, 0 = not drawn
+static uint8_t menuArrowSaved[MENU_SIGN_TILES][32];
+static uint8_t menuArrowDirty[MENU_SIGN_TILES][16];
+/** The box's palette entries the sign borrowed this frame (renderer only, put back after the last line): its slot, the
+ * entries, how many. */
+static int menuPalSlot = -1, menuPalIdx[2], menuPalN;
+/** Why the last hidden menu had no sign (0 = drawn): 1 its place in the box, 2 too few tiles, 3 tiles in use, 4 colours. */
+static int menuSignWhy;
+static unsigned menuHideFrames;
+
+static void menuWrote(uint32_t address) {
+    if (menuHideRow < 0) return;
+    for (int k = 0; k < MENU_SIGN_TILES; k++)
+        if (menuArrowAt[k] && address >= menuArrowAt[k] && address < menuArrowAt[k] + 32) menuArrowDirty[k][(address - menuArrowAt[k]) >> 1] = 1;
+    if (address < menuHideMap + (uint32_t) menuHideRow * 64) return;
+    uint32_t k = (address - menuHideMap - (uint32_t) menuHideRow * 64) >> 1;
+    if (k < 6 * 32 && (k & 31) < 30) menuHideDirty[k >> 5][k & 31] = 1;
+}
+
+/** The sign's two screens, each SIGN_W x SIGN_H with corners rounded over two pixels, SIGN_GAP apart. */
+#define SIGN_W 18
+#define SIGN_H 11
+#define SIGN_GAP 3
+
+/** A screen's top-left corner, mirrored to the other three: 'o' its outline, 'a' between the outline and the box
+ * outside it and 'b' between the outline and the fill inside (the step's notches filled, so the corner is smoother but
+ * no rounder: a screen, not a pill), 'i' inside, '.' outside. */
+#define SIGN_CORNER_N 3
+static const char SIGN_CORNER[SIGN_CORNER_N][SIGN_CORNER_N + 1] = { ".ao", "aob", "obi" };
+
+/**
+ * The two-screens sign, like a DS game pointing at its touch screen: two little screens one over the other, outlined in
+ * [line], the one with the buttons ([up]: the top one, else the bottom) filled with [lit]; the other shows the box
+ * through it. The corners' notches: [soft] (between the outline and the box), [softLit] inside the lit one (between the
+ * outline and its fill); -1 = left as they are. Drawn into [px] (w x h, the tiles it covers) at ([x0], [y0]); the rest
+ * of [px] is left as it is.
+ */
+static void menuSignPixels(uint8_t* px, int w, int h, int x0, int y0, int line, int soft, int softLit, int lit, bool up) {
+    for (int screen = 0; screen < 2; screen++) {
+        int top = y0 + screen * (SIGN_H + SIGN_GAP);
+        bool on = (screen == 0) == up;
+        for (int y = 0; y < SIGN_H; y++)
+            for (int x = 0; x < SIGN_W; x++) {
+                int cx = x < SIGN_W - 1 - x ? x : SIGN_W - 1 - x, cy = y < SIGN_H - 1 - y ? y : SIGN_H - 1 - y;
+                char k = cx < SIGN_CORNER_N && cy < SIGN_CORNER_N ? SIGN_CORNER[cy][cx] : cx == 0 || cy == 0 ? 'o' : 'i';
+                int py = top + y, pxx = x0 + x, colour;
+                if (py < 0 || py >= h || pxx < 0 || pxx >= w) continue;
+                if (k == 'o') colour = line;
+                else if (k == 'a') colour = soft;
+                else if (k == 'b') colour = on ? (softLit >= 0 ? softLit : lit) : soft;
+                else if (k == 'i') colour = on ? lit : -1;
+                else colour = -1;
+                if (colour >= 0) px[py * w + pxx] = (uint8_t) colour;
+            }
+    }
+}
+
+/**
+ * Entries of BG palette [slot] that no tile shown in it uses this frame - every cell of every BG layer on (BG0 whole,
+ * the others their whole maps) in that palette, its tile's pixels - as a bit per index; 0 when a layer is 256-colour.
+ */
+static unsigned menuFreeEntries(int slot) {
+    const uint16_t* io = hookGba->memory.io;
+    const uint8_t* vram = (const uint8_t*) hookGba->video.vram;
+    unsigned used = 1;   // 0 is transparent
+    static uint8_t seen[1024 / 8];
+    for (int bg = 0; bg < 4; bg++) {
+        if (!(io[0] & (0x100 << bg))) continue;
+        uint16_t cnt = io[(0x08 >> 1) + bg];
+        if (cnt & 0x80) return 0;
+        uint32_t mapOff = ((cnt >> 8) & 31) * 0x800u, charOff = ((cnt >> 2) & 3) * 0x4000u;
+        int size = cnt >> 14, cells = 1024 << (size == 3 ? 2 : size ? 1 : 0);
+        memset(seen, 0, sizeof(seen));
+        for (int i = 0; i < cells; i++) {
+            if (mapOff + (uint32_t) i * 2 + 2 > 0x10000) break;
+            uint16_t cell = ((const uint16_t*) (vram + mapOff))[i];
+            if ((cell >> 12) != slot) continue;
+            int t = cell & 0x3FF;
+            if (seen[t >> 3] & (1 << (t & 7))) continue;
+            seen[t >> 3] |= (uint8_t) (1 << (t & 7));
+            uint32_t at = charOff + (uint32_t) t * 32;
+            if (at + 32 > 0x10000) continue;
+            for (int k = 0; k < 32; k++) used |= 1u << (vram[at + k] & 15) | 1u << (vram[at + k] >> 4);
+        }
+    }
+    return ~used & 0xFFFF;
+}
+
+/** Half of BGR555 [a], half of [b]. */
+static uint16_t menuMix555(uint16_t a, uint16_t b) {
+    return (uint16_t) ((((a & 31) + (b & 31)) / 2) | ((((a >> 5) & 31) + ((b >> 5) & 31)) / 2) << 5 |
+        ((((a >> 10) & 31) + ((b >> 10) & 31)) / 2) << 10);
+}
+
+/** BGR555 [c] as 8-bit channels. */
+static void menuRgb(uint16_t c, int rgb[3]) {
+    rgb[0] = (c & 31) << 3; rgb[1] = ((c >> 5) & 31) << 3; rgb[2] = ((c >> 10) & 31) << 3;
+}
+
+/** The entry of the 16-colour palette at [pal] nearest ([a]% of [x] + the rest of [y]), skipping [skip] (a bit per index)
+ * and the transparent 0. */
+static int menuNearest(const uint16_t* pal, int x, int y, int a, unsigned skip) {
+    int cx[3], cy[3], t[3];
+    menuRgb(pal[x], cx); menuRgb(pal[y], cy);
+    for (int k = 0; k < 3; k++) t[k] = (cx[k] * a + cy[k] * (100 - a)) / 100;
+    int best = -1, bestD = 0;
+    for (int i = 1; i < 16; i++) {
+        if (skip >> i & 1) continue;
+        int c[3];
+        menuRgb(pal[i], c);
+        int d = (c[0] - t[0]) * (c[0] - t[0]) + (c[1] - t[1]) * (c[1] - t[1]) + (c[2] - t[2]) * (c[2] - t[2]);
+        if (best < 0 || d < bestD) { best = i; bestD = d; }
+    }
+    return best;
+}
+
+/** [c]'s hue in degrees and its saturation (max - min channel). */
+static void menuHue(uint16_t c, int* hue, int* sat) {
+    int v[3];
+    menuRgb(c, v);
+    int hi = v[0] > v[1] ? (v[0] > v[2] ? 0 : 2) : (v[1] > v[2] ? 1 : 2);
+    int lo = v[0] < v[1] ? (v[0] < v[2] ? 0 : 2) : (v[1] < v[2] ? 1 : 2);
+    int d = v[hi] - v[lo];
+    *sat = d;
+    if (!d) { *hue = 0; return; }
+    int h = hi == 0 ? 60 * (v[1] - v[2]) / d : hi == 1 ? 120 + 60 * (v[2] - v[0]) / d : 240 + 60 * (v[0] - v[1]) / d;
+    *hue = (h + 360) % 360;
+}
+
+/** A cell's pixel ([x], [y] in its tile, its flips applied): a 4bpp colour index. */
+static int menuCellPx(const uint8_t* vram, uint32_t charOff, uint16_t cell, int x, int y) {
+    if (cell & 0x400) x = 7 - x;
+    if (cell & 0x800) y = 7 - y;
+    uint8_t b = vram[charOff + (cell & 0x3FF) * 32u + (uint32_t) (y * 4 + x / 2)];
+    return x & 1 ? b >> 4 : b & 15;
+}
+
+/** Which battle menu the last frame hid: BG0VOFS 160 (the action menu) or 320 (the moves), 0 none. */
+static volatile int menuHidden;
+
+static void menuHideBegin(struct GBAVideoRenderer* r) {
+    menuHideRow = -1;
+    menuHidden = 0;
+    memset(menuArrowAt, 0, sizeof(menuArrowAt));
+    if (!menuHideMode || !hookGba) return;
+    menuHideFrames++;
+    // A double battle or the Safari Zone keeps its menu: the companion has no buttons for them. So do the tutorial battles:
+    // FireRed's first rival battle in Oak's lab and the Old Man's catching show run on battle_controller_oak_old_man.c,
+    // Emerald's Wally lesson on the Wally controller, which the companion's buttons don't drive - the menu went missing
+    // and only the game's cursor was left to pick with (a player's report, 2026-11-15). Emerald's first battle (Birch's)
+    // is the player's own controller, kept with the rest by the same FIRST_BATTLE bit: one battle, the menu shown.
+    if (menuHideTypeFlags >> 24 == 2) {
+        const uint8_t* f = (const uint8_t*) hookGba->memory.wram + (menuHideTypeFlags & 0x3FFFC);
+        // BATTLE_TYPE_DOUBLE, BATTLE_TYPE_FIRST_BATTLE, BATTLE_TYPE_SAFARI, BATTLE_TYPE_OLD_MAN_TUTORIAL / WALLY_TUTORIAL (bit 9)
+        if (f[0] & (1 << 0 | 1 << 4 | 1 << 7)) return;
+        if (f[1] & (1 << 1)) return;
+    }
+    const uint16_t* io = hookGba->memory.io;
+    uint16_t dispcnt = io[0], cnt = io[0x08 >> 1];
+    if ((dispcnt & 7) != 0 || !(dispcnt & 0x100) || (cnt >> 14) != 2) return;   // mode 0, BG0 on, 256 x 512
+    if ((io[0x10 >> 1] & 0x1FF) != 0) return;
+    int vofs = io[0x12 >> 1] & 0x1FF;
+    if (vofs != 160 && vofs != 320) return;
+    uint32_t mapOff = ((cnt >> 8) & 31) * 0x800u, charOff = ((cnt >> 2) & 3) * 0x4000u;
+    uint8_t* vram = (uint8_t*) hookGba->video.vram;
+    uint16_t* map = (uint16_t*) (vram + mapOff);
+    const uint16_t* msg = map + 14 * 32;
+    const uint16_t* ask = map + 34 * 32;
+    int T = msg[0] & 0x3FF;
+    uint16_t pal = msg[0] & 0xF000;
+    if ((msg[29] & 0x3FF) != T + 4 || (msg[32] & 0x3FF) != T + 5 || (msg[5 * 32] & 0x3FF) != T + 10
+        || (msg[5 * 32 + 29] & 0x3FF) != T + 14) return;
+    int split = 0;
+    while (split < 30 && ask[split] == msg[split]) split++;
+    if (split < 8 || split > 24) return;
+    for (int row = 0; row < 6; row++) {
+        if (ask[row * 32] != msg[row * 32]) return;
+        if ((row == 0 || row == 5) && memcmp(ask + row * 32, msg + row * 32, (size_t) split * 2)) return;
+    }
+    // T + 7, the middle of the frame's 5 x 3 tiles, must be plain: one colour all over (the inside of the box). The Western
+    // carts' T + 6 / T + 8 are plain too; the Japanese ones draw an inner edge there (2026-11-18).
+    const uint8_t* fill = vram + charOff + (T + 7) * 32;
+    for (int i = 1; i < 32; i++) if (fill[i] != fill[0] || ((fill[0] ^ (fill[0] >> 4)) & 15)) return;
+    int paper = fill[0] & 15;
+    uint16_t want[6][30];
+    for (int row = 0; row < 6; row++) {
+        for (int c = 0; c < 30; c++) {
+            if (c < split) { want[row][c] = ask[row * 32 + c]; continue; }
+            uint16_t src = msg[row * 32 + c];
+            int t = src & 0x3FF;
+            want[row][c] = t >= T && t <= T + 14 ? src : (uint16_t) (pal | (T + 7));
+        }
+    }
+    // The sign, at the box's right: as far from its right edge as from its top and bottom edges (the frame's own
+    // thickness measured in its tiles), in the cells it covers - plain inside, right of the prompt.
+    int at = vofs == 160 ? 34 : 54;
+    // Walked in pixel by pixel from each edge (Emerald's right border takes two cells), on the box's middle line / column 20.
+    int edgeR = 0, edgeT = 0, edgeB = 0;
+    while (edgeR < 32) {
+        int x = 239 - edgeR;
+        if (menuCellPx(vram, charOff, msg[2 * 32 + x / 8], x & 7, 4) == paper) break;
+        edgeR++;
+    }
+    while (edgeT < 16 && menuCellPx(vram, charOff, msg[(edgeT / 8) * 32 + 20], 4, edgeT & 7) != paper) edgeT++;
+    while (edgeB < 16) {
+        int y = 47 - edgeB;
+        if (menuCellPx(vram, charOff, msg[(y / 8) * 32 + 20], 4, y & 7) == paper) break;
+        edgeB++;
+    }
+    int signH = 2 * SIGN_H + SIGN_GAP;
+    int margin = (48 - edgeT - edgeB - signH) / 2;
+    int sy = edgeT + margin, sx1 = 240 - edgeR - margin, sx = sx1 - SIGN_W;
+    int c0 = sx / 8, c1 = (sx1 - 1) / 8, r0 = sy / 8, r1 = (sy + signH - 1) / 8;
+    int cols = c1 - c0 + 1, rows = r1 - r0 + 1, need = cols * rows;
+    // Col 29 too: a box with no right edge (Recharged Emerald's band runs the screen's width) - the cells' check below.
+    bool arrow = margin >= 1 && c0 >= split && c1 <= 29 && r0 >= 1 && r1 <= 4 && need <= MENU_SIGN_TILES;
+    // Its cells keep what they show (a frame piece: Emerald's border runs into the cell left of its edge cell), copied
+    // into the borrowed tiles under the sign; only the frame's own cells and the plain inside, never the prompt's text.
+    for (int row = r0; arrow && row <= r1; row++)
+        for (int c = c0; c <= c1; c++) { int t = want[row][c] & 0x3FF; if (t < T || t > T + 14) arrow = false; }
+    menuSignWhy = arrow ? 0 : 1;
+    // Its tiles: the message window's last ones (bottom line first, from the right), used nowhere on screen now. Its
+    // colours: the prompt text's ink (the most used after the paper in the prompt window's tiles) and the frame's.
+    int arrowTiles[MENU_SIGN_TILES], n = 0;
+    for (int row = 4; arrow && row >= 1 && n < need; row--)
+        for (int c = 28; c >= 1 && n < need; c--) {
+            int t = msg[row * 32 + c] & 0x3FF;
+            if (t >= T && t <= T + 14) continue;
+            bool dup = false;
+            for (int k = 0; k < n; k++) if (arrowTiles[k] == t) dup = true;
+            if (!dup) arrowTiles[n++] = t;
+        }
+    // Ruby / Sapphire's empty message box is the blank tile all over: the hidden menu's own text tiles then, off screen this frame.
+    for (int row = 4; arrow && row >= 1 && n < need; row--)
+        for (int c = 28; c >= (vofs == 160 ? split : 1) && n < need; c--) {
+            int t = map[(at + row) * 32 + c] & 0x3FF;
+            if (t >= T && t <= T + 14) continue;
+            bool dup = false;
+            for (int k = 0; k < n; k++) if (arrowTiles[k] == t) dup = true;
+            if (!dup) arrowTiles[n++] = t;
+        }
+    if (arrow && n < need) { arrow = false; menuSignWhy = 2; }
+    for (int row = vofs / 8; arrow && row < vofs / 8 + 20; row++)
+        for (int c = 0; c < 30 && arrow; c++) {
+            int t = (row >= at && row < at + 6 ? want[row - at][c] : map[row * 32 + c]) & 0x3FF;
+            for (int k = 0; k < n; k++) if (t == arrowTiles[k]) { arrow = false; menuSignWhy = 3; }
+        }
+    int ink = -1, shade = -1;
+    if (arrow) {
+        int counts[16] = { 0 };
+        for (int c = 1; c < split; c++)
+            for (int row = 1; row < 5; row++) {
+                const uint8_t* tp = vram + charOff + (ask[row * 32 + c] & 0x3FF) * 32;
+                for (int i = 0; i < 32; i++) { counts[tp[i] & 15]++; counts[tp[i] >> 4]++; }
+            }
+        counts[paper] = 0;
+        for (int i = 0; i < 16; i++) if (counts[i] && (ink < 0 || counts[i] > counts[ink])) ink = i;
+        for (int i = 0; i < 16; i++) if (counts[i] && i != ink && (shade < 0 || counts[i] > counts[shade])) shade = i;
+        // Text with no shadow colour (Ghost Grey's white on black): the ink alone.
+        if (ink < 0) { arrow = false; menuSignWhy = 4; }
+        else if (shade < 0) shade = ink;
+        // Which is the shadow: it sits right of and below the ink, so more of its pixels have the other on their left.
+        int inkFirst = 0;
+        for (int c = 1; arrow && shade != ink && c < split; c++)
+            for (int row = 1; row < 5; row++) {
+                const uint8_t* tp = vram + charOff + (ask[row * 32 + c] & 0x3FF) * 32;
+                for (int y = 0; y < 8; y++)
+                    for (int x = 0; x < 7; x++) {
+                        int a = (tp[y * 4 + x / 2] >> (4 * (x & 1))) & 15, b = (tp[y * 4 + (x + 1) / 2] >> (4 * ((x + 1) & 1))) & 15;
+                        if (a == ink && b == shade) inkFirst++;
+                        else if (a == shade && b == ink) inkFirst--;
+                    }
+            }
+        if (inkFirst < 0) { int t = ink; ink = shade; shade = t; }
+    }
+    // The lit screen: the box frame's own colour - of the colours its tiles use besides the paper and the text's two,
+    // the most colourful and bright (Emerald's red, FireRed's gold; the frame's dark outline is used more).
+    int accent = -1;
+    if (arrow) {
+        int counts[16] = { 0 };
+        for (int t = T; t <= T + 14; t++) {
+            if (t == T + 7) continue;
+            const uint8_t* tp = vram + charOff + t * 32;
+            for (int i = 0; i < 32; i++) { counts[tp[i] & 15]++; counts[tp[i] >> 4]++; }
+        }
+        counts[paper] = counts[ink] = counts[shade] = counts[0] = 0;
+        int best = -1;
+        for (int i = 1; i < 16; i++) {
+            if (!counts[i]) continue;
+            uint16_t c = hookGba->video.palette[(pal >> 12) * 16 + i];
+            int r5 = c & 31, g5 = (c >> 5) & 31, b5 = (c >> 10) & 31;
+            int hi = r5 > g5 ? (r5 > b5 ? r5 : b5) : (g5 > b5 ? g5 : b5), lo = r5 < g5 ? (r5 < b5 ? r5 : b5) : (g5 < b5 ? g5 : b5);
+            // Colourful and bright: FireRed's frame has a shaded gold under its bright one.
+            int score = (hi - lo) + hi;
+            if (score > best) { best = score; accent = i; }
+        }
+        if (accent < 0) accent = shade;
+    }
+    // Softened toward the box, as if seen through: the outline the palette's colour nearest a half-and-half of the ink and
+    // the paper (FireRed's light blue on its navy, Emerald's light grey on its teal), the corners' curve nearer the paper
+    // still, the lit screen the colour of the frame's hue nearest the paper (FireRed's darker gold, Emerald's dusty red).
+    int line = ink, soft = -1, lit = accent;
+    if (arrow) {
+        const uint16_t* palette = hookGba->video.palette + (pal >> 12) * 16;
+        unsigned skip = 1u << paper;
+        line = menuNearest(palette, ink, paper, 55, skip);
+        if (line < 0) line = ink;
+        soft = menuNearest(palette, line, paper, 50, skip | 1u << line);
+        // Only a colour that really sits between them: nearer the paper than the outline is, else no softening.
+        if (soft >= 0) {
+            int a[3], b[3], c[3];
+            menuRgb(palette[line], a); menuRgb(palette[paper], b); menuRgb(palette[soft], c);
+            int dl = 0, ds = 0, dp = 0;
+            for (int k = 0; k < 3; k++) { dl += (a[k] - b[k]) * (a[k] - b[k]); ds += (c[k] - b[k]) * (c[k] - b[k]); dp += (c[k] - a[k]) * (c[k] - a[k]); }
+            if (ds >= dl || dp >= dl) soft = -1;
+        }
+        int ah, as, pc[3];
+        menuHue(palette[accent], &ah, &as);
+        menuRgb(palette[paper], pc);
+        int bestD = -1;
+        for (int i = 1; i < 16; i++) {
+            if (i == paper) continue;
+            int h, sat, c[3];
+            menuHue(palette[i], &h, &sat);
+            int dh = h > ah ? h - ah : ah - h;
+            if (dh > 180) dh = 360 - dh;
+            if (sat < 48 || dh > 20) continue;
+            menuRgb(palette[i], c);
+            int d = (c[0] - pc[0]) * (c[0] - pc[0]) + (c[1] - pc[1]) * (c[1] - pc[1]) + (c[2] - pc[2]) * (c[2] - pc[2]);
+            if (bestD < 0 || d < bestD) { bestD = d; lit = i; }
+        }
+    }
+    // The notches' in-between colours: a palette entry nothing on screen uses this frame, set to the mix in the renderer
+    // only (as FOLLOWER's colours; palette RAM never changes) - the palette's own colours rarely sit between (Emerald's
+    // have nothing between its light grey and its teal). Without a free entry, the nearest colour that really sits
+    // between, or none.
+    int softLit = -1;
+    menuPalN = 0;
+    if (arrow && r->writePalette) {
+        int slot = pal >> 12;
+        unsigned free = menuFreeEntries(slot) & ~(1u << paper | 1u << line | 1u << lit | 1u << ink);
+        const uint16_t* palette = hookGba->video.palette + slot * 16;
+        uint16_t mixes[2] = { menuMix555(palette[line], palette[paper]), menuMix555(palette[line], palette[lit]) };
+        for (int i = 1; i < 16 && menuPalN < 2; i++) {
+            if (!(free >> i & 1)) continue;
+            menuPalIdx[menuPalN] = i;
+            r->writePalette(r, (uint32_t) (slot * 32 + i * 2), tintShown ? tint555(mixes[menuPalN]) : mixes[menuPalN]);
+            menuPalN++;
+        }
+        if (menuPalN > 0) { menuPalSlot = slot; soft = menuPalIdx[0]; }
+        if (menuPalN > 1) softLit = menuPalIdx[1];
+    }
+    if (arrow) {
+        uint8_t px[4 * 8 * 4 * 8];
+        int w = cols * 8, h = rows * 8;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) px[y * w + x] = (uint8_t) menuCellPx(vram, charOff, want[r0 + y / 8][c0 + x / 8], x & 7, y & 7);
+        menuSignPixels(px, w, h, sx - c0 * 8, sy - r0 * 8, line, soft, softLit, lit, menuHideMode == 2);
+        memset(menuArrowDirty, 0, sizeof(menuArrowDirty));
+        for (int k = 0; k < need; k++) {
+            int tx = k % cols, ty = k / cols, tile = arrowTiles[k];
+            uint32_t off = charOff + (uint32_t) tile * 32;
+            memcpy(menuArrowSaved[k], vram + off, 32);
+            for (int y = 0; y < 8; y++)
+                for (int x = 0; x < 8; x += 2) {
+                    const uint8_t* line = px + (ty * 8 + y) * w + tx * 8;
+                    vram[off + y * 4 + x / 2] = (uint8_t) (line[x] | line[x + 1] << 4);
+                }
+            for (int i = 0; i < 32; i += 2) origWriteVRAM(r, off + (uint32_t) i);
+            menuArrowAt[k] = off;
+            want[r0 + ty][c0 + tx] = (uint16_t) (pal | tile);
+        }
+    }
+    menuHideMap = mapOff;
+    memset(menuHideDirty, 0, sizeof(menuHideDirty));
+    for (int row = 0; row < 6; row++) {
+        uint16_t* dst = map + (at + row) * 32;
+        memcpy(menuHideSaved[row], dst, sizeof(menuHideSaved[0]));
+        for (int c = 0; c < 30; c++) {
+            if (dst[c] == want[row][c]) continue;
+            dst[c] = want[row][c];
+            origWriteVRAM(r, mapOff + (uint32_t) ((at + row) * 32 + c) * 2);
+        }
+    }
+    menuHideRow = at;
+    menuHidden = vofs;
+    // Ruby / Sapphire draw the menu's cursor with sprites (menu_cursor.c), not in BG0: hidden for the frame too - the shown OBJ
+    // entries whose top edge is inside the box (the player's Pokémon starts above it), right of the prompt on the action menu.
+    menuOamN = 0;
+    const uint8_t* hdr = (const uint8_t*) hookGba->memory.rom;
+    if (hdr && hdr[0xAC] == 'A' && hdr[0xAD] == 'X' && (hdr[0xAE] == 'V' || hdr[0xAE] == 'P')) {
+        uint16_t* oam = hookGba->video.oam.raw;
+        for (int e = 0; e < 128 && menuOamN < MENU_OAM_MAX; e++) {
+            uint16_t a0 = oam[e * 4];
+            if ((a0 & 0x0300) == 0x0200) continue;                       // not shown
+            int y = a0 & 0xFF, x = oam[e * 4 + 1] & 0x1FF;
+            if (y < 112 || y >= 160 || (vofs == 160 && x < split * 8 - 8 && x < 256)) continue;
+            menuOamAt[menuOamN] = (uint8_t) e;
+            menuOamSaved[menuOamN++] = a0;
+            oam[e * 4] = (uint16_t) ((a0 & ~0x0300) | 0x0200);
+            r->writeOAM(r, (uint32_t) e * 4);
+        }
+    }
+}
+
+static void menuHideEnd(struct GBAVideoRenderer* r) {
+    if (menuHideRow < 0 || !hookGba) return;
+    // The cursor's sprites (Ruby / Sapphire) back, but where the game wrote the entry meanwhile.
+    for (int i = 0; i < menuOamN; i++) {
+        uint16_t* w = &hookGba->video.oam.raw[menuOamAt[i] * 4];
+        if ((*w & 0x0300) != 0x0200) continue;
+        *w = menuOamSaved[i];
+        r->writeOAM(r, (uint32_t) menuOamAt[i] * 4);
+    }
+    menuOamN = 0;
+    uint8_t* vram = (uint8_t*) hookGba->video.vram;
+    uint16_t* map = (uint16_t*) (vram + menuHideMap);
+    for (int row = 0; row < 6; row++) {
+        uint16_t* dst = map + (menuHideRow + row) * 32;
+        for (int c = 0; c < 30; c++) {
+            if (menuHideDirty[row][c] || dst[c] == menuHideSaved[row][c]) continue;
+            dst[c] = menuHideSaved[row][c];
+            origWriteVRAM(r, menuHideMap + (uint32_t) ((menuHideRow + row) * 32 + c) * 2);
+        }
+    }
+    for (int k = 0; k < MENU_SIGN_TILES; k++) {
+        if (!menuArrowAt[k]) continue;
+        for (int i = 0; i < 16; i++) {
+            if (menuArrowDirty[k][i]) continue;
+            memcpy(vram + menuArrowAt[k] + i * 2, menuArrowSaved[k] + i * 2, 2);
+            origWriteVRAM(r, menuArrowAt[k] + (uint32_t) i * 2);
+        }
+        menuArrowAt[k] = 0;
+    }
+    for (int k = 0; k < menuPalN && menuPalSlot >= 0; k++) {
+        uint16_t c = hookGba->video.palette[menuPalSlot * 16 + menuPalIdx[k]];
+        r->writePalette(r, (uint32_t) (menuPalSlot * 32 + menuPalIdx[k] * 2), tintShown ? tint555(c) : c);
+    }
+    menuPalN = 0;
+    menuPalSlot = -1;
+    menuHideRow = -1;
+}
+
+int pk_battle_menu_hidden(void) {
+    return menuHideMode ? menuHidden : 0;
+}
+
+int pk_battle_menu_sign_why(void) {
+    return menuHideMode && menuHidden ? menuSignWhy : 0;
+}
+
+void pk_battle_menu_hide(struct mCore* core, int mode, uint32_t battleTypeFlags) {
+    if (!core || core->platform(core) != mPLATFORM_GBA) return;
+    menuHideMode = mode == 1 || mode == 2 ? mode : 0;
+    if (!menuHideMode) menuHidden = 0;
+    menuHideTypeFlags = battleTypeFlags;
+    hookScanlines((struct GBA*) core->board);
+}
 
 /** Line 0 (after followBegin): RIDE ON's vehicle into the hardware behind the player, the game's bytes saved first. */
 static void rideBegin(struct GBAVideoRenderer* r) {
@@ -3360,7 +3894,8 @@ static void partnerBegin(struct GBAVideoRenderer* r) {
     bool blob = partnerReq.blob >= 0;
     if (partnerReq.frame < 0 || partnerReq.frame >= PK_PARTNER_FRAMES || partnerReq.blob >= PK_PARTNER_FRAMES || partnerReq.blob < -1 ||
         partnerReq.bob < -64 || partnerReq.bob > 64) { partnerWhy = PK_PARTNER_BAD_FRAME; return; }
-    if (!hookGba || !F.objects || F.family == PK_WIDE_FAMILY_EX || F.family == PK_WIDE_FAMILY_FR_EX || !selfFine.valid) { partnerWhy = PK_PARTNER_NO_PLAYER; return; }
+    if (!hookGba || !F.objects || F.family == PK_WIDE_FAMILY_EX || F.family == PK_WIDE_FAMILY_FR_EX ||
+        F.family == PK_WIDE_FAMILY_EX32 || !selfFine.valid) { partnerWhy = PK_PARTNER_NO_PLAYER; return; }
     G = hookGba;
     int cx, cy, px, py;
     uint32_t spriteId;
@@ -3582,7 +4117,8 @@ static void allowRunning(void) {
     uint32_t off;
     uint8_t bit;
     if (F.family == PK_WIDE_FAMILY_FR || F.family == PK_WIDE_FAMILY_FR_EX) { off = 0x19; bit = 2; }
-    else if (F.family == PK_WIDE_FAMILY_EM || F.family == PK_WIDE_FAMILY_EX || F.family == PK_WIDE_FAMILY_MM) { off = 0x1A; bit = 4; }
+    else if (F.family == PK_WIDE_FAMILY_EM || F.family == PK_WIDE_FAMILY_EX || F.family == PK_WIDE_FAMILY_MM ||
+             F.family == PK_WIDE_FAMILY_EX32) { off = 0x1A; bit = 4; }
     else return;
     uint8_t* p = (uint8_t*) mem(F.mapHeader + off, 1);
     if (p && !(*p & bit)) *p |= bit;
@@ -3618,14 +4154,6 @@ static void wildRoll(int s, int keep) {
     wildOwned = true;
 }
 
-/** (FullDex) gMapHeader.mapType of the map the player is on (the same place in every Gen 3 engine), or -1. */
-int pk_field_map_type(struct mCore* core) {
-    if (!F.mapHeader || !core) return -1;
-    G = (struct GBA*) core->board;
-    const uint8_t* p = (const uint8_t*) mem(F.mapHeader + 0x17, 1);
-    return p ? *p : -1;
-}
-
 int pk_field_state(struct mCore* core, int runIndoors, int wildKeep) {
     if (!F.locked) return 0;
     G = (struct GBA*) core->board;
@@ -3640,9 +4168,13 @@ int pk_field_state(struct mCore* core, int runIndoors, int wildKeep) {
     int surf = surfing();
     if (surf > 0) s |= PK_FIELD_SURF;
     if (surf >= 0) s |= PK_FIELD_AVATAR;
-    wildRoll(s, wildKeep);
+    if (wildKeep >= 0) wildRoll(s, wildKeep);
     if (wildOwned) s |= PK_FIELD_WILD_HELD;
     return s;
+}
+
+int pk_field_observe(struct mCore* core) {
+    return pk_field_state(core, 0, -1);  // observation does not advance the encounter policy
 }
 
 void pk_wide_reset(void) {
@@ -3890,7 +4422,40 @@ int pk_wide_frame(struct mCore* core, const uint32_t* frame, uint32_t* out, int 
 #ifndef PK_WIDE_NO_GUARD   // mgba_dump's AddressSanitizer build reports faults itself
 #include <setjmp.h>
 #include <signal.h>
+#ifdef _WIN32
+// Windows raises no signal for a bad read: a vectored exception handler carries a fault on this thread, while it draws,
+// back out of pk_wide_view the way the POSIX handlers below do, and pk_wide_fault reads it as a segmentation fault.
+#include <windows.h>
+#undef near
+#undef far
+static __thread jmp_buf* guardJmp;
+static bool guardInstalled;
 
+static LONG CALLBACK onFault(EXCEPTION_POINTERS* p) {
+    switch (p->ExceptionRecord->ExceptionCode) {
+    case EXCEPTION_ACCESS_VIOLATION:
+    case EXCEPTION_IN_PAGE_ERROR:
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:
+    case EXCEPTION_DATATYPE_MISALIGNMENT:
+    case EXCEPTION_STACK_OVERFLOW:
+        break;
+    default:
+        return EXCEPTION_CONTINUE_SEARCH;   // not a fault this guard knows about: the system's own handling
+    }
+    jmp_buf* j = guardJmp;
+    if (!j) return EXCEPTION_CONTINUE_SEARCH;   // outside pk_wide_view: as if this handler weren't installed
+    guardJmp = NULL;
+    longjmp(*j, 11);   // SIGSEGV
+}
+static void installGuard(void) {
+    if (guardInstalled) return;
+    guardInstalled = true;
+    AddVectoredExceptionHandler(1, onFault);
+}
+#define sigjmp_buf jmp_buf
+#define sigsetjmp(j, s) setjmp(j)
+#else
 static __thread sigjmp_buf* guardJmp;   // set only while this thread is inside pk_wide_view
 static const int GUARDED[4] = { SIGSEGV, SIGBUS, SIGFPE, SIGILL };
 static struct sigaction guardOld[4];
@@ -3926,6 +4491,7 @@ static void installGuard(void) {
     sigemptyset(&sa.sa_mask);
     for (int i = 0; i < 4; i++) sigaction(GUARDED[i], &sa, &guardOld[i]);
 }
+#endif // _WIN32
 #endif
 
 int pk_wide_fault(void) { return lastFault; }
@@ -4019,12 +4585,15 @@ static bool cacheReady(int hofs, int vofs, int href, int vref, int* enabled) {
         if (lineRegs(y)[0] != (uint16_t) disp) return false;
     if (effectsUp()) return false;
     useLine(0);
-    int wl = windowLayers(0, 0);
+    // BG0 left out: the margins never draw it (their BGs are & 0x0E), so a window that only adds or takes BG0 - a field
+    // move's cut-in, a full-width band of BG0 inside WIN0 (WININ 0x3F, WINOUT 0x3E) - leaves them as they are. It used to
+    // send the whole cut-in down the full draw, which a 3DS couldn't keep up with (the surf's music broke up).
+    int wl = windowLayers(0, 0) & ~1;
     if (disp & 0xE000) {
         for (int y = 0; y < PK_WIDE_H; y++)
-            if (windowLayers(0, y) != wl || windowLayers(PK_WIDE_W - 1, y) != wl) return false;
+            if ((windowLayers(0, y) & ~1) != wl || (windowLayers(PK_WIDE_W - 1, y) & ~1) != wl) return false;
         for (int x = 0; x < PK_WIDE_W; x++)
-            if (windowLayers(x, 0) != wl || windowLayers(x, PK_WIDE_H - 1) != wl) return false;
+            if ((windowLayers(x, 0) & ~1) != wl || (windowLayers(x, PK_WIDE_H - 1) & ~1) != wl) return false;
     }
     *enabled = (disp >> 8) & wl & 0x0E;
     return *enabled != 0;
@@ -4111,6 +4680,7 @@ static void cacheDraw(const struct Snap* s, const uint32_t* frame, uint32_t* out
         ringStamp++;
     }
     int staleLeft = cacheMode == 2 ? 1 << 30 : CACHE_STALE_CELLS;
+    ringFrame++;
     int c0 = (cx + v.x) >> 3, c1 = (cx + v.x + v.w - 1) >> 3, r0 = (cy + v.y) >> 3, r1 = (cy + v.y + v.h - 1) >> 3;
     for (int r = r0; r <= r1; r++) {
         for (int c = c0; c <= c1; c++) {
@@ -4124,7 +4694,11 @@ static void cacheDraw(const struct Snap* s, const uint32_t* frame, uint32_t* out
             uint16_t e[3];
             const struct Foreign* f;
             cellEntries(s, c * 8, r * 8, enabled, e, &f);
-            bool fresh = cell->stamp != ringStamp || cell->x != c || cell->y != r || cell->f != f || memcmp(cell->e, e, sizeof(e));
+            // A cell the last cached frame didn't look at (out of the window) missed the tiles written meanwhile: walking
+            // back, water came back in a frame of its animation from when it left (verified against the rebuild).
+            bool fresh = cell->stamp != ringStamp || cell->looked != ringFrame - 1 || cell->x != c || cell->y != r ||
+                cell->f != f || memcmp(cell->e, e, sizeof(e));
+            cell->looked = ringFrame;
             if (!fresh) {
                 if (cellWritten(e, f, enabled)) cell->stale = true;
                 if (!cell->stale || staleLeft <= 0) continue;
@@ -4191,6 +4765,7 @@ struct FullView {
     int bestSnap, bestCx, bestCy, bestH, bestV;
     uint32_t alpha;
     bool hold;   // FREE FLIGHT's crossing settling: the last window kept as it is (no glow)
+    bool fade;   // the frame is a fade between two maps: all black (or white)
 };
 
 /** FREE FLIGHT's smooth camera moves the window, the frame with it, so the map's name sign (BG0, the popup's corner:
@@ -4284,6 +4859,27 @@ static void fullDraw(const struct FullView* f) {
     int bestSnap = f->bestSnap, bestCx = f->bestCx, bestCy = f->bestCy, bestH = f->bestH, bestV = f->bestV;
     uint32_t alpha = f->alpha;
     PW_MARK(pw3);
+#ifdef PK_WIDE_CACHE
+    // A fade between two maps on a cached host (the 3DS): the frame is one colour, so the margins are that colour, as the
+    // game's own picture is - nothing drawn behind them (a black frame passes as a menu screen too) and the glow's mix left
+    // where it was. The per-pixel glow and the menu screen's backdrop cost a New 3DS 10-25 ms a frame there, longer than
+    // the frame, and every door, warp and battle start went through 15-30 of them (the game slowed, its music broke up).
+    if (f->fade && !valid && !battle && !overlayDim) {
+        uint32_t col = (frame[(PK_WIDE_H / 2) * PK_WIDE_W + PK_WIDE_W / 2] & 0xFFFFFF) | alpha;
+        for (int j = 0; j < v.h; j++) {
+            int Y = v.y + j;
+            uint32_t* row = out + j * v.w;
+            for (int i = 0; i < v.w; i++) row[i] = col;
+            if (holeLeft || Y < 0 || Y >= PK_WIDE_H) continue;
+            int x0 = v.x < 0 ? -v.x : 0, X0 = v.x > 0 ? v.x : 0, n = PK_WIDE_W - X0 < v.w - x0 ? PK_WIDE_W - X0 : v.w - x0;
+            if (n > 0) memcpy(row + x0, frame + Y * PK_WIDE_W + X0, (size_t) n * sizeof(uint32_t));
+        }
+        PW_MARK(pw5);
+        PW_ADD(3, pw3, pw5);
+        PW_REPORT();
+        return;
+    }
+#endif
     if (valid || battle || menu) {
         if (valid) {
             const struct Snap* s = &snaps[bestSnap];
@@ -4503,8 +5099,6 @@ static int viewInner(struct mCore* core, const uint32_t* frame, uint32_t* out, s
         valid = true;
     }
     if (!valid) needFrame();
-    mapCamOk = valid && bestSnap >= 0;   // (FullDex: pk_wide_map_at's camera)
-    if (mapCamOk) { mapCamSnap = bestSnap; mapCamX = bestCx; mapCamY = bestCy; }
     bool battle = !valid && inBattleScreen();
     // FREE FLIGHT: no menu can open (the controls are locked), so a frame that doesn't match is a map crossing settling
     // (pk_flight.c's flMend draws the view again; the screen catches up two or three frames later): the camera holds and
@@ -4581,7 +5175,7 @@ static int viewInner(struct mCore* core, const uint32_t* frame, uint32_t* out, s
 #endif
     PW_MARK(pw3);
     PW_ADD(1, pw2, pw3);
-    struct FullView full = { frame, out, centre, v, valid, battle, menu, overlay, bestSnap, bestCx, bestCy, bestH, bestV, alpha, flyHold };
+    struct FullView full = { frame, out, centre, v, valid, battle, menu, overlay, bestSnap, bestCx, bestCy, bestH, bestV, alpha, flyHold, fade };
 #ifdef PK_WIDE_CACHE
     // Not while FREE FLIGHT's camera is offset: flyLabel puts the area sign back where it would be with no offset, over
     // the frame's own (moved) one - the host's copy of the frame would bring the moved one back (a doubled sign).
@@ -4598,36 +5192,4 @@ static int viewInner(struct mCore* core, const uint32_t* frame, uint32_t* out, s
     if (linesWanted && lineIoFrames < 2) lineIoFrames++;
     prev = cur;
     return mix;
-}
-
-/* FullDex: the map under the frame's pixel (sx, sy) (the frame's own coordinates; outside it too, the widescreen sides),
- * from the camera pk_wide_view placed last: the current map, or the connected one there. 1 = found. */
-int pk_wide_map_at(int sx, int sy, int* group, int* num) {
-    if (!mapCamOk || mapCamSnap < 0 || !snaps[mapCamSnap].ok) return 0;
-    const struct Snap* s = &snaps[mapCamSnap];
-    int wx = mapCamX + sx, wy = mapCamY + sy;
-    int x = wx >= 0 ? wx / 16 : -((15 - wx) / 16), y = wy >= 0 ? wy / 16 : -((15 - wy) / 16);
-    int lx = x - MAP_OFFSET, ly = y - MAP_OFFSET;
-    if (lx >= 0 && ly >= 0 && lx < s->width && ly < s->height) { *group = s->group; *num = s->num; return 1; }
-    for (int i = 0; i < s->nconn; i++) {
-        const struct Conn* k = &s->conn[i];
-        bool side = k->degree > 1 || (k->dir == 1 ? ly >= s->height : k->dir == 2 ? ly < 0 : k->dir == 3 ? lx < 0 : lx >= s->width);
-        int cx = x - k->ox, cy = y - k->oy;
-        if (side && cx >= 0 && cx < k->w && cy >= 0 && cy < k->h) { *group = k->group; *num = k->num; return 1; }
-    }
-    return 0;
-}
-
-/* FullDex: that camera, the world pixel at the frame's (0, 0) (pk_wide_map_at's); 0 = none yet. */
-int pk_wide_map_cam(int* x, int* y) {
-    if (!mapCamOk) return 0;
-    *x = mapCamX;
-    *y = mapCamY;
-    return 1;
-}
-
-/* FullDex test log: FREE FLIGHT's smooth camera this frame. */
-void pk_wide_flight_debug(char* out, int n) {
-    snprintf(out, (size_t) n, "glide on %d track %d age %d cam %d,%d view %.1f,%.1f d %d,%d v %.2f,%.2f prev %d,%d camok %d score %d",
-             flyOn, flyTrack, flyViewAge, flyCx, flyCy, flySx, flySy, flyDx, flyDy, flyVxS, flyVyS, flyPrevH, flyPrevV, mapCamOk, lastScore);
 }

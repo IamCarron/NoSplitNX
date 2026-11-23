@@ -200,8 +200,13 @@ inline std::vector<std::string> ParseSgdbGridUrls(const std::string& json)
 
 inline std::vector<std::string> LibretroUrls(const Launcher::Game& g)
 {
+    const bool isGbc = g.platform == Launcher::GB &&
+        ((g.rom.size() >= 4 && (g.rom.substr(g.rom.size() - 4) == ".gbc" || g.rom.substr(g.rom.size() - 4) == ".GBC")) ||
+         g.code.find("crystal") != std::string::npos || g.code.find("gold") != std::string::npos || g.code.find("silver") != std::string::npos);
     const std::string sys = g.platform == Launcher::GBA
                           ? "Nintendo%20-%20Game%20Boy%20Advance"
+                          : g.platform == Launcher::GB
+                          ? (isGbc ? "Nintendo%20-%20Game%20Boy%20Color" : "Nintendo%20-%20Game%20Boy")
                           : "Nintendo%20-%20Nintendo%20DS";
     const std::string base = "https://thumbnails.libretro.com/" + sys + "/Named_Boxarts/";
     std::vector<std::string> names;
@@ -222,6 +227,12 @@ inline std::vector<std::string> LibretroUrls(const Launcher::Game& g)
         else if (c == "BPGE") names.push_back("Pokemon - LeafGreen Version (USA, Europe)");
         else if (c == "AXVE") names.push_back("Pokemon - Ruby Version (USA, Europe)");
         else if (c == "AXPE") names.push_back("Pokemon - Sapphire Version (USA, Europe)");
+        else if (g.code == "GB-red") names.push_back("Pokemon - Red Version (USA, Europe) (SGB Enhanced)");
+        else if (g.code == "GB-blue") names.push_back("Pokemon - Blue Version (USA, Europe) (SGB Enhanced)");
+        else if (g.code.rfind("GB-yellow", 0) == 0) names.push_back("Pokemon - Yellow Version - Special Pikachu Edition (USA, Europe) (CGB+SGB Enhanced)");
+        else if (g.code == "GB-gold") names.push_back("Pokemon - Gold Version (USA, Europe) (SGB Enhanced) (GB Compatible)");
+        else if (g.code == "GB-silver") names.push_back("Pokemon - Silver Version (USA, Europe) (SGB Enhanced) (GB Compatible)");
+        else if (g.code.rfind("GB-crystal", 0) == 0) names.push_back("Pokemon - Crystal Version (USA, Europe) (Rev 1)");
     }
     const std::string clean = CleanTitleQuery(g);
     if (!clean.empty())

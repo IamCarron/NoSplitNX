@@ -20,6 +20,7 @@ struct ListGame
     bool hasSave = false;
     bool widescreen = false; // false: it plays, without widescreen
     bool hack = false;       // not one of the games as sold: a hack (or another game)
+    bool isGb = false;       // Game Boy / Game Boy Color ROM (.gb / .gbc)
 };
 
 // The GBA games in the roms folder (Ultra Violet also as its .ips with a FireRed 1.0 ROM), with

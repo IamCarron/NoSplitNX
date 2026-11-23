@@ -13,6 +13,7 @@ project(nosplitnx LANGUAGES C CXX)
 file(GLOB_RECURSE SSR_BUILD_VERSION_INPUTS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/frontend/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/frontend/*.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/runtime/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/runtime/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/pokedaisy/ds/ds_bridge.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/pokedaisy/ds/ds_bridge.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/melonDS/src/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/melonDS/src/*.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/melonDS/src/*.S")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SSR_BUILD_VERSION_INPUTS})
@@ -106,6 +107,45 @@ target_include_directories(rcheevos PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/frontend
 add_library(romhacks_lzma OBJECT frontend/romhacks_lzma.c frontend/thirdparty/lzma/LzmaDec.c frontend/thirdparty/lzma/Lzma2Dec.c)
 target_include_directories(romhacks_lzma PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/frontend/thirdparty/lzma")
 
+# PokeDaisy portable Companion, Field HUD and Quick Menu (GPL-3.0; based on PokeDaisy by
+# Lidor Itzhari - https://github.com/lidor30/pokedaisy). Shared by both the DS frontend
+# (pokedaisy_ds) and the embedded GB/GBC/GBA frontend (gbawide).
+file(GLOB SSR_POKEDAISY_CORE_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/pokedaisy/core/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/pokedaisy/ui/*.c")
+add_library(pokedaisy_core STATIC ${SSR_POKEDAISY_CORE_SOURCES})
+set_target_properties(pokedaisy_core PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+target_include_directories(pokedaisy_core PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/pokedaisy/core"
+    "${CMAKE_CURRENT_SOURCE_DIR}/pokedaisy/ui")
+target_compile_definitions(pokedaisy_core PRIVATE _GNU_SOURCE)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(pokedaisy_core PRIVATE -Wno-unused-function -Wno-unused-parameter)
+    file(GLOB SSR_POKEDAISY_GEN_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/pokedaisy/core/*_gen.c")
+    set_source_files_properties(${SSR_POKEDAISY_GEN_SOURCES} PROPERTIES COMPILE_OPTIONS "-O1;-g0")
+endif()
+if(UNIX OR SSR_SWITCH)
+    target_link_libraries(pokedaisy_core PUBLIC m)
+endif()
+
+file(GLOB SSR_POKEDAISY_DS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/pokedaisy/ds/*.cpp")
+add_library(pokedaisy_ds STATIC ${SSR_POKEDAISY_DS_SOURCES})
+set_target_properties(pokedaisy_ds PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+target_include_directories(pokedaisy_ds PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/pokedaisy/ds")
+target_link_libraries(pokedaisy_ds PUBLIC pokedaisy_core)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(pokedaisy_ds PRIVATE -Wno-unused-function -Wno-unused-parameter)
+endif()
+if(SSR_SWITCH)
+    pkg_get_variable(PD_SDL2_INCLUDEDIR sdl2 includedir)
+    target_include_directories(pokedaisy_ds PRIVATE "${PD_SDL2_INCLUDEDIR}" "${PD_SDL2_INCLUDEDIR}/SDL2" ${SDL2_STATIC_INCLUDE_DIRS})
+    target_compile_options(pokedaisy_ds PRIVATE ${SDL2_STATIC_CFLAGS_OTHER})
+elseif(TARGET SDL2::SDL2)
+    target_link_libraries(pokedaisy_ds PRIVATE SDL2::SDL2)
+else()
+    target_include_directories(pokedaisy_ds PRIVATE ${SDL2_INCLUDE_DIRS})
+endif()
+
 set(SSRECOMP_SOURCES
     frontend/main.cpp
     $<TARGET_OBJECTS:romhacks_lzma>
@@ -126,7 +166,7 @@ if(ANDROID OR SSR_SWITCH)
         file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/CHANGELOG.md" SSR_RELEASES REGEX "^## v[0-9]")
         if(SSR_RELEASES)
             list(GET SSR_RELEASES 0 SSR_VERSION)
-            string(REGEX REPLACE "^## v([0-9.]+).*" "\\1" SSR_VERSION "${SSR_VERSION}")
+            string(REGEX REPLACE "^## v([0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.]+)?).*" "\\1" SSR_VERSION "${SSR_VERSION}")
         endif()
     endif()
 endif()
@@ -375,7 +415,8 @@ if(SSR_GBA_DIR AND (SSR_PC_ALL_GAMES OR SSR_ALL_GAMES))
 endif()
 # RetroAchievements: the library, and each platform's way to the internet (achievements_http.cpp);
 # the program's version, which the server is told with its name, from CHANGELOG.md's newest release.
-target_link_libraries(ssrecomp PRIVATE rcheevos)
+target_link_libraries(ssrecomp PRIVATE pokedaisy_ds pokedaisy_core rcheevos)
+target_compile_definitions(ssrecomp PRIVATE SSR_POKEDAISY)
 if(SSR_SWITCH)
     # (devkitPro's libcurl, with its TLS library, from the portlibs.)
     find_package(PkgConfig REQUIRED)
