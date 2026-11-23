@@ -19,6 +19,11 @@ bool HttpPost(const std::string&, const std::string&, const std::string&, const 
     status = 404;
     return false;
 }
+bool HttpDownload(const std::string&, const std::string&, int& status, std::string&, std::string&) {
+    status = 404;
+    return false;
+}
+void HttpStop(bool) {}
 }
 
 int main()
